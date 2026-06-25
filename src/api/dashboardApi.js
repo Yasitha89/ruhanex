@@ -6,7 +6,9 @@ const api = axios.create({
 
 export const getShiftData = async (
   shift,
-  hours
+  hours,
+  fromTime,
+  toTime
 ) => {
 
   const response = await api.get(
@@ -14,7 +16,9 @@ export const getShiftData = async (
     {
       params: {
         shift,
-        hours
+        hours,
+        fromTime,
+        toTime
       }
     }
   );
