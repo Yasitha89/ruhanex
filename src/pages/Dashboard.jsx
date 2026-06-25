@@ -3,25 +3,18 @@ import { Card, Select, DatePicker, Space } from "antd";
 import ProductionChart from "../components/ProductionChart";
 import { getShiftData, getShiftLast } from "../api/dashboardApi";
 import dayjs from "dayjs";
+import { Row, Col } from "antd";
 
 export default function Dashboard() {
   const [data, setData] = useState([]);
-  const [shift, setShift] = useState("06-14");
+  const [shift, setShift] = useState("14-22");
   const [lastValue, setLastValue] = useState(0);
-  const [dateRange, setDateRange] = useState([]);
+  const [dateRange, setDateRange] = useState([
+    dayjs().subtract(6, "hour"),
+    dayjs(),
+  ]);
 
   const { RangePicker } = DatePicker;
-
-  //   const loadData = async () => {
-
-  //     const result =
-  //       await getShiftData(
-  //         shift,
-  //         24
-  //       );
-
-  //     setData(result);
-  //   };
 
   const loadData = async () => {
     const fromTime = dateRange?.[0]?.toISOString();
@@ -33,17 +26,15 @@ export default function Dashboard() {
 
     setData(data);
 
-    // assuming API returns: { value: 123 }
     setLastValue(last?.value ?? 0);
   };
 
   useEffect(() => {
     // initial load
-    //loadData();
 
-      if (dateRange && dateRange.length === 2 && dateRange[0] && dateRange[1]) {
-        loadData();
-      }
+    if (dateRange && dateRange.length === 2 && dateRange[0] && dateRange[1]) {
+      loadData();
+    }
 
     // live refresh
     const interval = setInterval(() => {
@@ -52,46 +43,30 @@ export default function Dashboard() {
 
     // cleanup (IMPORTANT)
     return () => clearInterval(interval);
-  }, [shift,dateRange]);
+  }, [shift, dateRange]);
 
   return (
-    <Card title="Production Trend">
-      {/* <Select
+    <Card>
+      <Select
         value={shift}
-        onChange={setShift}
-        style={{
-          width: 150,
-          marginBottom: 20,
+        onChange={(value) => setShift(value)}
+        style={{ width: 150 }}
+        options={[
+          { value: "06-14", label: "06-14 Shift" },
+          { value: "14-22", label: "14-22 Shift" },
+          { value: "22-06", label: "22-06 Shift" },
+          { value: "all", label: "All Shifts" },
+        ]}
+      />
+      <RangePicker
+        showTime={{
+          format: "HH:mm",
+          showSecond: false,
         }}
-      >
-        <Select.Option value="06-14">06-14 Shift</Select.Option>
-
-        <Select.Option value="14-22">14-22 Shift</Select.Option>
-
-        <Select.Option value="22-06">22-06 Shift</Select.Option>
-      </Select> */}
-
-      <Space style={{ marginBottom: 16 }}>
-        {/* Shift Selector */}
-        <Select
-          value={shift}
-          onChange={(value) => setShift(value)}
-          style={{ width: 150 }}
-          options={[
-            { value: "06-14", label: "06-14 Shift" },
-            { value: "14-22", label: "14-22 Shift" },
-            { value: "22-06", label: "22-06 Shift" },
-          ]}
-        />
-
-        {/* Date Time Range Picker */}
-        <RangePicker
-          showTime
-          format="YYYY-MM-DD HH:mm:ss"
-          value={dateRange}
-          onChange={(values) => setDateRange(values)}
-        />
-      </Space>
+        format="YYYY-MM-DD HH:mm"
+        value={dateRange}
+        onChange={(values) => setDateRange(values)}
+      />
 
       <Card style={{ width: 250, marginBottom: 20 }} title="Shift Last Value">
         <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
