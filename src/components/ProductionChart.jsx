@@ -1,156 +1,172 @@
-// // import {
-// //   LineChart,
-// //   Line,
-// //   XAxis,
-// //   YAxis,
-// //   Tooltip,
-// //   CartesianGrid,
-// //   ResponsiveContainer,
-// //   Brush,
-// // } from "recharts";
-
-// import { Line } from "@ant-design/charts";
-
-// export default function ProductionChart({ data }) {
-//   const config = {
-//     data,
-//     xField: "time",
-//     yField: "value",
-//     smooth: true,
-//   };
-//   return (
-//     <Line {...config} />
-//     // <ResponsiveContainer width="100%" height={500}>
-//     //   {/* <LineChart data={data}>
-//     //     <CartesianGrid strokeDasharray="3 3" />
-
-//     //     <XAxis
-//     //       dataKey="time"
-//     //       tickFormatter={(value) =>
-//     //         new Date(value).toLocaleTimeString([], {
-//     //           hour: "2-digit",
-//     //           minute: "2-digit",
-//     //         })
-//     //       }
-//     //     />
-
-//     //     <YAxis />
-
-//     //     <Tooltip labelFormatter={(value) => new Date(value).toLocaleString()} />
-
-//     //     <Line type="monotone" dataKey="value" dot={false} />
-//     //     <Brush dataKey="time" height={30} stroke="#8884d8" />
-//     //   </LineChart> */}
-
-//     // </ResponsiveContainer>
-//   );
-// }
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import { useState, useMemo } from "react";
 
 export default function ProductionChart({ data }) {
-  // 1. Clean + format data
-  const filtered = (data || [])
-    .filter((d) => d.time && d.value !== undefined)
-    .map((d) => ({
-      time: dayjs(d.time).format("HH:mm"),
-      value: d.value,
-    }));
+  const [isZoomedOut, setIsZoomedOut] = useState(true);
 
-  //   const shiftColors = {
-  //     "06-14": 1,
-  //     "14-22": 2,
-  //     "22-06": 3,
-  //   };
+  const dataPoints = data.map((d) => [
+    d.time,
+    d.value,
+    d.shift === "06-14" ? 1 : d.shift === "14-22" ? 2 : 3,
+  ]);
 
-  //   const filtered = (data || [])
-  //     .filter((d) => d.time && d.value !== undefined)
-  //     .map((d) => ({
-  //       time: d.time,
-  //       value: d.value,
-  //       shift: d.shift,
-  //       shiftCode: shiftColors[d.shift] || 0,
-  //     }));
+  const s1 = dataPoints.filter((d) => d[2] === 1);
+  const s2 = dataPoints.filter((d) => d[2] === 2);
+  const s3 = dataPoints.filter((d) => d[2] === 3);
 
-  // 2. Build ECharts option
-  const option = {
-    title: {
-      text: "Shift Production (Pieces)",
-      left: "center",
+  const onEvents = {
+    datazoom: (params) => {
+      const start = params.batch?.[0]?.start || 0;
+      setIsZoomedOut(start < 30);
     },
-
-    tooltip: {
-      trigger: "axis",
-    },
-
-    xAxis: {
-      type: "category",
-      name: "Time",
-      nameLocation: "bottom",
-      nameGap: 50,
-      data: filtered.map((d) => d.time),
-      boundaryGap: false,
-      axisLabel: {
-        margin: 12,
-      },
-    },
-
-    yAxis: {
-      type: "value",
-      name: "Production",
-      nameLocation: "bottom",
-      nameRotate: 90,
-      nameGap: 50,
-    },
-
-    series: [
-      //   {
-      //     name: "06-14",
-      //     type: "line",
-      //     data: filtered.map((d) => d.value),
-      //     lineStyle: { color: "#52c41a" },
-      //   },
-      //   {
-      //     name: "14-22",
-      //     type: "line",
-      //     data: filtered.map((d) => d.value),
-      //     lineStyle: { color: "#fa8c16" },
-      //   },
-      //   {
-      //     name: "22-06",
-      //     type: "line",
-      //     data: filtered.map((d) => d.value),
-      //     lineStyle: { color: "#1677ff" },
-      //   },
-      {
-        name: "Shift Count",
-        type: "line",
-        data: filtered.map((d) => d.value),
-        smooth: true,
-        showSymbol: false,
-        lineStyle: {
-          width: 2,
-        },
-        areaStyle: {
-          opacity: 0.2,
-        },
-        // markLine: {
-        //   data: [{ xAxis: "06:00" }, { xAxis: "14:00" }, { xAxis: "22:00" }],
-        // },
-      },
-    ],
-
-    grid: {
-      left: 40,
-      right: 20,
-      top: 50,
-      bottom: 120,
-    },
-    dataZoom: [
-      { type: "inside", xAxisIndex: 0 },
-      { type: "slider", xAxisIndex: 0 },
-    ],
   };
 
-  return <ReactECharts option={option} style={{ height: 350 }} />;
+  // 2. Build ECharts option
+  const option = useMemo(
+    () => ({
+      title: {
+        text: "Shift Production (Pieces)",
+        left: "center",
+      },
+
+      tooltip: {
+        trigger: "axis",
+      },
+
+      xAxis: {
+        type: "time",
+        name: "Time",
+        nameLocation: "bottom",
+        nameGap: 50,
+        boundaryGap: false,
+        //scale: true, // 👈 IMPORTANT: disables auto compression behavior
+        minInterval: 60 * 1000, // 👈 1 minute resolution (important)
+        axisLabel: {
+          hideOverlap: true, // 👈 stops ECharts from reformatting aggressively
+          formatter: (value) => {
+            const date = new Date(value);
+
+            const hours = date.getHours();
+            const minutes = date.getMinutes();
+
+            // FIX: DO NOT rely on isZoomedOut for 8h view
+            const rangeHours =
+              dataPoints?.length > 0
+                ? (new Date(dataPoints[dataPoints.length - 1][0]) -
+                    new Date(dataPoints[0][0])) /
+                  36e5
+                : 0;
+
+            // 🔥 KEY FIX: decide format by actual range, NOT zoom state
+            if (rangeHours > 12) {
+              return date.toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "short",
+              });
+            }
+
+            return `${hours.toString().padStart(2, "0")}:${minutes
+              .toString()
+              .padStart(2, "0")}`;
+          },
+          // formatter: function (value) {
+          //   const date = new Date(value);
+
+          //   if (isZoomedOut) {
+          //     return date.toLocaleDateString("en-GB", {
+          //       day: "2-digit",
+          //       month: "short",
+          //     });
+          //   }
+
+          //   // zoomed in → show TIME
+          //   return date.toLocaleTimeString([], {
+          //     hour: "2-digit",
+          //     minute: "2-digit",
+          //   });
+          // },
+        },
+      },
+
+      yAxis: {
+        type: "value",
+        name: "Production",
+        nameLocation: "bottom",
+        nameRotate: 90,
+        nameGap: 50,
+      },
+
+      series: [
+        {
+          name: "06-14",
+          type: "line",
+          connectNulls: true,
+          data: s1,
+          showSymbol: true,
+          lineStyle: { color: "#52c41a" },
+        },
+        {
+          name: "14-22",
+          type: "line",
+          connectNulls: true,
+          data: s2,
+          showSymbol: true,
+          lineStyle: { color: "#fa8c16" },
+        },
+        {
+          name: "22-06",
+          type: "line",
+          connectNulls: true,
+          data: s3,
+          showSymbol: true,
+          lineStyle: { color: "#1677ff" },
+        },
+
+        // {
+        //   name: "Shift Count",
+        //   type: "line",
+        //   data: dataPoints,
+        //   smooth: false,
+        //   showSymbol: false,
+        //   connectNulls: true,
+        //   lineStyle: {
+        //     width: 2,
+        //   },
+        //   areaStyle: {
+        //     opacity: 0.2,
+        //   },
+        //   // markLine: {
+        //   //   data: [{ xAxis: "06:00" }, { xAxis: "14:00" }, { xAxis: "22:00" }],
+        //   // },
+        // },
+      ],
+
+      visualMap: {
+        show: false,
+        dimension: 2, // 👈 shift index
+        pieces: [
+          { value: 1, color: "#52c41a" }, // 06-14 → Green
+          { value: 2, color: "#fa8c16" }, // 14-22 → Orange
+          { value: 3, color: "#1677ff" }, // 22-06 → Blue
+        ],
+      },
+
+      grid: {
+        left: 40,
+        right: 20,
+        top: 50,
+        bottom: 120,
+      },
+      dataZoom: [
+        { type: "inside", xAxisIndex: 0 },
+        { type: "slider", xAxisIndex: 0 },
+      ],
+    }),
+    [isZoomedOut, dataPoints],
+  );
+
+  return (
+    <ReactECharts option={option} onEvents={onEvents} style={{ height: 350 }} />
+  );
 }

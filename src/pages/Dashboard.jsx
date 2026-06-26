@@ -4,6 +4,7 @@ import ProductionChart from "../components/ProductionChart";
 import { getShiftData, getShiftLast } from "../api/dashboardApi";
 import dayjs from "dayjs";
 import { Row, Col } from "antd";
+import { getShiftTimeRange } from "../utils/shiftUtils";
 
 export default function Dashboard() {
   const [data, setData] = useState([]);
@@ -13,12 +14,15 @@ export default function Dashboard() {
     dayjs().subtract(6, "hour"),
     dayjs(),
   ]);
+  const [date, setDate] = useState(dayjs());
 
   const { RangePicker } = DatePicker;
 
   const loadData = async () => {
-    const fromTime = dateRange?.[0]?.toISOString();
-    const toTime = dateRange?.[1]?.toISOString();
+    const { fromTime, toTime } = getShiftTimeRange(date, shift);
+    // const fromTime = dateRange?.[0]?.toISOString();
+    // const toTime = dateRange?.[1]?.toISOString();
+
     const [data, last] = await Promise.all([
       getShiftData(shift, 24, fromTime, toTime),
       getShiftLast(shift),
@@ -27,6 +31,10 @@ export default function Dashboard() {
     setData(data);
 
     setLastValue(last?.value ?? 0);
+  };
+
+  const onChange = (value) => {
+    setDate(value);
   };
 
   useEffect(() => {
@@ -43,22 +51,39 @@ export default function Dashboard() {
 
     // cleanup (IMPORTANT)
     return () => clearInterval(interval);
-  }, [shift, dateRange]);
+  }, [shift, dateRange, date]);
 
   return (
     <Card>
-      <Select
-        value={shift}
-        onChange={(value) => setShift(value)}
-        style={{ width: 150 }}
-        options={[
-          { value: "06-14", label: "06-14 Shift" },
-          { value: "14-22", label: "14-22 Shift" },
-          { value: "22-06", label: "22-06 Shift" },
-          { value: "all", label: "All Shifts" },
-        ]}
-      />
-      <RangePicker
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 20, // 👈 controls vertical spacing
+        }}
+      >
+        <Space
+          size="middle"
+          style={{
+            display: "flex",
+            justifyContent: "flex-start",
+            width: "100%",
+          }}
+        >
+          <Select
+            value={shift}
+            onChange={(value) => setShift(value)}
+            style={{ width: 150 }}
+            options={[
+              { value: "06-14", label: "06-14 Shift" },
+              { value: "14-22", label: "14-22 Shift" },
+              { value: "22-06", label: "22-06 Shift" },
+              { value: "all", label: "All Shifts" },
+            ]}
+          />
+          <DatePicker value={date} onChange={onChange} format="YYYY-MM-DD" />
+        </Space>
+        {/* <RangePicker
         showTime={{
           format: "HH:mm",
           showSecond: false,
@@ -66,13 +91,14 @@ export default function Dashboard() {
         format="YYYY-MM-DD HH:mm"
         value={dateRange}
         onChange={(values) => setDateRange(values)}
-      />
+      /> */}
 
-      <Card style={{ width: 250, marginBottom: 20 }} title="Shift Last Value">
-        <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-      </Card>
+        <Card style={{ width: 250, marginBottom: 20 }} title="Shift Last Value">
+          <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
+        </Card>
 
-      <ProductionChart data={data} />
+        <ProductionChart data={data} />
+      </div>
     </Card>
   );
 }
