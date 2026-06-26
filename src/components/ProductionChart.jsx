@@ -104,6 +104,7 @@ export default function ProductionChart({ data }) {
           connectNulls: true,
           data: s1,
           showSymbol: true,
+          color: "#52c41a",
           lineStyle: { color: "#52c41a" },
         },
         {
@@ -112,6 +113,7 @@ export default function ProductionChart({ data }) {
           connectNulls: true,
           data: s2,
           showSymbol: true,
+          color: "#fa8c16",
           lineStyle: { color: "#fa8c16" },
         },
         {
@@ -120,6 +122,7 @@ export default function ProductionChart({ data }) {
           connectNulls: true,
           data: s3,
           showSymbol: true,
+          color: "#1677ff",
           lineStyle: { color: "#1677ff" },
         },
 
@@ -142,16 +145,6 @@ export default function ProductionChart({ data }) {
         // },
       ],
 
-      visualMap: {
-        show: false,
-        dimension: 2, // 👈 shift index
-        pieces: [
-          { value: 1, color: "#52c41a" }, // 06-14 → Green
-          { value: 2, color: "#fa8c16" }, // 14-22 → Orange
-          { value: 3, color: "#1677ff" }, // 22-06 → Blue
-        ],
-      },
-
       grid: {
         left: 40,
         right: 20,
@@ -159,8 +152,8 @@ export default function ProductionChart({ data }) {
         bottom: 120,
       },
       dataZoom: [
-        { type: "inside", xAxisIndex: 0 },
-        { type: "slider", xAxisIndex: 0 },
+        { type: "inside", xAxisIndex: 0, filterMode: "none" },
+        { type: "slider", xAxisIndex: 0, filterMode: "none" },
       ],
     }),
     [isZoomedOut, dataPoints],

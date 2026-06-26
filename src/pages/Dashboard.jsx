@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, Select, DatePicker, Space } from "antd";
+import { Card, Select, DatePicker, Space, Flex } from "antd";
 import ProductionChart from "../components/ProductionChart";
 import { getShiftData, getShiftLast } from "../api/dashboardApi";
 import dayjs from "dayjs";
@@ -92,10 +92,17 @@ export default function Dashboard() {
         value={dateRange}
         onChange={(values) => setDateRange(values)}
       /> */}
-
-        <Card style={{ width: 250, marginBottom: 20 }} title="Shift Last Value">
-          <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-        </Card>
+        <Flex gap={16}>
+          <Card
+            style={{ width: 250, marginBottom: 20 }}
+            title="Shift Production"
+          >
+            <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
+          </Card>
+          <Card style={{ width: 250, marginBottom: 20 }} title="Shift Downtime">
+            <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
+          </Card>
+        </Flex>
 
         <ProductionChart data={data} />
       </div>
