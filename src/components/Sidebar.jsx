@@ -23,6 +23,12 @@ export default function Sidebar() {
           onClick: () => navigate("/dashboard"),
         },
         {
+          key: "keda2",
+          icon: <DashboardOutlined />,
+          label: "Keda 2",
+          onClick: () => navigate("/keda2"),
+        },
+        {
           key: "live",
           icon: <LineChartOutlined />,
           label: "Live Count",

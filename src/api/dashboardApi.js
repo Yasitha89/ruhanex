@@ -23,7 +23,12 @@ export const getShiftData = async (
     }
   );
 
-  return response.data;
+  const sortedData = (response.data || [])
+    .filter(d => d.time && d.value !== undefined)
+    .sort((a, b) => new Date(a.time) - new Date(b.time));
+
+  return sortedData;
+
 };
 
 // LAST VALUE API

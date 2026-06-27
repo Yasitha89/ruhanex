@@ -25,11 +25,6 @@ export default function ProductionChart({ data }) {
   // 2. Build ECharts option
   const option = useMemo(
     () => ({
-      title: {
-        text: "Shift Production (Pieces)",
-        left: "center",
-      },
-
       tooltip: {
         trigger: "axis",
       },
@@ -103,7 +98,7 @@ export default function ProductionChart({ data }) {
           type: "line",
           connectNulls: true,
           data: s1,
-          showSymbol: true,
+          showSymbol: false,
           color: "#52c41a",
           lineStyle: { color: "#52c41a" },
         },
@@ -112,8 +107,9 @@ export default function ProductionChart({ data }) {
           type: "line",
           connectNulls: true,
           data: s2,
-          showSymbol: true,
+          showSymbol: false,
           color: "#fa8c16",
+          symbolSize: 5,
           lineStyle: { color: "#fa8c16" },
         },
         {
@@ -121,7 +117,7 @@ export default function ProductionChart({ data }) {
           type: "line",
           connectNulls: true,
           data: s3,
-          showSymbol: true,
+          showSymbol: false,
           color: "#1677ff",
           lineStyle: { color: "#1677ff" },
         },

@@ -104,7 +104,7 @@ export default function Dashboard() {
           </Card>
         </Flex>
 
-        <ProductionChart data={data} />
+        {/* <ProductionChart data={data} /> */}
       </div>
     </Card>
   );

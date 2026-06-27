@@ -6,16 +6,13 @@
 
 // export default App;
 
-import {
-  BrowserRouter,
-  Routes,
-  Route
-} from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import LiveCount from "./pages/LiveCount";
 import Settings from "./pages/Settings";
+import Keda2 from "./pages/Keda2";
 
 import MainLayout from "./layouts/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -24,11 +21,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-
-        <Route
-          path="/"
-          element={<Login />}
-        />
+        <Route path="/" element={<Login />} />
 
         <Route
           path="/"
@@ -38,22 +31,13 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route
-            path="dashboard"
-            element={<Dashboard />}
-          />
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="keda2" element={<Keda2 />} />
 
-          <Route
-            path="live"
-            element={<LiveCount />}
-          />
+          <Route path="live" element={<LiveCount />} />
 
-          <Route
-            path="settings"
-            element={<Settings />}
-          />
+          <Route path="settings" element={<Settings />} />
         </Route>
-
       </Routes>
     </BrowserRouter>
   );
