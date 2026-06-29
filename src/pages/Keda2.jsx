@@ -1,15 +1,28 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, Select, DatePicker, Space, Flex, Tag } from "antd";
 import ProductionChart from "../components/ProductionChart";
-import { getShiftData, getShiftLast } from "../api/dashboardApi";
+import DowntimeChart from "../components/DowntimeChart";
+import {
+  getShiftData,
+  getShiftLast,
+  getShiftDowntime,
+  getLineSpeed,
+} from "../api/dashboardApi";
 import dayjs from "dayjs";
 import { Row, Col, Statistic } from "antd";
-import { getShiftTimeRange } from "../utils/shiftUtils";
+import {
+  getShiftTimeRange,
+  getCurrentShiftTimeRange,
+} from "../utils/shiftUtils";
 
 export default function Keda2() {
   const [data, setData] = useState([]);
+  const [downtime, setDowntime] = useState([]);
+  const [currentShiftDowntime, setCurrentShiftDowntime] = useState([]);
   const [shift, setShift] = useState("14-22");
   const [lastValue, setLastValue] = useState(0);
+  const [lineSpeed, setLineSpeed] = useState(0);
+  const [tilesPerMin, setTilesPerMin] = useState(0);
   const [dateRange, setDateRange] = useState([
     dayjs().subtract(6, "hour"),
     dayjs(),
@@ -22,23 +35,51 @@ export default function Keda2() {
 
   const loadData = async () => {
     const { fromTime, toTime } = getShiftTimeRange(date, shift);
-    console.log("Time", fromTime, toTime);
-    // const fromTime = dateRange?.[0]?.toISOString();
-    // const toTime = dateRange?.[1]?.toISOString();
+    const { currentShiftFromTime, currentShiftToTime, currentShift } =
+      getCurrentShiftTimeRange();
 
-    const [data, last] = await Promise.all([
-      getShiftData(shift, 24, fromTime, toTime),
-      getShiftLast(shift),
-    ]);
+    const [data, downtime, last, lineSpeed, currentShiftDowntime] =
+      await Promise.all([
+        getShiftData(shift, fromTime, toTime),
+        getShiftDowntime(shift, fromTime, toTime), // this is to get the downtime based on the user selection in the date selection
+        getShiftLast(shift),
+        getLineSpeed(),
+        getShiftDowntime(
+          currentShift,
+          currentShiftFromTime,
+          currentShiftToTime,
+        ), // this is to get the current shift downtime to display in the current shift details card
+      ]);
 
-    setSelectedShiftLastValue(
-      data?.findLast((item) => item?.value !== null)?.value,
-    );
+    if (shift !== "all") {
+      setSelectedShiftLastValue(
+        data?.findLast((item) => item?.value !== null)?.value,
+      );
+    } else {
+      const maxPerShift = new Map();
+
+      for (const item of data) {
+        const currentMax = maxPerShift.get(item.shift);
+
+        if (!currentMax || item.value > currentMax.value) {
+          maxPerShift.set(item.shift, item);
+        }
+      }
+
+      const total = Array.from(maxPerShift.values()).reduce(
+        (sum, item) => sum + item.value,
+        0,
+      );
+
+      setSelectedShiftLastValue(total);
+    }
+
     setShiftStatus(last?.shiftStatus);
-
     setData(data);
-
+    setDowntime(downtime);
+    setCurrentShiftDowntime(currentShiftDowntime);
     setLastValue(last?.value ?? 0);
+    setLineSpeed(lineSpeed?.lineSpeed);
   };
 
   const onChange = (value) => {
@@ -61,6 +102,37 @@ export default function Keda2() {
     return () => clearInterval(interval);
   }, [shift, dateRange, date]);
 
+  const totalDowntimeCurrentShift = useMemo(() => {
+    let startTime = null;
+    let total = 0;
+
+    currentShiftDowntime.forEach((event) => {
+      if (event.downStatus === "STOP_START") {
+        startTime = new Date(Number(event.ts));
+      }
+
+      if (event.downStatus === "STOP_END" && startTime) {
+        const endTime = new Date(Number(event.ts));
+        total += Math.floor((endTime - startTime) / 60000);
+        startTime = null;
+      }
+    });
+
+    if (startTime) {
+      const now = new Date();
+      total += Math.floor((now - startTime) / 60000);
+    }
+
+    return total;
+  }, [currentShiftDowntime]);
+
+  const formatDuration = (totalMinutes) => {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = Math.floor(totalMinutes % 60);
+
+    return `${String(hours).padStart(2, "0")} h: ${String(minutes).padStart(2, "0")} m`;
+  };
+
   return (
     // <Card>
     <div
@@ -72,28 +144,6 @@ export default function Keda2() {
       }}
     >
       <h3 style={{ textAlign: "left" }}>Keda 2 Production Dashboard</h3>
-      {/* <Space
-        size="middle"
-        style={{
-          display: "flex",
-          justifyContent: "flex-start",
-          width: "100%",
-        }}
-      >
-        <Select
-          value={shift}
-          onChange={(value) => setShift(value)}
-          style={{ width: 150 }}
-          options={[
-            { value: "06-14", label: "06-14 Shift" },
-            { value: "14-22", label: "14-22 Shift" },
-            { value: "22-06", label: "22-06 Shift" },
-            { value: "all", label: "All Shifts" },
-          ]}
-        />
-        <DatePicker value={date} onChange={onChange} format="YYYY-MM-DD" />
-      </Space> */}
-
       <Row>
         <Col xs={24} span={8}>
           <Card
@@ -103,13 +153,10 @@ export default function Keda2() {
               marginBottom: "10px",
               marginTop: "10px",
             }}
-            // styles={{
-            //   header: { textAlign: "left" },
-            // }}
           >
             <div className="shift_statBar">
               <Row gutter={24} style={{ marginBottom: "15px" }}>
-                <Col sm={24} md={12} lg={8}>
+                <Col sm={24} md={12} lg={6}>
                   <Statistic
                     title="Status"
                     value={shiftStatus} // Keep the value as a plain string
@@ -123,42 +170,31 @@ export default function Keda2() {
                     )}
                   />
                 </Col>
-                <Col sm={24} md={12} lg={8}>
+                <Col sm={24} md={12} lg={6}>
                   <Statistic
-                    title="Downtime"
-                    //value={this.state.pendingMembers}
+                    title="Total Downtime"
+                    value={formatDuration(totalDowntimeCurrentShift)}
                   />
                 </Col>
-                <Col sm={24} md={12} lg={8}>
+                <Col sm={24} md={12} lg={6}>
+                  <Statistic
+                    title="Speed"
+                    value={lineSpeed}
+                    suffix={<span style={{ fontSize: "14px" }}>Tiles/min</span>}
+                  />
+                </Col>
+                <Col sm={24} md={12} lg={6}>
                   <Statistic
                     title="Production"
                     suffix={<span style={{ fontSize: "14px" }}>Tiles</span>}
                     value={lastValue}
                   />
                 </Col>
-                {/* <Col sm={24} md={12} lg={6}>
-                  <Statistic
-                  // title={
-                  //   <>
-                  //     {Utils.membershipStatusTag("no subscription")}Members
-                  //   </>
-                  // }
-                  // value={this.state.noSubscriptionMembers}
-                  />
-                </Col> */}
               </Row>
             </div>
           </Card>
         </Col>
       </Row>
-      {/* <Flex gap={16}>
-        <Card style={{ width: 250, marginBottom: 20 }} title="Shift Production">
-          <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-        </Card>
-        <Card style={{ width: 250, marginBottom: 20 }} title="Shift Downtime">
-          <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-        </Card>
-      </Flex> */}
 
       <Row>
         <Col xs={24} span={8}>
@@ -189,37 +225,47 @@ export default function Keda2() {
               </div>
             }
           >
-            <Statistic
-              value={selectedShiftLastValue}
-              suffix={<span style={{ fontSize: "14px" }}>Tiles</span>}
-              // style={{
-              //   display: "flex",
-              //   flexDirection: "row",
-              //   alignItems: "bottom", // Keeps items vertically centered
-              //   gap: 16, // Adds space between the title and value
-              // }}
-            />
-            <Space
-              size="middle"
-              style={{
-                display: "flex",
-                justifyContent: "flex-start",
-                width: "100%",
-              }}
-            ></Space>
-            <ProductionChart data={data} />
-            {/* <div className="shift_chart">
-              <Row gutter={24} style={{ marginBottom: "15px" }}>
-                <Col sm={24} md={12} lg={6}>
-                  <ProductionChart data={data} />
-                </Col>
-              </Row>
-            </div> */}
+            <Row>
+              <Col xs={24} xl={12} span={8}>
+                <Row justify="center" align="middle">
+                  <Col>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <span style={{ fontSize: 20, color: "#888" }}>
+                        Total Production:
+                      </span>
+
+                      <span
+                        style={{
+                          fontSize: 20,
+                          fontWeight: 600,
+                          color: "#5c5b5b",
+                        }}
+                      >
+                        {selectedShiftLastValue}
+                        {" Tiles"}
+                      </span>
+                    </div>
+                  </Col>
+                </Row>
+                <ProductionChart data={data} />
+              </Col>
+              <Col xs={24} xl={12} span={8}>
+                <Space
+                  size="middle"
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-start",
+                    width: "100%",
+                  }}
+                ></Space>
+                <DowntimeChart data={downtime} />
+              </Col>
+            </Row>
           </Card>
         </Col>
       </Row>
-
-      {/* <ProductionChart data={data} /> */}
     </div>
     // </Card>
   );

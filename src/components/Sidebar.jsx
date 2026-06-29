@@ -14,14 +14,14 @@ export default function Sidebar() {
     <Menu
       theme="dark"
       mode="inline"
-      defaultSelectedKeys={["dashboard"]}
+      defaultSelectedKeys={["keda2"]}
       items={[
-        {
-          key: "dashboard",
-          icon: <DashboardOutlined />,
-          label: "Dashboard",
-          onClick: () => navigate("/dashboard"),
-        },
+        // {
+        //   key: "dashboard",
+        //   icon: <DashboardOutlined />,
+        //   label: "Dashboard",
+        //   onClick: () => navigate("/dashboard"),
+        // },
         {
           key: "keda2",
           icon: <DashboardOutlined />,
@@ -29,10 +29,10 @@ export default function Sidebar() {
           onClick: () => navigate("/keda2"),
         },
         {
-          key: "live",
+          key: "historical_data",
           icon: <LineChartOutlined />,
-          label: "Live Count",
-          onClick: () => navigate("/live"),
+          label: "Historical Data",
+          onClick: () => navigate("/historical_data"),
         },
         {
           key: "settings",

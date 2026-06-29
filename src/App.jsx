@@ -13,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import LiveCount from "./pages/LiveCount";
 import Settings from "./pages/Settings";
 import Keda2 from "./pages/Keda2";
+import HistoricalReport from "./pages/HistoricalReport";
 
 import MainLayout from "./layouts/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -34,7 +35,7 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="keda2" element={<Keda2 />} />
 
-          <Route path="live" element={<LiveCount />} />
+          <Route path="historical_data" element={<HistoricalReport />} />
 
           <Route path="settings" element={<Settings />} />
         </Route>
