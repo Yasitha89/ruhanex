@@ -16,11 +16,11 @@ export const getHistoricalData = async (line, fromDate, toDate) => {
   const sortedProductionData = (response.data.production || [])
     .filter((d) => d.time && d.value !== undefined)
     .sort((a, b) => new Date(a.time) - new Date(b.time));
-
+  console.log("Sorted Production:", sortedProductionData);
   const sortedDowntimeData = (response.data.downtime || [])
     .filter((d) => d.time && d.value !== undefined)
     .sort((a, b) => new Date(a.time) - new Date(b.time));
-
+  console.log("Sorted downtime:", sortedDowntimeData);
   return {
     production: sortedProductionData,
     downtime: sortedDowntimeData,

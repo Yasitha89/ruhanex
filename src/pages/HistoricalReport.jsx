@@ -38,6 +38,23 @@ export default function HistoricalReport() {
     setLoading(false);
   };
 
+  function getProductionDate(time, shift) {
+    const date = new Date(time);
+
+    if (shift === "22-06") {
+      const hour = date.getUTCHours();
+      const minute = date.getUTCMinutes();
+
+      // Between 00:00 and 00:29 UTC → previous date
+      if (hour === 0 && minute <= 30) {
+        date.setUTCDate(date.getUTCDate() - 1);
+      }
+    }
+
+    // Return UTC date
+    return date.toISOString().split("T")[0];
+  }
+
   function getShiftProduction(data = []) {
     const resultMap = new Map();
 
@@ -48,7 +65,8 @@ export default function HistoricalReport() {
 
     // STEP 2: keep overwriting → last value wins
     for (const item of data) {
-      const date = item.time.split("T")[0];
+      console.log("ITEM", item);
+      const date = getProductionDate(item.time, item.shift);
       const shift = item.shift;
       const key = `${date}|${shift}`;
 
@@ -58,7 +76,7 @@ export default function HistoricalReport() {
         production: item.value,
       });
     }
-
+    console.log(Array.from(resultMap.values()));
     // STEP 3: convert map → array
     return Array.from(resultMap.values());
   }
@@ -84,7 +102,9 @@ export default function HistoricalReport() {
         );
 
         // Assign to the shift/date where the stop started
-        const date = stopStart.time.split("T")[0];
+        //const date = stopStart.time.split("T")[0];
+        const date = getProductionDate(stopStart.time, item.shift);
+
         const shift = stopStart.shift;
 
         const key = `${date}|${shift}`;
