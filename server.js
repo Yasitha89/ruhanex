@@ -2,21 +2,26 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// Recreate __dirname for ES Modules
+const app = express();
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Tell Express to serve the static files from the Vite build folder
+// API routes
+app.get("/api/hello", (req, res) => {
+  res.json({ message: "Hello from Express" });
+});
+
+// Static files
 app.use(express.static(path.join(__dirname, "dist")));
 
-// Route all requests to index.html so React Router works
-app.get("*", (req, res) => {
+// Catch-all for React Router
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
