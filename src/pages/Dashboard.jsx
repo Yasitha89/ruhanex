@@ -54,7 +54,7 @@ export default function Dashboard() {
   }, [shift, dateRange, date]);
 
   return (
-    <Card>
+    <Card title="Dashboard">
       <div
         style={{
           display: "flex",
@@ -69,20 +69,7 @@ export default function Dashboard() {
             justifyContent: "flex-start",
             width: "100%",
           }}
-        >
-          <Select
-            value={shift}
-            onChange={(value) => setShift(value)}
-            style={{ width: 150 }}
-            options={[
-              { value: "06-14", label: "06-14 Shift" },
-              { value: "14-22", label: "14-22 Shift" },
-              { value: "22-06", label: "22-06 Shift" },
-              { value: "all", label: "All Shifts" },
-            ]}
-          />
-          <DatePicker value={date} onChange={onChange} format="YYYY-MM-DD" />
-        </Space>
+        ></Space>
         {/* <RangePicker
         showTime={{
           format: "HH:mm",
@@ -93,13 +80,10 @@ export default function Dashboard() {
         onChange={(values) => setDateRange(values)}
       /> */}
         <Flex gap={16}>
-          <Card
-            style={{ width: 250, marginBottom: 20 }}
-            title="Shift Production"
-          >
+          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 2 Status">
             <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
           </Card>
-          <Card style={{ width: 250, marginBottom: 20 }} title="Shift Downtime">
+          <Card style={{ width: 250, marginBottom: 20 }} title="Sorting Status">
             <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
           </Card>
         </Flex>
