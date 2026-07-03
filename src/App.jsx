@@ -8,7 +8,7 @@
 
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
-import Login from "./pages/Login";
+import Login from "./pages/login";
 import Dashboard from "./pages/Dashboard";
 import LiveCount from "./pages/LiveCount";
 import Settings from "./pages/Settings";
