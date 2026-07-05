@@ -1,7 +1,10 @@
 import axios from "axios";
 
+// const api = axios.create({
+//   baseURL: "http://34.235.63.22:1880",
+// });
 const api = axios.create({
-  baseURL: "http://34.235.63.22:1880",
+  baseURL: "http://ruhanex.chikirisoft.com/api",
 });
 
 export const getHistoricalData = async (line, fromDate, toDate) => {
