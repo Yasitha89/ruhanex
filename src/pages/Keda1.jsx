@@ -15,11 +15,13 @@ import {
   getCurrentShiftTimeRange,
 } from "../utils/shiftUtils";
 
+const { currentShift: initialShift } = getCurrentShiftTimeRange();
+
 export default function Keda1() {
   const [data, setData] = useState([]);
   const [downtime, setDowntime] = useState([]);
   const [currentShiftDowntime, setCurrentShiftDowntime] = useState([]);
-  const [shift, setShift] = useState("14-22");
+  const [shift, setShift] = useState(initialShift);
   const [lastValue, setLastValue] = useState(0);
   const [currentShift, setCurrentShift] = useState("06-14");
   const [lineSpeed, setLineSpeed] = useState(0);
