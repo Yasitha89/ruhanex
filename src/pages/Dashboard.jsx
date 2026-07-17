@@ -24,7 +24,7 @@ export default function Dashboard() {
     // const toTime = dateRange?.[1]?.toISOString();
 
     const [data, last] = await Promise.all([
-      getShiftData(shift, 24, fromTime, toTime),
+      //getShiftData(shift, fromTime, toTime),
       getShiftLast(shift),
     ]);
 
