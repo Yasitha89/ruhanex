@@ -80,10 +80,10 @@ export default function Dashboard() {
         onChange={(values) => setDateRange(values)}
       /> */}
         <Flex gap={16}>
-          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 2 Status">
+          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 1 Status">
             <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
           </Card>
-          <Card style={{ width: 250, marginBottom: 20 }} title="Sorting Status">
+          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 2 Status">
             <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
           </Card>
         </Flex>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Card, Select, DatePicker, Space, Flex, Tag } from "antd";
+import { Card, Select, DatePicker, Space, Flex, Tag, Badge } from "antd";
 import ProductionChart from "../components/ProductionChart";
 import DowntimeChart from "../components/DowntimeChart";
 import {
@@ -15,12 +15,13 @@ import {
   getCurrentShiftTimeRange,
 } from "../utils/shiftUtils";
 
-export default function Keda2() {
+export default function Keda1() {
   const [data, setData] = useState([]);
   const [downtime, setDowntime] = useState([]);
   const [currentShiftDowntime, setCurrentShiftDowntime] = useState([]);
   const [shift, setShift] = useState("14-22");
   const [lastValue, setLastValue] = useState(0);
+  const [currentShift, setCurrentShift] = useState("06-14");
   const [lineSpeed, setLineSpeed] = useState(0);
   const [tilesPerMin, setTilesPerMin] = useState(0);
   const [dateRange, setDateRange] = useState([
@@ -30,6 +31,7 @@ export default function Keda2() {
   const [date, setDate] = useState(dayjs());
   const [selectedShiftLastValue, setSelectedShiftLastValue] = useState(0);
   const [shiftStatus, setShiftStatus] = useState("Stopped");
+  const [sensorStatus, setSensorStatus] = useState("Connecting..");
 
   const { RangePicker } = DatePicker;
 
@@ -73,12 +75,13 @@ export default function Keda2() {
 
       setSelectedShiftLastValue(total);
     }
-
+    setCurrentShift(currentShift);
     setShiftStatus(last?.shiftStatus);
     setData(data);
     setDowntime(downtime);
     setCurrentShiftDowntime(currentShiftDowntime);
     setLastValue(last?.value ?? 0);
+    setSensorStatus(last?.sensorStatus);
     setLineSpeed(lineSpeed?.lineSpeed);
   };
 
@@ -143,22 +146,44 @@ export default function Keda2() {
         gap: 20, // 👈 controls vertical spacing
       }}
     >
-      <h3 style={{ textAlign: "left" }}>Keda 2 Production Dashboard</h3>
+      <h3 style={{ textAlign: "left" }}>Keda 1 Production Dashboard</h3>
       <Row>
         <Col xs={24} span={8}>
           <Card
             title="Current Shift Status"
             style={{
+              textAlign: "left",
               width: "100%",
               marginBottom: "10px",
               marginTop: "10px",
             }}
+            extra={
+              <div style={{ display: "flex", gap: "8px", alignItems: "right" }}>
+                <p1>Sensor Status: </p1>
+                <Badge
+                  styles={{
+                    indicator: {
+                      width: 14,
+                      height: 14,
+                    },
+                  }}
+                  status={
+                    sensorStatus === "Online"
+                      ? "success"
+                      : sensorStatus === "Offline"
+                        ? "error"
+                        : "default" // This acts as your final "else" fallback
+                  }
+                  text={sensorStatus}
+                />
+              </div>
+            }
           >
             <div className="shift_statBar">
               <Row gutter={24} style={{ marginBottom: "15px" }}>
                 <Col sm={24} md={12} lg={6}>
                   <Statistic
-                    title="Status"
+                    title="Shift Status"
                     value={shiftStatus} // Keep the value as a plain string
                     formatter={(val) => (
                       <Tag
@@ -207,6 +232,7 @@ export default function Keda2() {
             extra={
               <div style={{ display: "flex", gap: "8px", alignItems: "right" }}>
                 <Select
+                  defaultValue={currentShift}
                   value={shift}
                   onChange={(value) => setShift(value)}
                   style={{ width: 150 }}

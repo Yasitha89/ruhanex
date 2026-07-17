@@ -4,7 +4,7 @@ import axios from "axios";
 //   baseURL: "http://34.235.63.22:1880"
 // });
 const api = axios.create({
-  baseURL: "http://ruhanex.chikirisoft.com/api",
+  baseURL: "https://ruhanex.chikirisoft.com/api",
 });
 
 export const getShiftData = async (shift, fromTime, toTime) => {
