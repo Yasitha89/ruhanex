@@ -161,7 +161,7 @@ export default function Keda1() {
             }}
             extra={
               <div style={{ display: "flex", gap: "8px", alignItems: "right" }}>
-                <p1>Sensor Status: </p1>
+                <span>Sensor Status: </span>
                 <Badge
                   styles={{
                     indicator: {
