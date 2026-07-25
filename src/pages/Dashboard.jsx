@@ -1,95 +1,89 @@
-import { useState, useEffect } from "react";
-import { Card, Select, DatePicker, Space, Flex } from "antd";
-import ProductionChart from "../components/ProductionChart";
-import { getShiftData, getShiftLast } from "../api/dashboardApi";
-import dayjs from "dayjs";
-import { Row, Col } from "antd";
-import { getShiftTimeRange } from "../utils/shiftUtils";
+import React, { useEffect, useState } from "react";
+import { Col, Row, Typography, Spin, Alert } from "antd";
+import LineSummaryCard from "../components/LineSummaryCard";
+import { getDashboardStats } from "../api/dashboardApi";
+import { getCurrentShiftTimeRange } from "../utils/shiftUtils";
+
+const { Title, Text } = Typography;
 
 export default function Dashboard() {
-  const [data, setData] = useState([]);
-  const [shift, setShift] = useState("14-22");
-  const [lastValue, setLastValue] = useState(0);
-  const [dateRange, setDateRange] = useState([
-    dayjs().subtract(6, "hour"),
-    dayjs(),
-  ]);
-  const [date, setDate] = useState(dayjs());
+  const [lineStats, setLineStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const { RangePicker } = DatePicker;
+  const { currentShiftFromTime, currentShiftToTime, currentShift } =
+    getCurrentShiftTimeRange();
 
   const loadData = async () => {
-    const { fromTime, toTime } = getShiftTimeRange(date, shift);
-    // const fromTime = dateRange?.[0]?.toISOString();
-    // const toTime = dateRange?.[1]?.toISOString();
+    try {
+      const data = await getDashboardStats(
+        "keda 1",
+        currentShift,
+        currentShiftFromTime,
+        currentShiftToTime,
+      );
 
-    const [data, last] = await Promise.all([
-      //getShiftData(shift, fromTime, toTime),
-      getShiftLast(shift),
-    ]);
-
-    setData(data);
-
-    setLastValue(last?.value ?? 0);
-  };
-
-  const onChange = (value) => {
-    setDate(value);
+      if (data.success) {
+        setLineStats(data.lineStats);
+        setError("");
+      } else {
+        throw new Error("Invalid response");
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    // initial load
+    loadData();
 
-    if (dateRange && dateRange.length === 2 && dateRange[0] && dateRange[1]) {
-      loadData();
-    }
+    const timer = setInterval(loadData, 5000);
 
-    // live refresh
-    const interval = setInterval(() => {
-      loadData();
-    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
-    // cleanup (IMPORTANT)
-    return () => clearInterval(interval);
-  }, [shift, dateRange, date]);
+  if (loading) {
+    return (
+      <div style={{ textAlign: "center", padding: 60 }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert type="error" message="Connection Error" description={error} />
+    );
+  }
 
   return (
-    <Card title="Dashboard">
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 20, // 👈 controls vertical spacing
-        }}
-      >
-        <Space
-          size="middle"
-          style={{
-            display: "flex",
-            justifyContent: "flex-start",
-            width: "100%",
-          }}
-        ></Space>
-        {/* <RangePicker
-        showTime={{
-          format: "HH:mm",
-          showSecond: false,
-        }}
-        format="YYYY-MM-DD HH:mm"
-        value={dateRange}
-        onChange={(values) => setDateRange(values)}
-      /> */}
-        <Flex gap={16}>
-          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 1 Status">
-            <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-          </Card>
-          <Card style={{ width: 250, marginBottom: 20 }} title="Keda 2 Status">
-            <h1 style={{ fontSize: 40, color: "#000" }}>{lastValue}</h1>
-          </Card>
-        </Flex>
+    <div style={{ width: "100%" }}>
+      <div style={{ marginBottom: 20 }}>
+        <Title level={3} style={{ marginBottom: 4 }}>
+          Production Dashboard
+        </Title>
 
-        {/* <ProductionChart data={data} /> */}
+        <Text type="secondary">
+          Current production-line performance summary
+        </Text>
       </div>
-    </Card>
+
+      <Row gutter={[20, 20]}>
+        <Col xs={24} md={24} lg={12} xl={8}>
+          <LineSummaryCard
+            lineName={lineStats.lineName}
+            status={lineStats.status}
+            ole={lineStats.ole}
+            availability={lineStats.availability}
+            performance={lineStats.performance}
+            production={lineStats.production}
+            downtime={lineStats.formattedDowntime}
+          />
+        </Col>
+      </Row>
+    </div>
   );
 }

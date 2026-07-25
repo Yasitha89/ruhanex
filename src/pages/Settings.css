@@ -1,0 +1,52 @@
+.line-settings-form .ant-form-item-label {
+  text-align: left;
+}
+
+.line-settings-form .ant-form-item-label > label {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.line-settings-form .ant-form-item-control {
+  text-align: left;
+}
+
+.left-aligned-select {
+  text-align: left;
+}
+
+.left-aligned-select .ant-select-selection-item,
+.left-aligned-select .ant-select-selection-placeholder {
+  text-align: left;
+}
+
+.left-aligned-number .ant-input-number-input {
+  text-align: left;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+
+.settings-updated-time {
+  margin-right: auto;
+}
+
+@media (max-width: 575px) {
+  .settings-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-updated-time {
+    margin-right: 0;
+  }
+
+  .settings-actions .ant-btn {
+    width: 100%;
+  }
+}

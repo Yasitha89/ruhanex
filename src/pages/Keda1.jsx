@@ -13,6 +13,7 @@ import { Row, Col, Statistic } from "antd";
 import {
   getShiftTimeRange,
   getCurrentShiftTimeRange,
+  calculateTileSqm,
 } from "../utils/shiftUtils";
 
 const { currentShift: initialShift } = getCurrentShiftTimeRange();
@@ -23,6 +24,7 @@ export default function Keda1() {
   const [currentShiftDowntime, setCurrentShiftDowntime] = useState([]);
   const [shift, setShift] = useState(initialShift);
   const [lastValue, setLastValue] = useState(0);
+  const [tileSize, setTileSize] = useState(0.18);
   const [currentShift, setCurrentShift] = useState("06-14");
   const [lineSpeed, setLineSpeed] = useState(0);
   const [tilesPerMin, setTilesPerMin] = useState(0);
@@ -79,6 +81,7 @@ export default function Keda1() {
     }
     setCurrentShift(currentShift);
     setShiftStatus(last?.shiftStatus);
+    setTileSize(last?.tileSize);
     setData(data);
     setDowntime(downtime);
     setCurrentShiftDowntime(currentShiftDowntime);
@@ -213,8 +216,18 @@ export default function Keda1() {
                 <Col sm={24} md={12} lg={6}>
                   <Statistic
                     title="Production"
-                    suffix={<span style={{ fontSize: "14px" }}>Tiles</span>}
                     value={lastValue}
+                    formatter={() => (
+                      <span>
+                        {Number(lastValue || 0).toLocaleString()}{" "}
+                        <span style={{ fontSize: "14px" }}>Tiles</span>
+                        {" / "}
+                        {calculateTileSqm(tileSize, lastValue).toFixed(2)}
+                        <span style={{ fontSize: "14px", marginLeft: "4px" }}>
+                          m²
+                        </span>
+                      </span>
+                    )}
                   />
                 </Col>
               </Row>

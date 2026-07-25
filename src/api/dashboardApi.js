@@ -49,3 +49,10 @@ export const getLineSpeed = async () => {
   const res = await api.get("/api/line_speed");
   return res.data;
 };
+
+export const getDashboardStats = async (line, shift, fromTime, toTime) => {
+  const res = await api.get("/api/getDashboardStats", {
+    params: { line, shift, fromTime, toTime },
+  });
+  return res.data;
+};

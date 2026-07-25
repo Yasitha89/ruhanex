@@ -8,22 +8,32 @@ export function getShiftTimeRange(selectedDate, shift) {
   switch (shift) {
     case "06-14":
       fromTime = baseDate.hour(6).minute(0).second(0).millisecond(0);
-      toTime = baseDate.hour(14).minute(5).second(0).millisecond(0);;
+      toTime = baseDate.hour(14).minute(5).second(0).millisecond(0);
       break;
 
     case "14-22":
-      fromTime = baseDate.hour(14).minute(0).second(0).millisecond(0);;
-      toTime = baseDate.hour(22).minute(5).second(0).millisecond(0);;
+      fromTime = baseDate.hour(14).minute(0).second(0).millisecond(0);
+      toTime = baseDate.hour(22).minute(5).second(0).millisecond(0);
       break;
 
     case "22-06":
-      fromTime = baseDate.hour(22).minute(0).second(0).millisecond(0);;
-      toTime = baseDate.add(1, "day").hour(6).minute(5).second(0).millisecond(0);;
+      fromTime = baseDate.hour(22).minute(0).second(0).millisecond(0);
+      toTime = baseDate
+        .add(1, "day")
+        .hour(6)
+        .minute(5)
+        .second(0)
+        .millisecond(0);
       break;
 
     case "all":
-      fromTime = baseDate.hour(6).minute(0).second(0).millisecond(0);;
-      toTime = baseDate.add(1, "day").hour(6).minute(5).second(0).millisecond(0);;
+      fromTime = baseDate.hour(6).minute(0).second(0).millisecond(0);
+      toTime = baseDate
+        .add(1, "day")
+        .hour(6)
+        .minute(5)
+        .second(0)
+        .millisecond(0);
       break;
 
     default:
@@ -44,21 +54,20 @@ export function getCurrentShiftTimeRange(date = new Date()) {
 
   let from = new Date(now);
   let to = new Date(now);
-  let shift="";
- 
+  let shift = "";
 
   // SHIFT 06:00 - 14:00
   if (hour >= 6 && hour < 14) {
     from.setHours(6, 0, 0, 0);
     to.setHours(14, 0, 0, 0);
-    shift="06-14";
+    shift = "06-14";
   }
 
   // SHIFT 14:00 - 22:00
   else if (hour >= 14 && hour < 22) {
     from.setHours(14, 0, 0, 0);
     to.setHours(22, 0, 0, 0);
-    shift="14-22";
+    shift = "14-22";
   }
 
   // SHIFT 22:00 - 06:00 (cross-day shift)
@@ -76,12 +85,32 @@ export function getCurrentShiftTimeRange(date = new Date()) {
     if (hour >= 22) {
       to.setDate(to.getDate() + 1);
     }
-     shift="22-06";
+    shift = "22-06";
   }
 
   return {
     currentShiftFromTime: from.toISOString(),
     currentShiftToTime: to.toISOString(),
-    currentShift:shift
+    currentShift: shift,
   };
+}
+
+/**
+ * Calculates total production in square metres.
+ *
+ * @param {string} tileSize Example: "60x30"
+ * @param {number} tileCount Number of tiles produced
+ * @returns {number}
+ */
+export function calculateTileSqm(tileSize, tileCount) {
+  if (!tileSize || !tileCount) return 0;
+
+  const [length, width] = tileSize.toLowerCase().split("x").map(Number);
+
+  if (!length || !width) return 0;
+
+  // Convert cm² to m²
+  const areaPerTile = (length * width) / 10000;
+
+  return areaPerTile * Number(tileCount);
 }
