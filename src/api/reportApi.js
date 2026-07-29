@@ -7,27 +7,39 @@ const api = axios.create({
   baseURL: "https://ruhanex.chikirisoft.com/api",
 });
 
-export const getHistoricalData = async (line, fromDate, toDate) => {
-  const response = await api.get("/api/history", {
+// export const getHistoricalData = async (line, fromDate, toDate) => {
+//   const response = await api.get("/api/history", {
+//     params: {
+//       line,
+//       fromDate,
+//       toDate,
+//     },
+//   });
+
+//   const sortedProductionData = (response.data.production || [])
+//     .filter((d) => d.time && d.value !== undefined)
+//     .sort((a, b) => new Date(a.time) - new Date(b.time));
+//   console.log("Sorted Production:", sortedProductionData);
+//   const sortedDowntimeData = (response.data.downtime || [])
+//     .filter((d) => d.time && d.value !== undefined)
+//     .sort((a, b) => new Date(a.time) - new Date(b.time));
+//   console.log("Sorted downtime:", sortedDowntimeData);
+//   return {
+//     production: sortedProductionData,
+//     downtime: sortedDowntimeData,
+//   };
+
+//   //return response.data;
+// };
+
+export const getHistoricalData = async (lineName, fromDate, toDate) => {
+  const response = await api.get("/api/getShiftsStats", {
     params: {
-      line,
+      lineName,
       fromDate,
       toDate,
     },
   });
 
-  const sortedProductionData = (response.data.production || [])
-    .filter((d) => d.time && d.value !== undefined)
-    .sort((a, b) => new Date(a.time) - new Date(b.time));
-  console.log("Sorted Production:", sortedProductionData);
-  const sortedDowntimeData = (response.data.downtime || [])
-    .filter((d) => d.time && d.value !== undefined)
-    .sort((a, b) => new Date(a.time) - new Date(b.time));
-  console.log("Sorted downtime:", sortedDowntimeData);
-  return {
-    production: sortedProductionData,
-    downtime: sortedDowntimeData,
-  };
-
-  //return response.data;
+  return response.data;
 };

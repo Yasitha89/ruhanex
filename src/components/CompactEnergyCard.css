@@ -1,0 +1,197 @@
+.compact-energy-card {
+  width: 100%;
+  max-width: 540px;
+  border: 1px solid rgba(5, 5, 5, 0.16);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(5, 5, 5, 0.05);
+}
+
+.compact-energy-card .ant-card-body {
+  padding: 16px 18px;
+}
+
+/* Header */
+
+.compact-energy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.compact-energy-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.compact-energy-title .ant-typography {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-energy-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.compact-energy-status .ant-badge-status-text {
+  margin-inline-start: 5px;
+  font-size: 13px;
+}
+
+.compact-energy-header-divider {
+  margin: 10px 0 14px;
+}
+
+/* Sections */
+
+.compact-energy-section {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+}
+
+.compact-energy-section-title {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.compact-energy-section-divider {
+  margin: 14px 0;
+}
+
+/* Measurement rows */
+
+.compact-energy-data-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 24px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.compact-energy-data-label {
+  width: 82px;
+  flex: 0 0 82px;
+  text-align: left;
+}
+
+.compact-energy-data-value {
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.compact-energy-data-unit {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* Current and power */
+
+.compact-current-power-row {
+  align-items: stretch;
+}
+
+.compact-current-power-row > .ant-col:first-child {
+  border-right: 1px solid rgba(5, 5, 5, 0.08);
+}
+
+.compact-power-section {
+  width: 100%;
+  text-align: left;
+}
+
+.compact-power-section .compact-energy-data-row {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.compact-power-section .compact-energy-data-label {
+  width: 92px;
+  flex: 0 0 92px;
+  text-align: left;
+}
+
+.compact-power-section .compact-energy-data-value {
+  flex: 1;
+  text-align: left;
+}
+
+/* Bottom energy and frequency line */
+
+.compact-energy-footer-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 14px;
+  background: rgba(5, 5, 5, 0.025);
+  border: 1px solid rgba(5, 5, 5, 0.08);
+  border-radius: 7px;
+}
+
+.compact-energy-footer-reading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.compact-energy-footer-reading:last-child {
+  margin-left: auto;
+}
+
+/* Mobile */
+
+@media (max-width: 575px) {
+  .compact-energy-card {
+    max-width: none;
+  }
+
+  .compact-energy-header {
+    align-items: flex-start;
+  }
+
+  .compact-energy-status {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+  }
+
+  .compact-current-power-row > .ant-col:first-child {
+    padding-bottom: 12px;
+    border-right: none;
+    border-bottom: 1px solid rgba(5, 5, 5, 0.08);
+  }
+
+  .compact-current-power-row > .ant-col:last-child {
+    padding-top: 4px;
+  }
+
+  .compact-energy-footer-line {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 10px 12px;
+  }
+
+  .compact-energy-footer-reading:last-child {
+    margin-left: 0;
+  }
+}

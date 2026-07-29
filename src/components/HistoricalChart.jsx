@@ -1,199 +1,325 @@
-// import {
-//   BarChart,
-//   Bar,
-//   XAxis,
-//   YAxis,
-//   Tooltip,
-//   Legend,
-//   CartesianGrid,
-//   ResponsiveContainer,
-// } from "recharts";
-
-// const shiftColors = {
-//   "06-14": "#4CAF50",
-//   "14-22": "#2196F3",
-//   "22-06": "#FF9800",
-// };
-
-// export default function HistoricalChart({ data }) {
-//   return (
-//     <ResponsiveContainer width="100%" height={400}>
-//       <BarChart data={data}>
-//         <CartesianGrid strokeDasharray="3 3" />
-//         <XAxis dataKey="label" />
-//         <YAxis />
-//         <Tooltip />
-//         <Legend />
-
-//         {/* Production (dynamic color via shift) */}
-//         <Bar dataKey="production" name="Production" fill="#8884d8">
-//           {data.map((entry, index) => (
-//             <cell
-//               key={`prod-${index}`}
-//               fill={shiftColors[entry.shift] || "#8884d8"}
-//             />
-//           ))}
-//         </Bar>
-
-//         {/* Downtime (always red) */}
-//         <Bar dataKey="downtime" name="Downtime" fill="#FF4D4F" />
-//       </BarChart>
-//     </ResponsiveContainer>
-//   );
-// }
-// import ReactECharts from "echarts-for-react";
-
-// const shiftColors = {
-//   "06-14": "#4CAF50",
-//   "14-22": "#2196F3",
-//   "22-06": "#FF9800",
-// };
-
-// export default function HistoricalChart({ data }) {
-//   const option = {
-//     tooltip: {
-//       trigger: "axis",
-//     },
-//     legend: {
-//       data: ["Production", "Downtime"],
-//     },
-//     grid: {
-//       left: "3%",
-//       right: "4%",
-//       bottom: "3%",
-//       containLabel: true,
-//     },
-//     xAxis: {
-//       type: "category",
-//       data: data.map((d) => d.label),
-//       axisLabel: {
-//         rotate: 45,
-//       },
-//     },
-//     yAxis: {
-//       type: "value",
-//     },
-//     series: [
-//       // PRODUCTION (dynamic color per bar)
-//       {
-//         name: "Production",
-//         type: "bar",
-//         data: data.map((d) => ({
-//           value: d.production,
-//           itemStyle: {
-//             color: shiftColors[d.shift] || "#8884d8",
-//           },
-//         })),
-//       },
-
-//       // DOWNTIME (always red)
-//       {
-//         name: "Downtime",
-//         type: "bar",
-//         data: data.map((d) => d.downtime),
-//         itemStyle: {
-//           color: "#FF4D4F",
-//         },
-//       },
-//     ],
-//   };
-
-//   return <ReactECharts option={option} style={{ height: 400 }} />;
-// }
+import { useMemo } from "react";
+import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
 
-const shiftColors = {
-  "06-14": "#4CAF50",
-  "14-22": "#2196F3",
-  "22-06": "#FF9800",
+const metricConfig = {
+  production: {
+    label: "Production",
+    unit: "m²",
+    axisType: "production",
+    chartType: "bar",
+  },
+  tileCount: {
+    label: "Tile Count",
+    unit: "tiles",
+    axisType: "production",
+    chartType: "line",
+  },
+  totalDowntimeMinutes: {
+    label: "Downtime",
+    unit: "min",
+    axisType: "minutes",
+    chartType: "bar",
+  },
+  actualOperatingMinutes: {
+    label: "Operating Time",
+    unit: "min",
+    axisType: "minutes",
+    chartType: "line",
+  },
+  completedStops: {
+    label: "Completed Stops",
+    unit: "stops",
+    axisType: "production",
+    chartType: "line",
+  },
+  ole: {
+    label: "OLE",
+    unit: "%",
+    axisType: "percentage",
+    chartType: "line",
+  },
+  availability: {
+    label: "Availability",
+    unit: "%",
+    axisType: "percentage",
+    chartType: "line",
+  },
+  performance: {
+    label: "Performance",
+    unit: "%",
+    axisType: "percentage",
+    chartType: "line",
+  },
+  quality: {
+    label: "Quality",
+    unit: "%",
+    axisType: "percentage",
+    chartType: "line",
+  },
 };
 
-export default function HistoricalChart({ data }) {
-  // STEP 1: build grouped data with visual gaps between dates
-  const groupedData = [];
+function getAxisIndex(metric) {
+  const axisType = metricConfig[metric]?.axisType;
 
-  let lastDate = null;
+  if (axisType === "percentage") {
+    return 0;
+  }
 
-  data.forEach((d) => {
-    if (lastDate && lastDate !== d.date) {
-      // spacer row between dates
-      groupedData.push({
-        label: "",
-        production: 0,
-        downtime: 0,
-        shift: null,
-        isGap: true,
+  if (axisType === "minutes") {
+    return 1;
+  }
+
+  return 2;
+}
+
+export default function HistoricalChart({
+  data = [],
+  selectedMetrics = [],
+  loading = false,
+}) {
+  const option = useMemo(() => {
+    const labels = data.map(
+      (record) => `${record.shiftDate} | ${record.shift}`,
+    );
+
+    const series = selectedMetrics
+      .filter((metric) => metricConfig[metric])
+      .map((metric) => {
+        const config = metricConfig[metric];
+
+        return {
+          name: config.label,
+          type: config.chartType,
+          yAxisIndex: getAxisIndex(metric),
+
+          data: data.map((record) => {
+            const value = Number(record[metric]);
+            return Number.isFinite(value) ? value : 0;
+          }),
+
+          smooth: config.chartType === "line",
+          symbol: "circle",
+          symbolSize: 7,
+          showSymbol: data.length <= 40,
+
+          barMaxWidth: 30,
+
+          emphasis: {
+            focus: "series",
+          },
+
+          lineStyle: {
+            width: 2,
+          },
+        };
       });
-    }
 
-    groupedData.push({
-      label: `${d.date} | ${d.shift}`,
-      production: d.production,
-      downtime: d.downtime,
-      shift: d.shift,
-      isGap: false,
-    });
-
-    lastDate = d.date;
-  });
-
-  // STEP 2: ECharts option
-  const option = {
-    tooltip: {
-      trigger: "axis",
-    },
-    legend: {
-      data: ["Production", "Downtime"],
-    },
-    grid: {
-      left: "3%",
-      right: "4%",
-      bottom: "10%",
-      containLabel: true,
-    },
-    xAxis: {
-      type: "category",
-      data: groupedData.map((d) => d.label),
-      axisLabel: {
-        rotate: 45,
+    return {
+      title: {
+        text: "Keda 1 Historical Shift Performance",
+        left: "center",
       },
-      boundaryGap: false,
-    },
-    yAxis: {
-      type: "value",
-    },
-    series: [
-      // PRODUCTION (shift-based color)
-      {
-        name: "Production",
-        type: "bar",
-        barGap: "0%",
-        barCategoryGap: "5%",
 
-        data: groupedData.map((d) => ({
-          value: d.production,
-          itemStyle: {
-            color: d.isGap ? "transparent" : shiftColors[d.shift] || "#8884d8",
+      tooltip: {
+        trigger: "axis",
+        axisPointer: {
+          type: "cross",
+        },
+
+        formatter: (params) => {
+          if (!Array.isArray(params) || !params.length) {
+            return "";
+          }
+
+          const record = data[params[0].dataIndex];
+
+          const lines = [
+            `<strong>${record.shiftDate} | ${record.shift}</strong>`,
+            `Line: ${record.lineName || "-"}`,
+            `Status: ${record.status || "-"}`,
+          ];
+
+          params.forEach((item) => {
+            const metric = selectedMetrics[item.seriesIndex];
+            const config = metricConfig[metric];
+
+            lines.push(
+              `${item.marker} ${item.seriesName}: ` +
+                `${Number(item.value).toLocaleString("en-US", {
+                  maximumFractionDigits: 2,
+                })} ${config?.unit || ""}`,
+            );
+          });
+
+          return lines.join("<br/>");
+        },
+      },
+
+      legend: {
+        top: 35,
+        type: "scroll",
+      },
+
+      grid: {
+        top: 90,
+        left: 80,
+        right: 190,
+        bottom: 100,
+        containLabel: true,
+      },
+
+      toolbox: {
+        right: 20,
+        feature: {
+          dataZoom: {
+            yAxisIndex: "none",
           },
-        })),
-        barWidth: 10, // Width in pixels
-      },
-
-      // DOWNTIME (always red)
-      {
-        name: "Downtime",
-        type: "bar",
-        barGap: "0%",
-        data: groupedData.map((d) => ({
-          value: d.downtime,
-          itemStyle: {
-            color: d.isGap ? "transparent" : "#FF4D4F",
+          restore: {},
+          saveAsImage: {
+            name: "Historical_Shift_Performance",
           },
-        })),
-        barWidth: 10, // Width in pixels
+        },
       },
-    ],
-  };
 
-  return <ReactECharts option={option} style={{ height: 450 }} />;
+      xAxis: {
+        type: "category",
+        data: labels,
+        boundaryGap: true,
+        axisLabel: {
+          rotate: data.length > 8 ? 45 : 0,
+          hideOverlap: true,
+        },
+      },
+
+      yAxis: [
+        {
+          type: "value",
+          name: "Percentage (%)",
+          position: "left",
+          min: 0,
+          max: 100,
+          axisLabel: {
+            formatter: "{value}%",
+          },
+        },
+        {
+          type: "value",
+          name: "Time (min)",
+          position: "right",
+          offset: 0,
+          min: 0,
+
+          nameLocation: "middle",
+          nameGap: 55,
+
+          axisLabel: {
+            formatter: "{value} min",
+            margin: 12,
+          },
+        },
+        {
+          type: "value",
+          name: "Production / Count",
+          position: "right",
+          offset: 100,
+
+          min: 0,
+
+          nameLocation: "middle",
+          nameGap: 65,
+
+          nameTextStyle: {
+            fontSize: 12,
+          },
+
+          axisLabel: {
+            margin: 12,
+            formatter: (value) =>
+              Number(value).toLocaleString("en-US", {
+                notation: value >= 10000 ? "compact" : "standard",
+                maximumFractionDigits: 1,
+              }),
+          },
+
+          splitLine: {
+            show: false,
+          },
+        },
+      ],
+
+      dataZoom: [
+        {
+          type: "inside",
+          start: 0,
+          end: data.length > 20 ? 40 : 100,
+        },
+        {
+          type: "slider",
+          bottom: 25,
+          start: 0,
+          end: data.length > 20 ? 40 : 100,
+        },
+      ],
+
+      series,
+    };
+  }, [data, selectedMetrics]);
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          height: 450,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (!data.length) {
+    return (
+      <div
+        style={{
+          height: 350,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Empty description="No historical chart data" />
+      </div>
+    );
+  }
+
+  if (!selectedMetrics.length) {
+    return (
+      <div
+        style={{
+          height: 350,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Empty description="Select at least one chart column" />
+      </div>
+    );
+  }
+
+  return (
+    <ReactECharts
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{
+        height: 550,
+        width: "100%",
+      }}
+    />
+  );
 }

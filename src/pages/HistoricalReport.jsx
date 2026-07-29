@@ -1,7 +1,15 @@
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import dayjs from "dayjs";
 
-import { Tabs, DatePicker, Button, Space, message } from "antd";
+import {
+  Tabs,
+  DatePicker,
+  Button,
+  Space,
+  Select,
+  Typography,
+  message,
+} from "antd";
 
 import { SearchOutlined, DownloadOutlined } from "@ant-design/icons";
 
@@ -13,273 +21,410 @@ import HistoricalTable from "../components/HistoricalTable";
 import HistoricalChart from "../components/HistoricalChart";
 
 const { RangePicker } = DatePicker;
+const { Text } = Typography;
+
+const chartMetricOptions = [
+  {
+    label: "Production",
+    value: "production",
+  },
+  {
+    label: "Tile Count",
+    value: "tileCount",
+  },
+  {
+    label: "Downtime",
+    value: "totalDowntimeMinutes",
+  },
+  {
+    label: "OLE",
+    value: "ole",
+  },
+  {
+    label: "Availability",
+    value: "availability",
+  },
+  {
+    label: "Performance",
+    value: "performance",
+  },
+  {
+    label: "Quality",
+    value: "quality",
+  },
+  {
+    label: "Operating Time",
+    value: "actualOperatingMinutes",
+  },
+  {
+    label: "Completed Stops",
+    value: "completedStops",
+  },
+];
+
+const lineMap = {
+  keda1: "KEDA 1",
+  keda2: "KEDA 2",
+};
 
 export default function HistoricalReport() {
-  const [activeTab, setActiveTab] = useState("keda2");
-  const [dateRange, setDateRange] = useState([]);
+  const [activeTab, setActiveTab] = useState("keda1");
+
+  const [dateRange, setDateRange] = useState([
+    dayjs().subtract(7, "day"),
+    dayjs(),
+  ]);
+
+  const [selectedMetrics, setSelectedMetrics] = useState([
+    "production",
+    "totalDowntimeMinutes",
+    "ole",
+  ]);
+
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState([]);
 
   const loadData = async () => {
-    if (!dateRange || dateRange.length !== 2) {
-      message.warning("Please select date range");
+    if (!Array.isArray(dateRange) || dateRange.length !== 2) {
+      message.warning("Please select a date range");
       return;
     }
 
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const result = await getHistoricalData(
-      activeTab,
-      dateRange[0].format("YYYY-MM-DD"),
-      dateRange[1].format("YYYY-MM-DD"),
-    );
+      const lineName = lineMap[activeTab];
 
-    setData(result || []);
-    setLoading(false);
-  };
+      const result = await getHistoricalData(
+        lineName,
+        dateRange[0].format("YYYY-MM-DD"),
+        dateRange[1].format("YYYY-MM-DD"),
+      );
 
-  function getProductionDate(time, shift) {
-    const date = new Date(time);
+      /*
+       * Supported API response formats:
+       *
+       * 1. [{ lineStats: {...} }]
+       * 2. [{...lineStats fields}]
+       * 3. { data: [{ lineStats: {...} }] }
+       * 4. { records: [{ lineStats: {...} }] }
+       */
 
-    if (shift === "22-06") {
-      const hour = date.getUTCHours();
-      const minute = date.getUTCMinutes();
+      const rawRecords = Array.isArray(result)
+        ? result
+        : result?.data || result?.records || [];
 
-      // Between 00:00 and 00:29 UTC → previous date
-      if (hour === 0 && minute <= 30) {
-        date.setUTCDate(date.getUTCDate() - 1);
-      }
-    }
+      const normalizedRecords = rawRecords
+        .map((record) => {
+          const stats = record?.lineStats || record;
 
-    // Return UTC date
-    return date.toISOString().split("T")[0];
-  }
+          return {
+            id: record?._id || stats?._id,
+            ...stats,
+          };
+        })
+        .filter((record) => record?.shiftDate)
+        .sort((a, b) => {
+          const firstTime = new Date(
+            a.shiftStart || `${a.shiftDate}T00:00:00`,
+          ).getTime();
 
-  function getShiftProduction(data = []) {
-    const resultMap = new Map();
+          const secondTime = new Date(
+            b.shiftStart || `${b.shiftDate}T00:00:00`,
+          ).getTime();
 
-    // STEP 1: sort by time ascending (IMPORTANT)
-    data.sort(
-      (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
-    );
-
-    // STEP 2: keep overwriting → last value wins
-    for (const item of data) {
-      console.log("ITEM", item);
-      const date = getProductionDate(item.time, item.shift);
-      const shift = item.shift;
-      const key = `${date}|${shift}`;
-
-      resultMap.set(key, {
-        date,
-        shift,
-        production: item.value,
-      });
-    }
-    console.log(Array.from(resultMap.values()));
-    // STEP 3: convert map → array
-    return Array.from(resultMap.values());
-  }
-  function getShiftDowntime(data = []) {
-    if (!Array.isArray(data)) return [];
-
-    // Sort by timestamp
-    const sorted = [...data].sort((a, b) => Number(a.ts) - Number(b.ts));
-
-    const result = new Map();
-    let stopStart = null;
-
-    for (const item of sorted) {
-      if (item.downStatus === "STOP_START") {
-        stopStart = item;
-        continue;
-      }
-
-      if (item.downStatus === "STOP_END" && stopStart) {
-        // Calculate downtime in milliseconds
-        const downtime = Math.floor(
-          (Number(item.ts) - Number(stopStart.ts)) / 60000,
-        );
-
-        // Assign to the shift/date where the stop started
-        //const date = stopStart.time.split("T")[0];
-        const date = getProductionDate(stopStart.time, item.shift);
-
-        const shift = stopStart.shift;
-
-        const key = `${date}|${shift}`;
-
-        if (!result.has(key)) {
-          result.set(key, {
-            date,
-            shift,
-            downtime: 0,
-            downtimeMinutes: 0,
-            downtimeHours: 0,
-          });
-        }
-
-        const record = result.get(key);
-        record.downtime += downtime;
-
-        stopStart = null;
-      }
-    }
-
-    // Convert units
-    for (const record of result.values()) {
-      record.downtimeMinutes = +(record.downtime / 60000).toFixed(2);
-      record.downtimeHours = +(record.downtime / 3600000).toFixed(2);
-    }
-
-    return Array.from(result.values()).sort(
-      (a, b) =>
-        new Date(a.date) - new Date(b.date) || a.shift.localeCompare(b.shift),
-    );
-  }
-
-  function mergeShiftData(productionData = [], downtimeData = []) {
-    const map = new Map();
-
-    // Add production
-    for (const item of productionData) {
-      const key = `${item.date}|${item.shift}`;
-
-      map.set(key, {
-        date: item.date,
-        shift: item.shift,
-        production: item.production,
-        downtime: 0,
-      });
-    }
-
-    // Add downtime
-    for (const item of downtimeData) {
-      const key = `${item.date}|${item.shift}`;
-
-      if (map.has(key)) {
-        map.get(key).downtime = item.downtime;
-      } else {
-        map.set(key, {
-          date: item.date,
-          shift: item.shift,
-          production: 0,
-          downtime: item.downtime,
+          return firstTime - secondTime;
         });
+
+      setData(normalizedRecords);
+
+      if (normalizedRecords.length === 0) {
+        message.info("No historical records found");
       }
+    } catch (error) {
+      console.error("Historical data loading error:", error);
+
+      message.error(
+        error?.response?.data?.message ||
+          error?.message ||
+          "Unable to load historical data",
+      );
+
+      setData([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const tableData = useMemo(() => {
+    return data.map((record, index) => ({
+      key:
+        record.id ||
+        `${record.lineName}-${record.shiftDate}-${record.shift}-${index}`,
+      ...record,
+    }));
+  }, [data]);
+
+  const exportExcel = async () => {
+    if (!tableData.length) {
+      message.warning("There is no data to export");
+      return;
     }
 
-    return Array.from(map.values()).sort(
-      (a, b) =>
-        new Date(a.date) - new Date(b.date) || a.shift.localeCompare(b.shift),
-    );
-  }
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("Historical Report");
 
-  const { tableData, chartData } = useMemo(() => {
-    const production = getShiftProduction(data.production);
-    const downtime = getShiftDowntime(data.downtime);
+      worksheet.columns = [
+        {
+          header: "Date",
+          key: "shiftDate",
+          width: 14,
+        },
+        {
+          header: "Line",
+          key: "lineName",
+          width: 14,
+        },
+        {
+          header: "Shift",
+          key: "shift",
+          width: 12,
+        },
+        {
+          header: "Status",
+          key: "status",
+          width: 12,
+        },
+        {
+          header: "Tile Count",
+          key: "tileCount",
+          width: 14,
+        },
+        {
+          header: "Production",
+          key: "production",
+          width: 14,
+        },
+        {
+          header: "Unit",
+          key: "productionUnit",
+          width: 10,
+        },
+        {
+          header: "Downtime (min)",
+          key: "totalDowntimeMinutes",
+          width: 18,
+        },
+        {
+          header: "Completed Stops",
+          key: "completedStops",
+          width: 18,
+        },
+        {
+          header: "OLE (%)",
+          key: "ole",
+          width: 12,
+        },
+        {
+          header: "Availability (%)",
+          key: "availability",
+          width: 18,
+        },
+        {
+          header: "Performance (%)",
+          key: "performance",
+          width: 18,
+        },
+        {
+          header: "Quality (%)",
+          key: "quality",
+          width: 14,
+        },
+        {
+          header: "Operating Time (min)",
+          key: "actualOperatingMinutes",
+          width: 22,
+        },
+        {
+          header: "Planned Production Time (min)",
+          key: "plannedProductionMinutes",
+          width: 28,
+        },
+      ];
 
-    const dataTable = mergeShiftData(production, downtime);
-    // const dataChart = dataTable.map((item) => ({
-    // //   label: `${item.date} (${item.shift})`,
-    // //   production: item.production,
-    // //   downtime: item.downtime,
-    // //   shift: item.shift,
-    // // }));
-
-    const dataChart = dataTable.map((d) => ({
-      date: d.date,
-      shift: d.shift,
-      label: `${d.date} | ${d.shift}`,
-      production: d.production,
-      downtime: d.downtime,
-    }));
-
-    return {
-      tableData: dataTable,
-      chartData: dataChart,
-    };
-  }, [data.production, data.downtime]);
-
-  const exportExcel = async (tableData) => {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("Historical Report");
-
-    worksheet.columns = [
-      { header: "Date", key: "date", width: 15 },
-      { header: "Shift", key: "shift", width: 12 },
-      { header: "Production", key: "production", width: 15 },
-      { header: "Downtime (min)", key: "downtime", width: 18 },
-    ];
-
-    // Add processed table data (NOT raw data)
-    tableData.forEach((d) => {
-      worksheet.addRow({
-        date: d.date,
-        shift: d.shift,
-        production: d.production ?? 0,
-        downtime: d.downtime ?? 0,
+      tableData.forEach((record) => {
+        worksheet.addRow({
+          shiftDate: record.shiftDate,
+          lineName: record.lineName,
+          shift: record.shift,
+          status: record.status,
+          tileCount: Number(record.tileCount) || 0,
+          production: Number(record.production) || 0,
+          productionUnit: record.productionUnit || "",
+          totalDowntimeMinutes: Number(record.totalDowntimeMinutes) || 0,
+          completedStops: Number(record.completedStops) || 0,
+          ole: Number(record.ole) || 0,
+          availability: Number(record.availability) || 0,
+          performance: Number(record.performance) || 0,
+          quality: Number(record.quality) || 0,
+          actualOperatingMinutes: Number(record.actualOperatingMinutes) || 0,
+          plannedProductionMinutes:
+            Number(record.plannedProductionMinutes) || 0,
+        });
       });
-    });
 
-    const buffer = await workbook.xlsx.writeBuffer();
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = {
+        bold: true,
+      };
 
-    saveAs(
-      new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      }),
-      "Historical_Report.xlsx",
-    );
+      headerRow.alignment = {
+        vertical: "middle",
+        horizontal: "center",
+      };
+
+      worksheet.views = [
+        {
+          state: "frozen",
+          ySplit: 1,
+        },
+      ];
+
+      worksheet.autoFilter = {
+        from: "A1",
+        to: "O1",
+      };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      const fileName = `${lineMap[activeTab].replaceAll(
+        " ",
+        "_",
+      )}_Historical_Report_${dateRange[0].format(
+        "YYYY-MM-DD",
+      )}_${dateRange[1].format("YYYY-MM-DD")}.xlsx`;
+
+      saveAs(
+        new Blob([buffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }),
+        fileName,
+      );
+    } catch (error) {
+      console.error("Excel export error:", error);
+      message.error("Unable to export the Excel report");
+    }
   };
+
+  const reportContent = (
+    <div style={{ padding: 16 }}>
+      <Space
+        wrap
+        size="middle"
+        style={{
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "flex-end",
+        }}
+      >
+        <div>
+          <Text
+            strong
+            style={{
+              display: "block",
+              marginBottom: 6,
+            }}
+          >
+            Date range
+          </Text>
+
+          <RangePicker
+            value={dateRange}
+            onChange={(values) => setDateRange(values || [])}
+            allowClear
+          />
+        </div>
+
+        <Button
+          type="primary"
+          icon={<SearchOutlined />}
+          onClick={loadData}
+          loading={loading}
+        >
+          Load Data
+        </Button>
+
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={exportExcel}
+          disabled={!tableData.length}
+        >
+          Export Excel
+        </Button>
+      </Space>
+
+      <HistoricalTable data={tableData} loading={loading} />
+
+      <div
+        style={{
+          marginTop: 24,
+          marginBottom: 12,
+        }}
+      >
+        <Text
+          strong
+          style={{
+            display: "block",
+            marginBottom: 6,
+          }}
+        >
+          Select chart columns
+        </Text>
+
+        <Select
+          mode="multiple"
+          allowClear
+          style={{
+            width: "100%",
+            maxWidth: 750,
+          }}
+          value={selectedMetrics}
+          options={chartMetricOptions}
+          placeholder="Select values to display in the chart"
+          onChange={setSelectedMetrics}
+          maxTagCount="responsive"
+        />
+      </div>
+
+      <HistoricalChart
+        data={tableData}
+        selectedMetrics={selectedMetrics}
+        loading={loading}
+      />
+    </div>
+  );
 
   const items = [
     {
+      key: "keda1",
+      label: "Keda 1",
+      children: reportContent,
+    },
+    {
       key: "keda2",
       label: "Keda 2",
-
-      // 🔥 IMPORTANT: no Card here
-      children: (
-        <div style={{ padding: 16 }}>
-          {/* Controls */}
-          <Space
-            style={{
-              marginBottom: 16,
-              display: "flex",
-              justifyContent: "flex-start",
-            }}
-          >
-            <RangePicker value={dateRange} onChange={setDateRange} />
-
-            <Button
-              type="primary"
-              icon={<SearchOutlined />}
-              onClick={loadData}
-              loading={loading}
-            >
-              Load Data
-            </Button>
-
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={() => exportExcel(tableData)}
-            >
-              Export Excel
-            </Button>
-          </Space>
-
-          {/* Table */}
-          <HistoricalTable data={tableData} />
-          <HistoricalChart data={chartData} />
-        </div>
-      ),
+      children: reportContent,
     },
   ];
 
   return (
     <Tabs
       activeKey={activeTab}
-      onChange={setActiveTab}
-      // makes tab feel like container
+      onChange={(key) => {
+        setActiveTab(key);
+        setData([]);
+      }}
       type="card"
       className="historical-tabs"
       style={{

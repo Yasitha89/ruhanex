@@ -14,6 +14,8 @@ import LiveCount from "./pages/LiveCount";
 import Settings from "./pages/Settings";
 import Keda1 from "./pages/Keda1";
 import HistoricalReport from "./pages/HistoricalReport";
+import EnergyDashboard from "./pages/EnergyDashboard";
+import EnergyHistoricalReport from "./pages/EnergyHistoricalReport";
 
 import MainLayout from "./layouts/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -36,6 +38,11 @@ function App() {
           <Route path="keda1" element={<Keda1 />} />
           <Route path="historical_data" element={<HistoricalReport />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="energydashboard" element={<EnergyDashboard />} />
+          <Route
+            path="historical_data_energy"
+            element={<EnergyHistoricalReport />}
+          />
         </Route>
       </Routes>
     </BrowserRouter>
