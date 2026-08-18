@@ -36,6 +36,41 @@ export const getShiftDowntime = async (shift, fromTime, toTime) => {
     .filter((d) => d.ts)
     .sort((a, b) => Number(a.ts) - Number(b.ts));
 };
+export const getShiftStoppages = async (shift, date_, line) => {
+  const formattedDate = new Date(date_).toISOString().split("T")[0];
+  const response = await api.get("/api/shift-downtime-new", {
+    params: {
+      shift,
+      date: formattedDate,
+      line,
+    },
+  });
+
+  return response.data;
+};
+
+
+export const updateDowntimeReason = async ({
+  id,
+  date,
+  shift,
+  line,
+  stopStart_ts,
+  reason,
+  machine,
+}) => {
+  const response = await api.post("/api/update-downtime-reason", {
+    id,
+    date,
+    shift,
+    line,
+    stopStart_ts,
+    reason,
+    machine,
+  });
+
+  return response.data;
+};
 
 // LAST VALUE API
 export const getShiftLast = async (shift) => {

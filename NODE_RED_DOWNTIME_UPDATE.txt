@@ -1,0 +1,93 @@
+NODE-RED endpoint required by the React downtime reason modal
+=============================================================
+
+Create this flow:
+
+HTTP IN (POST /api/update-downtime-reason)
+    -> Function: Validate + Build Mongo Update
+    -> MongoDB node configured for the SAME collection used by /api/shift-downtime-new
+    -> Function: Build Success Response
+    -> HTTP RESPONSE
+
+Also connect output 2 of the first Function directly to HTTP RESPONSE for validation errors.
+
+
+FUNCTION: Validate + Build Mongo Update
+---------------------------------------
+Use 2 outputs.
+
+const body = msg.payload || {};
+
+const date = String(body.date || "").trim();
+const shift = String(body.shift || "").trim();
+const line = String(body.line || "").trim();
+const stopStart_ts = Number(body.stopStart_ts);
+const reason = String(body.reason || "").trim();
+const machine = String(body.machine || "").trim();
+
+if (!date || !shift || !line || !Number.isFinite(stopStart_ts)) {
+    msg.statusCode = 400;
+    msg.payload = {
+        success: false,
+        error: "Invalid downtime record identifier"
+    };
+    return [null, msg];
+}
+
+if (!reason) {
+    msg.statusCode = 400;
+    msg.payload = {
+        success: false,
+        error: "Downtime reason is required"
+    };
+    return [null, msg];
+}
+
+// Uses primitive fields so no ObjectId conversion is required.
+// stopStart_ts uniquely identifies the stoppage for the selected line/shift/date.
+msg.operation = "updateOne";
+msg.payload = [
+    {
+        date: date,
+        shift: shift,
+        line: line,
+        stopStart_ts: stopStart_ts
+    },
+    {
+        $set: {
+            reason: reason,
+            machine: machine,
+            updatedAt: new Date().toISOString()
+        }
+    }
+];
+
+return [msg, null];
+
+
+FUNCTION: Build Success Response
+--------------------------------
+msg.statusCode = 200;
+msg.payload = {
+    success: true,
+    message: "Downtime reason updated successfully"
+};
+return msg;
+
+
+IMPORTANT
+---------
+Configure the MongoDB node to use the same MongoDB database and collection that currently stores documents such as:
+
+{
+  "date": "2026-08-18",
+  "shift": "22-06",
+  "line": "Keda1",
+  "downStatus": "STOP_END",
+  "stopStart_ts": 1787074492759,
+  "stopStop_ts": 1787074636832,
+  "reason": "",
+  "machine": ""
+}
+
+After a successful update the React page calls loadData() again, so the chart tooltip and the edit modal immediately show the saved reason/machine.

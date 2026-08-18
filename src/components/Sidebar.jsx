@@ -8,10 +8,29 @@ import {
   ThunderboltOutlined,
   BarChartOutlined,
 } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 export default function Sidebar() {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const selectedKey = (() => {
+    switch (location.pathname) {
+      case "/keda1":
+        return "keda1";
+      case "/energydashboard":
+        return "energy";
+      case "/historical_data":
+        return "production_history";
+      case "/historical_data_energy":
+        return "energy_history";
+      case "/settings":
+        return "settings";
+      case "/dashboard":
+      default:
+        return "dashboard";
+    }
+  })();
 
   return (
     // <Menu
@@ -60,7 +79,7 @@ export default function Sidebar() {
     <Menu
       theme="dark"
       mode="inline"
-      defaultSelectedKeys={["dashboard"]}
+      selectedKeys={[selectedKey]}
       defaultOpenKeys={["production", "reports"]}
       items={[
         {
