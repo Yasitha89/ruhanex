@@ -11,7 +11,7 @@ function getEnergyDisplayUnit(totalKwh) {
     return { unit: "GWh", divisor: 1_000_000, decimals: 3 };
   }
 
-  if (total >= 1_000) {
+  if (total >= 1_0000) {
     return { unit: "MWh", divisor: 1_000, decimals: 3 };
   }
 
@@ -91,7 +91,9 @@ export default function EnergyOverviewMiniChart({
         type: "category",
         show: false,
         boundaryGap: true,
-        data: data.map((item) => labelForInterval(item.intervalStart, interval)),
+        data: data.map((item) =>
+          labelForInterval(item.intervalStart, interval),
+        ),
       },
       yAxis: {
         type: "value",

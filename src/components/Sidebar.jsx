@@ -7,7 +7,6 @@ import {
   BarChartOutlined,
 } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
-import "./Sidebar.css";
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -79,9 +78,9 @@ export default function Sidebar() {
     // />
     <Menu
       theme="dark"
-      mode="vertical"
+      mode="inline"
       selectedKeys={[selectedKey]}
-      className="sidebar-menu"
+      defaultOpenKeys={["production", "energy", "reports"]}
       items={[
         {
           key: "dashboard",
@@ -92,7 +91,6 @@ export default function Sidebar() {
 
         {
           key: "production",
-          popupClassName: "sidebar-popup-menu",
           icon: <AppstoreOutlined />,
           label: "Production",
           children: [
@@ -117,7 +115,6 @@ export default function Sidebar() {
 
         {
           key: "energy",
-          popupClassName: "sidebar-popup-menu",
           icon: <ThunderboltOutlined />,
           label: "Energy",
           children: [
@@ -136,7 +133,6 @@ export default function Sidebar() {
 
         {
           key: "reports",
-          popupClassName: "sidebar-popup-menu",
           icon: <BarChartOutlined />,
           label: "Reports",
           children: [

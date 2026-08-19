@@ -63,40 +63,52 @@ const yearOptions = Array.from({ length: 8 }, (_, index) => ({
   label: String(currentYear - 5 + index),
 }));
 
+function toFiniteNumber(value) {
+  // Do not treat null, undefined or an empty string as zero.
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function normalizeEnergyUsageRecord(record, index) {
-  const firstEnergy = Number(
+  const firstEnergy = toFiniteNumber(
     record.firstEnergyKwh ?? record.first_energy_kwh ?? record.first_kwh,
   );
-  const lastEnergy = Number(
+  const lastEnergy = toFiniteNumber(
     record.lastEnergyKwh ?? record.last_energy_kwh ?? record.last_kwh,
   );
-  const returnedUsage = Number(
+  const returnedUsage = toFiniteNumber(
     record.energyUsageKwh ?? record.energy_usage_kwh ?? record.usage_kwh,
   );
 
-  const calculatedUsage =
-    Number.isFinite(firstEnergy) && Number.isFinite(lastEnergy)
+  // The Node-RED endpoint already calculates interval consumption correctly.
+  // Use that value first. Only derive the difference as a fallback when both
+  // cumulative readings are genuinely available.
+  const fallbackUsage =
+    firstEnergy !== null && lastEnergy !== null
       ? Math.max(0, lastEnergy - firstEnergy)
       : 0;
 
   return {
-    key: record._id || record.id || `${record.intervalStart || record._start}-${index}`,
+    key:
+      record._id ||
+      record.id ||
+      `${record.intervalStart || record.interval_start || record._start}-${index}`,
     panel: record.panel,
     device_id: Number(record.device_id),
-    intervalStart: record.intervalStart || record.interval_start || record._start,
-    intervalEnd: record.intervalEnd || record.interval_end || record._stop,
-    firstEnergyKwh: Number.isFinite(firstEnergy) ? firstEnergy : 0,
-    lastEnergyKwh: Number.isFinite(lastEnergy) ? lastEnergy : 0,
-    // Prefer the difference of the cumulative meter readings whenever both
-    // values are available. This keeps the frontend unit calculation tied to
-    // the actual kWh counter and avoids a malformed aggregated usage field
-    // producing incorrect MWh/GWh labels.
+    intervalStart:
+      record.intervalStart || record.interval_start || record._start,
+    intervalEnd:
+      record.intervalEnd || record.interval_end || record._stop,
+    firstEnergyKwh: firstEnergy,
+    lastEnergyKwh: lastEnergy,
     energyUsageKwh:
-      Number.isFinite(firstEnergy) && Number.isFinite(lastEnergy)
-        ? calculatedUsage
-        : Number.isFinite(returnedUsage)
-          ? Math.max(0, returnedUsage)
-          : 0,
+      returnedUsage !== null
+        ? Math.max(0, returnedUsage)
+        : fallbackUsage,
   };
 }
 
