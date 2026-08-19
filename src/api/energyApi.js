@@ -42,7 +42,7 @@ export const getEnergyData = async ({ panel, deviceId }) => {
       error.message ||
       "Unable to retrieve energy data.";
 
-    throw new Error(errorMessage);
+    throw new Error(errorMessage, { cause: error });
   }
 };
 
@@ -73,7 +73,7 @@ export const getHistoricalElectricityData = async ({
  * Get cumulative kWh readings grouped by the selected interval.
  *
  * interval:
- * "1h" | "6h" | "1d"
+ * "1h" | "6h" | "1d" | "1mo"
  */
 export const getHistoricalEnergyUsage = async ({
   panel,

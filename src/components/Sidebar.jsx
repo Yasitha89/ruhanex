@@ -1,7 +1,5 @@
-import React from "react";
 import { Menu } from "antd";
 import {
-  LineChartOutlined,
   SettingOutlined,
   DashboardOutlined,
   AppstoreOutlined,
@@ -9,6 +7,7 @@ import {
   BarChartOutlined,
 } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
+import "./Sidebar.css";
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -18,8 +17,10 @@ export default function Sidebar() {
     switch (location.pathname) {
       case "/keda1":
         return "keda1";
+      case "/energyoverview":
+        return "energy_overview";
       case "/energydashboard":
-        return "energy";
+        return "energy_meter";
       case "/historical_data":
         return "production_history";
       case "/historical_data_energy":
@@ -78,9 +79,9 @@ export default function Sidebar() {
     // />
     <Menu
       theme="dark"
-      mode="inline"
+      mode="vertical"
       selectedKeys={[selectedKey]}
-      defaultOpenKeys={["production", "reports"]}
+      className="sidebar-menu"
       items={[
         {
           key: "dashboard",
@@ -91,6 +92,7 @@ export default function Sidebar() {
 
         {
           key: "production",
+          popupClassName: "sidebar-popup-menu",
           icon: <AppstoreOutlined />,
           label: "Production",
           children: [
@@ -115,13 +117,26 @@ export default function Sidebar() {
 
         {
           key: "energy",
+          popupClassName: "sidebar-popup-menu",
           icon: <ThunderboltOutlined />,
           label: "Energy",
-          onClick: () => navigate("/energydashboard"),
+          children: [
+            {
+              key: "energy_overview",
+              label: "Overview",
+              onClick: () => navigate("/energyoverview"),
+            },
+            {
+              key: "energy_meter",
+              label: "ATS1",
+              onClick: () => navigate("/energydashboard"),
+            },
+          ],
         },
 
         {
           key: "reports",
+          popupClassName: "sidebar-popup-menu",
           icon: <BarChartOutlined />,
           label: "Reports",
           children: [

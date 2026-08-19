@@ -1,0 +1,19 @@
+/* Left-align the main vertical sidebar menu */
+.sidebar-menu.ant-menu-vertical > .ant-menu-item,
+.sidebar-menu.ant-menu-vertical > .ant-menu-submenu > .ant-menu-submenu-title {
+  text-align: left !important;
+  padding-left: 16px !important;
+}
+
+/* Keep menu icons and labels aligned */
+.sidebar-menu .ant-menu-item-icon,
+.sidebar-menu .ant-menu-submenu-title .ant-menu-item-icon {
+  min-width: 20px;
+}
+
+/* Left-align items inside floating popup submenus */
+.sidebar-popup-menu .ant-menu-item,
+.sidebar-popup-menu .ant-menu-submenu-title {
+  text-align: left !important;
+  padding-left: 16px !important;
+}

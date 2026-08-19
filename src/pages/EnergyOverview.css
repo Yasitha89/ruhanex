@@ -1,0 +1,303 @@
+.energy-overview-page {
+  width: 100%;
+}
+
+.energy-overview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.energy-overview-top-card,
+.energy-main-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.energy-main-card {
+  margin-top: 18px;
+}
+
+.energy-section-heading {
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.energy-overview-heading {
+  padding-left: 18px;
+}
+
+.energy-current-power-column {
+  border-right: 1px solid #f0f0f0;
+  padding-right: 18px;
+}
+
+.energy-live-caption {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  margin-top: -6px;
+}
+
+.energy-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(145px, 1fr));
+  min-height: 210px;
+}
+
+.energy-mini-card {
+  min-width: 0;
+  padding: 12px 16px;
+  border-left: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.energy-mini-title {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.energy-mini-total {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.energy-mini-empty {
+  height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.energy-view-tabs {
+  margin-bottom: 18px;
+}
+
+.energy-view-tabs .ant-segmented {
+  background: transparent;
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.energy-view-tabs .ant-segmented-item {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.energy-chart-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  margin-bottom: 4px;
+}
+
+.energy-toolbar-left {
+  justify-self: start;
+}
+
+.energy-toolbar-center {
+  justify-self: center;
+}
+
+.energy-toolbar-actions {
+  justify-self: end;
+}
+
+.energy-period-controls {
+  justify-content: center;
+}
+
+.energy-chart-caption {
+  text-align: center;
+  font-weight: 600;
+  font-size: 15px;
+  margin: 8px 0 4px;
+}
+
+.energy-main-chart-state {
+  height: 440px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 1200px) {
+  .energy-mini-grid {
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+  }
+
+  .energy-mini-card:nth-child(4),
+  .energy-mini-card:nth-child(5) {
+    border-top: 1px solid #f0f0f0;
+  }
+}
+
+@media (max-width: 991px) {
+  .energy-current-power-column {
+    border-right: 0;
+    border-bottom: 1px solid #f0f0f0;
+    padding-right: 0;
+    padding-bottom: 18px;
+  }
+
+  .energy-overview-heading {
+    padding-left: 0;
+    margin-top: 4px;
+  }
+
+  .energy-mini-card:first-child {
+    border-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .energy-overview-header {
+    flex-direction: column;
+  }
+
+  .energy-mini-grid {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
+  .energy-mini-card {
+    border-top: 1px solid #f0f0f0;
+  }
+
+  .energy-mini-card:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .energy-chart-toolbar {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .energy-toolbar-left,
+  .energy-toolbar-center,
+  .energy-toolbar-actions {
+    justify-self: center;
+  }
+
+  .energy-period-controls {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .energy-mini-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .energy-mini-card {
+    border-left: 0;
+  }
+
+  .energy-overview-header h2 {
+    font-size: 23px !important;
+  }
+}
+
+/* Professional chart refinements */
+.energy-overview-top-card,
+.energy-main-card {
+  border: 1px solid #eaecf0;
+  background: #ffffff;
+}
+
+.energy-main-card .ant-card-body,
+.energy-overview-top-card .ant-card-body {
+  padding: 22px 24px;
+}
+
+.energy-mini-card {
+  position: relative;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.energy-mini-card:hover {
+  background: #fafcff;
+}
+
+.energy-mini-card-header {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.energy-mini-card-loading {
+  opacity: 0.92;
+}
+
+.energy-mini-warning {
+  color: #d97706;
+  font-size: 12px;
+}
+
+.energy-mini-unit-label {
+  text-align: center;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #98a2b3;
+}
+
+.energy-mini-total {
+  color: #101828;
+  letter-spacing: -0.15px;
+}
+
+.energy-mini-title {
+  color: #475467;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.energy-section-heading {
+  color: #101828;
+}
+
+.energy-chart-caption {
+  color: #344054;
+  font-size: 16px;
+  letter-spacing: -0.1px;
+}
+
+.energy-chart-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.energy-chart-toolbar {
+  padding: 4px 0 10px;
+}
+
+.energy-toolbar-actions .ant-btn {
+  border-radius: 7px;
+}
+
+.energy-view-tabs .ant-segmented-item-selected {
+  font-weight: 600;
+}
