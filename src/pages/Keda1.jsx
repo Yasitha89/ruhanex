@@ -249,8 +249,8 @@ export default function Keda1() {
             }
           >
             <div className="shift_statBar">
-              <Row gutter={24} style={{ marginBottom: "15px" }}>
-                <Col sm={24} md={12} lg={6}>
+              <Row className="keda-summary-grid" gutter={[12, 12]} style={{ marginBottom: "15px" }}>
+                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
                   <Statistic
                     title="Shift Status"
                     value={shiftStatus} // Keep the value as a plain string
@@ -264,20 +264,20 @@ export default function Keda1() {
                     )}
                   />
                 </Col>
-                <Col sm={24} md={12} lg={6}>
+                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
                   <Statistic
                     title="Total Downtime"
                     value={formatDuration(totalDowntimeCurrentShift)}
                   />
                 </Col>
-                <Col sm={24} md={12} lg={6}>
+                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
                   <Statistic
                     title="Speed"
                     value={lineSpeed}
                     suffix={<span style={{ fontSize: "14px" }}>Tiles/min</span>}
                   />
                 </Col>
-                <Col sm={24} md={12} lg={6}>
+                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
                   <Statistic
                     title="Production"
                     value={lastValue}

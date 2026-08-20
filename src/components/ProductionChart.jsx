@@ -151,6 +151,56 @@ export default function ProductionChart({ data }) {
         { type: "inside", xAxisIndex: 0, filterMode: "none" },
         { type: "slider", xAxisIndex: 0, filterMode: "none" },
       ],
+
+      media: [
+        {
+          query: { maxWidth: 600 },
+          option: {
+            grid: {
+              left: 4,
+              right: 4,
+              top: 36,
+              bottom: 86,
+              containLabel: false,
+            },
+            xAxis: {
+              name: "Time",
+              nameLocation: "middle",
+              nameGap: 42,
+              nameTextStyle: { fontSize: 11 },
+              axisLabel: {
+                fontSize: 9,
+                hideOverlap: true,
+              },
+            },
+            yAxis: {
+              name: "Production",
+              nameLocation: "end",
+              nameRotate: 0,
+              nameGap: 8,
+              nameTextStyle: {
+                fontSize: 10,
+                align: "left",
+              },
+              axisLabel: {
+                inside: true,
+                fontSize: 9,
+                margin: 4,
+                formatter: (value) =>
+                  Number(value).toLocaleString("en-US", {
+                    notation: value >= 10000 ? "compact" : "standard",
+                    maximumFractionDigits: 0,
+                  }),
+              },
+              axisTick: { inside: true },
+            },
+            dataZoom: [
+              { type: "inside", xAxisIndex: 0, filterMode: "none" },
+              { type: "slider", xAxisIndex: 0, filterMode: "none", bottom: 16, height: 18 },
+            ],
+          },
+        },
+      ],
     }),
     [isZoomedOut, dataPoints],
   );

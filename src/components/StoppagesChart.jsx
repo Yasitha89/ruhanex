@@ -240,10 +240,10 @@ export default function StoppagesChart({
             toolbox: { show: false },
             grid: {
               top: 58,
-              left: 12,
-              right: 10,
+              left: 4,
+              right: 4,
               bottom: 88,
-              containLabel: true,
+              containLabel: false,
             },
             xAxis: {
               name: "Start time",
@@ -258,8 +258,16 @@ export default function StoppagesChart({
             },
             yAxis: {
               name: "Downtime (min)",
-              nameTextStyle: { fontSize: 11 },
-              axisLabel: { fontSize: 10, formatter: "{value}" },
+              nameLocation: "end",
+              nameGap: 8,
+              nameTextStyle: { fontSize: 10, align: "left" },
+              axisLabel: {
+                inside: true,
+                fontSize: 9,
+                margin: 4,
+                formatter: "{value}",
+              },
+              axisTick: { inside: true },
             },
             dataZoom: [
               { type: "inside", xAxisIndex: 0 },

@@ -93,3 +93,36 @@
     max-width: 100%;
   }
 }
+
+/* Mobile summary cards and full-width chart plotting area */
+@media (max-width: 767px) {
+  .keda-summary-grid {
+    margin-inline: 0 !important;
+  }
+
+  .keda-summary-item {
+    padding-inline: 0 !important;
+  }
+
+  .keda-summary-item .ant-statistic {
+    width: 100%;
+    min-height: 86px;
+    padding: 12px 14px;
+    border: 1px solid #f0f0f0;
+    border-radius: 10px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .keda-summary-item .ant-statistic-title {
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+
+  .keda-summary-item .ant-statistic-content {
+    font-size: 20px;
+    line-height: 1.25;
+  }
+}

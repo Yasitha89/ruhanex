@@ -134,10 +134,10 @@ export default function EnergyUsageChart({
             toolbox: { show: false },
             grid: {
               top: 55,
-              left: 12,
-              right: 12,
+              left: 4,
+              right: 4,
               bottom: 82,
-              containLabel: true,
+              containLabel: false,
             },
             xAxis: {
               name: interval === "1d" ? "Date" : "Time",
@@ -153,9 +153,16 @@ export default function EnergyUsageChart({
             },
             yAxis: {
               name: "Energy (kWh)",
-              nameGap: 44,
-              nameTextStyle: { fontSize: 10 },
-              axisLabel: { fontSize: 9, formatter: "{value}" },
+              nameLocation: "end",
+              nameGap: 8,
+              nameTextStyle: { fontSize: 10, align: "left" },
+              axisLabel: {
+                inside: true,
+                fontSize: 9,
+                margin: 4,
+                formatter: "{value}",
+              },
+              axisTick: { inside: true },
             },
             dataZoom: [
               { type: "inside" },
