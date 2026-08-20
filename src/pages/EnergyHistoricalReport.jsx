@@ -17,8 +17,6 @@ import {
 
 import { DownloadOutlined, SearchOutlined } from "@ant-design/icons";
 
-import ExcelJS from "exceljs";
-import { saveAs } from "file-saver";
 
 import {
   getHistoricalElectricityData,
@@ -408,6 +406,13 @@ export default function EnergyHistoricalReport() {
       return;
     }
 
+    const [excelModule, fileSaverModule] = await Promise.all([
+      import("exceljs"),
+      import("file-saver"),
+    ]);
+    const ExcelJS = excelModule.default || excelModule;
+    const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
+
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Electricity");
 
@@ -523,6 +528,13 @@ export default function EnergyHistoricalReport() {
 
       return;
     }
+
+    const [excelModule, fileSaverModule] = await Promise.all([
+      import("exceljs"),
+      import("file-saver"),
+    ]);
+    const ExcelJS = excelModule.default || excelModule;
+    const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Energy Usage");
