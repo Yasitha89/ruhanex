@@ -301,3 +301,29 @@
 .energy-view-tabs .ant-segmented-item-selected {
   font-weight: 600;
 }
+
+/* Additional narrow-screen safeguards */
+@media (max-width: 767px) {
+  .energy-main-card .ant-card-body,
+  .energy-overview-top-card .ant-card-body {
+    padding: 16px 12px;
+  }
+
+  .energy-view-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .energy-view-tabs .ant-segmented {
+    min-width: max-content;
+  }
+
+  .energy-toolbar-actions {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

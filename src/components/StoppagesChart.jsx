@@ -16,6 +16,14 @@ function formatDuration(milliseconds) {
   return `${minutes}m`;
 }
 
+function formatTotalDowntime(totalMinutes) {
+  const safeTotalMinutes = Math.max(0, Math.floor(Number(totalMinutes) || 0));
+  const hours = Math.floor(safeTotalMinutes / 60);
+  const minutes = safeTotalMinutes % 60;
+
+  return `${hours}h:${String(minutes).padStart(2, "0")}m`;
+}
+
 function formatDateTime(timestamp) {
   const value = Number(timestamp);
 
@@ -79,15 +87,42 @@ export default function StoppagesChart({
       }));
   }, [data]);
 
+  // Sum the same whole-minute value shown for each individual bar.
+  // This makes the heading exactly match the manual total of the bar labels.
+  const totalDowntimeMinutes = useMemo(
+    () =>
+      chartData.reduce(
+        (total, item) =>
+          total + Math.max(0, Math.floor(Number(item.downtimeMs) / 60000)),
+        0,
+      ),
+    [chartData],
+  );
+
   const option = useMemo(
     () => ({
       animation: false,
 
       title: {
-        text: "Downtime Duration",
+        text: `{label|Total Downtime:} {value|${formatTotalDowntime(totalDowntimeMinutes)}}`,
         left: "center",
-      },
 
+        textStyle: {
+          rich: {
+            label: {
+              fontSize: 20,
+              fontWeight: 400,
+              color: "#888",
+            },
+
+            value: {
+              fontSize: 20,
+              fontWeight: 600,
+              color: "#5c5b5b",
+            },
+          },
+        },
+      },
       tooltip: {
         trigger: "item",
         confine: true,
@@ -238,7 +273,7 @@ export default function StoppagesChart({
         },
       ],
     }),
-    [chartData],
+    [chartData, totalDowntimeMinutes],
   );
 
   const events = useMemo(

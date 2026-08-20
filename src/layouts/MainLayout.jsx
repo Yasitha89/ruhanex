@@ -1,84 +1,85 @@
 import React, { useState } from "react";
-import { Layout } from "antd";
-import { Outlet } from "react-router-dom";
+import { Button, Drawer, Grid, Layout } from "antd";
+import { MenuOutlined } from "@ant-design/icons";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import HeaderBar from "../components/HeaderBar";
+import "./MainLayout.css";
 
 const { Header, Sider, Content } = Layout;
+const { useBreakpoint } = Grid;
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const screens = useBreakpoint();
+  const location = useLocation();
+
+  const isMobile = !screens.md;
+
+  React.useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      {/* HEADER (FULL WIDTH) */}
-      <Header
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 1000,
-          width: "100%",
-          background: "#001529", // SAME as sider
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
-          borderBottom: "1px solid rgba(255,255,255,0.1)",
-          color: "#fff",
-        }}
-      >
-        {/* LOGO */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <Layout className="app-shell">
+      <Header className="app-header">
+        <div className="app-header-brand">
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              className="app-mobile-menu-button"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="Open navigation menu"
+            />
+          )}
+
           <img
             src="/rocell.png"
             alt="Company Logo"
-            style={{ height: 35, width: 35, objectFit: "contain" }}
+            className="app-header-logo"
           />
-          <span style={{ fontWeight: 600 }}>Royal Ceramics Lanka PLC - Horana</span>
+
+          <span className="app-header-title">
+            Royal Ceramics Lanka PLC - Horana
+          </span>
         </div>
 
-        <div style={{ flex: 1 }} />
-
+        <div className="app-header-spacer" />
         <HeaderBar />
       </Header>
 
-      {/* BODY */}
-      <Layout>
-        {/* SIDEBAR with built-in collapse trigger */}
-        <Sider
-          collapsible
-          collapsed={collapsed}
-          onCollapse={(value) => setCollapsed(value)}
-          width={220}
-          style={{
-            height: "100vh",
-          }}
-        >
-          <div
-            style={{
-              color: "white",
-              textAlign: "center",
-              padding: 16,
-              fontWeight: "bold",
-            }}
+      <Layout className="app-body">
+        {!isMobile && (
+          <Sider
+            collapsible
+            collapsed={collapsed}
+            onCollapse={setCollapsed}
+            width={220}
+            className="app-sidebar"
           >
-         
+            <Sidebar />
+          </Sider>
+        )}
+
+        <Content className="app-content">
+          <div className="app-content-inner">
+            <Outlet />
           </div>
-
-          <Sidebar />
-        </Sider>
-
-        {/* CONTENT */}
-        <Content
-          style={{
-            padding: 16,
-            background: "#f5f5f5",
-            minHeight: "calc(100vh - 64px)",
-            overflowX: "hidden",
-          }}
-        >
-          <Outlet />
         </Content>
       </Layout>
+
+      <Drawer
+        title="Navigation"
+        placement="left"
+        width={280}
+        open={isMobile && mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        styles={{ body: { padding: 0, background: "#001529" } }}
+      >
+        <Sidebar />
+      </Drawer>
     </Layout>
   );
 }

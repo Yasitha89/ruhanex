@@ -1,10 +1,14 @@
 import React from "react";
-import { Button } from "antd";
+import { Button, Grid } from "antd";
 import { LogoutOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 
+const { useBreakpoint } = Grid;
+
 export default function HeaderBar() {
   const navigate = useNavigate();
+  const screens = useBreakpoint();
+  const isMobile = !screens.sm;
 
   const logout = () => {
     localStorage.removeItem("token");
@@ -25,7 +29,7 @@ export default function HeaderBar() {
         danger
         onClick={logout}
       >
-        Logout
+        {!isMobile && "Logout"}
       </Button>
     </div>
   );

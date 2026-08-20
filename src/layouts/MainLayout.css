@@ -1,0 +1,157 @@
+/* App shell owns the viewport. This removes the browser/body scrollbar. */
+.app-shell {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #f5f5f5;
+}
+
+.app-header {
+  flex: 0 0 64px;
+  height: 64px;
+  line-height: normal;
+  width: 100%;
+  padding: 0 16px;
+  background: #001529;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  z-index: 1000;
+}
+
+.app-header-brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-header-logo {
+  width: 35px;
+  height: 35px;
+  flex: 0 0 35px;
+  object-fit: contain;
+}
+
+.app-header-title {
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-header-spacer {
+  flex: 1 1 auto;
+  min-width: 10px;
+}
+
+.app-mobile-menu-button {
+  flex: 0 0 auto;
+  color: #fff !important;
+  font-size: 18px;
+}
+
+.app-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Desktop sidebar stays fixed within the visible body area. */
+.app-sidebar {
+  height: 100%;
+  overflow: hidden;
+  flex: 0 0 auto !important;
+}
+
+.app-sidebar .ant-layout-sider-children {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-sidebar .ant-menu {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* This is the one intentional page scrollbar. */
+.app-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  background: #f5f5f5;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-content-inner {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Prevent wide Ant Design content from forcing a second page scrollbar. */
+.app-content-inner .ant-row,
+.app-content-inner .ant-col,
+.app-content-inner .ant-card,
+.app-content-inner .ant-card-body {
+  min-width: 0;
+}
+
+/* Tables may scroll horizontally inside themselves on narrow screens. */
+.app-content-inner .ant-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 767px) {
+  .app-header {
+    padding: 0 10px;
+  }
+
+  .app-header-title {
+    font-size: 14px;
+  }
+
+  .app-header-logo {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+
+  .app-content {
+    padding: 10px;
+  }
+
+  .ant-drawer .ant-drawer-header {
+    padding: 14px 16px;
+  }
+
+  .ant-drawer .ant-menu {
+    border-inline-end: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header-title {
+    max-width: 145px;
+    font-size: 13px;
+  }
+
+  .app-content {
+    padding: 8px;
+  }
+
+  /* Keep common button groups usable on phones. */
+  .app-content-inner .ant-space {
+    max-width: 100%;
+  }
+}
