@@ -1,0 +1,95 @@
+/* Shared responsive chart sizing.
+   IMPORTANT: the wrapper owns the height; the ECharts canvas fills it. */
+.responsive-dashboard-chart {
+  width: 100%;
+  min-width: 0;
+  position: relative;
+}
+
+.responsive-dashboard-chart__canvas {
+  width: 100%;
+  height: 100% !important;
+}
+
+/* KEDA downtime chart: balanced with the production chart on desktop. */
+.responsive-dashboard-chart--stoppages {
+  height: 380px;
+  min-height: 380px;
+}
+
+/* Production / Energy historical charts need more vertical room for
+   title, legend, multi-axis labels and data-zoom controls. */
+.responsive-dashboard-chart--history {
+  height: 520px;
+  min-height: 520px;
+}
+
+/* Give very wide desktop screens a little more breathing room. */
+@media (min-width: 1440px) {
+  .responsive-dashboard-chart--stoppages {
+    height: 400px;
+    min-height: 400px;
+  }
+
+  .responsive-dashboard-chart--history {
+    height: 560px;
+    min-height: 560px;
+  }
+}
+
+@media (max-width: 767px) {
+  .responsive-dashboard-chart {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  /* Mobile remains deliberately taller so labels do not become congested. */
+  .responsive-dashboard-chart--stoppages,
+  .responsive-dashboard-chart--history {
+    height: 430px;
+    min-height: 430px;
+  }
+
+  .keda-dashboard-page .ant-card-body {
+    padding-inline: 12px;
+  }
+
+  .keda-dashboard-page .ant-card-head-wrapper {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .keda-dashboard-page .ant-card-extra {
+    width: 100%;
+    margin-inline-start: 0;
+  }
+
+  .keda-dashboard-page .ant-card-extra > div {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .keda-dashboard-page .ant-card-extra .ant-select,
+  .keda-dashboard-page .ant-card-extra .ant-picker {
+    flex: 1 1 145px;
+    min-width: 0;
+  }
+
+  .historical-tabs {
+    padding: 4px !important;
+  }
+
+  .historical-tabs .ant-tabs-content-holder {
+    min-width: 0;
+  }
+
+  .energy-history-page .ant-card-body {
+    padding-inline: 12px;
+  }
+
+  .energy-history-page .ant-space {
+    max-width: 100%;
+  }
+}

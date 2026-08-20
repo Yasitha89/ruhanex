@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import "./DashboardCharts.css";
 
 const metricConfig = {
   current_l1_a: {
@@ -171,6 +172,10 @@ export default function EnergyHistoricalChart({
   }, [selectedMetrics]);
 
   const option = useMemo(() => {
+    const mobilePrimaryAxisIndex = availableMetrics.length
+      ? getYAxisIndex(availableMetrics[0])
+      : 0;
+
     const series = availableMetrics.map((metricKey) => {
       const config = metricConfig[metricKey];
 
@@ -452,6 +457,51 @@ export default function EnergyHistoricalChart({
         },
       ],
 
+      media: [
+        {
+          query: { maxWidth: 600 },
+          option: {
+            title: {
+              top: 2,
+              textStyle: { fontSize: 15, fontWeight: 500 },
+            },
+            legend: {
+              top: 28,
+              left: 8,
+              right: 8,
+              textStyle: { fontSize: 10 },
+              pageIconSize: 10,
+            },
+            toolbox: { show: false },
+            grid: {
+              top: 78,
+              left: 12,
+              right: 12,
+              bottom: 78,
+              containLabel: true,
+            },
+            xAxis: {
+              name: "Time",
+              nameLocation: "middle",
+              nameGap: 48,
+              nameTextStyle: { fontSize: 11 },
+              axisLabel: {
+                fontSize: 9,
+                hideOverlap: true,
+                formatter: (value) => dayjs(value).format("MM-DD\nHH:mm"),
+              },
+            },
+            yAxis: [
+              { show: mobilePrimaryAxisIndex === 0, position: "left", offset: 0, nameGap: 42, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+              { show: mobilePrimaryAxisIndex === 1, position: "left", offset: 0, nameGap: 42, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+              { show: mobilePrimaryAxisIndex === 2, position: "left", offset: 0, nameGap: 42, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+              { show: mobilePrimaryAxisIndex === 3, position: "left", offset: 0, nameGap: 42, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+              { show: mobilePrimaryAxisIndex === 4, position: "left", offset: 0, nameGap: 42, nameTextStyle: { fontSize: 10 }, axisLabel: { fontSize: 9 } },
+            ],
+          },
+        },
+      ],
+
       dataZoom: [
         {
           type: "inside",
@@ -518,15 +568,17 @@ export default function EnergyHistoricalChart({
   }
 
   return (
-    <ReactECharts
-      option={option}
-      notMerge={true}
-      lazyUpdate={true}
-      style={{
-        height: 580,
-        width: "100%",
-        marginTop: 24,
-      }}
-    />
+    <div
+      className="responsive-dashboard-chart responsive-dashboard-chart--history"
+      style={{ marginTop: 24 }}
+    >
+      <ReactECharts
+        className="responsive-dashboard-chart__canvas"
+        option={option}
+        notMerge={true}
+        lazyUpdate={true}
+        style={{ width: "100%", height: "100%" }}
+      />
+    </div>
   );
 }

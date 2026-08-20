@@ -820,7 +820,7 @@ export default function EnergyHistoricalReport() {
   ];
 
   return (
-    <Card>
+    <Card className="energy-history-page">
       <Title level={4}>Historical Energy Meter Report</Title>
 
       <Tabs

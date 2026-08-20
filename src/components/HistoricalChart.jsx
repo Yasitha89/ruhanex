@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
+import "./DashboardCharts.css";
 
 const metricConfig = {
   production: {
@@ -82,6 +83,10 @@ export default function HistoricalChart({
     const labels = data.map(
       (record) => `${record.shiftDate} | ${record.shift}`,
     );
+
+    const mobilePrimaryAxisIndex = selectedMetrics.length
+      ? getAxisIndex(selectedMetrics[0])
+      : 0;
 
     const series = selectedMetrics
       .filter((metric) => metricConfig[metric])
@@ -248,6 +253,71 @@ export default function HistoricalChart({
         },
       ],
 
+      media: [
+        {
+          query: { maxWidth: 600 },
+          option: {
+            title: {
+              top: 2,
+              textStyle: { fontSize: 15, fontWeight: 500 },
+            },
+            legend: {
+              top: 28,
+              left: 8,
+              right: 8,
+              textStyle: { fontSize: 10 },
+              pageIconSize: 10,
+            },
+            toolbox: { show: false },
+            grid: {
+              top: 78,
+              left: 12,
+              right: 12,
+              bottom: 86,
+              containLabel: true,
+            },
+            xAxis: {
+              name: "Shift",
+              nameLocation: "middle",
+              nameGap: 54,
+              nameTextStyle: { fontSize: 11 },
+              axisLabel: {
+                rotate: 35,
+                fontSize: 9,
+                hideOverlap: true,
+                interval: "auto",
+              },
+            },
+            yAxis: [
+              {
+                show: mobilePrimaryAxisIndex === 0,
+                name: mobilePrimaryAxisIndex === 0 ? "Percentage (%)" : "",
+                nameTextStyle: { fontSize: 10 },
+                axisLabel: { fontSize: 9, formatter: "{value}%" },
+              },
+              {
+                show: mobilePrimaryAxisIndex === 1,
+                name: mobilePrimaryAxisIndex === 1 ? "Time (min)" : "",
+                position: "left",
+                offset: 0,
+                nameGap: 42,
+                nameTextStyle: { fontSize: 10 },
+                axisLabel: { fontSize: 9, formatter: "{value}" },
+              },
+              {
+                show: mobilePrimaryAxisIndex === 2,
+                name: mobilePrimaryAxisIndex === 2 ? "Production / Count" : "",
+                position: "left",
+                offset: 0,
+                nameGap: 46,
+                nameTextStyle: { fontSize: 10 },
+                axisLabel: { fontSize: 9 },
+              },
+            ],
+          },
+        },
+      ],
+
       dataZoom: [
         {
           type: "inside",
@@ -312,14 +382,14 @@ export default function HistoricalChart({
   }
 
   return (
-    <ReactECharts
-      option={option}
-      notMerge
-      lazyUpdate
-      style={{
-        height: 550,
-        width: "100%",
-      }}
-    />
+    <div className="responsive-dashboard-chart responsive-dashboard-chart--history">
+      <ReactECharts
+        className="responsive-dashboard-chart__canvas"
+        option={option}
+        notMerge
+        lazyUpdate
+        style={{ width: "100%", height: "100%" }}
+      />
+    </div>
   );
 }

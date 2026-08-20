@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import "./DashboardCharts.css";
 
 function getIntervalLabel(timestamp, interval) {
   if (interval === "1d") {
@@ -125,6 +126,45 @@ export default function EnergyUsageChart({
         },
       ],
 
+      media: [
+        {
+          query: { maxWidth: 600 },
+          option: {
+            title: { top: 2, textStyle: { fontSize: 15, fontWeight: 500 } },
+            toolbox: { show: false },
+            grid: {
+              top: 55,
+              left: 12,
+              right: 12,
+              bottom: 82,
+              containLabel: true,
+            },
+            xAxis: {
+              name: interval === "1d" ? "Date" : "Time",
+              nameLocation: "middle",
+              nameGap: 50,
+              nameTextStyle: { fontSize: 11 },
+              axisLabel: {
+                rotate: data.length > 6 ? 35 : 0,
+                fontSize: 9,
+                hideOverlap: true,
+                interval: "auto",
+              },
+            },
+            yAxis: {
+              name: "Energy (kWh)",
+              nameGap: 44,
+              nameTextStyle: { fontSize: 10 },
+              axisLabel: { fontSize: 9, formatter: "{value}" },
+            },
+            dataZoom: [
+              { type: "inside" },
+              { type: "slider", bottom: 18, height: 18 },
+            ],
+          },
+        },
+      ],
+
       series: [
         {
           name: "Energy Usage",
@@ -176,15 +216,17 @@ export default function EnergyUsageChart({
   }
 
   return (
-    <ReactECharts
-      option={option}
-      notMerge={true}
-      lazyUpdate={true}
-      style={{
-        height: 520,
-        width: "100%",
-        marginTop: 24,
-      }}
-    />
+    <div
+      className="responsive-dashboard-chart responsive-dashboard-chart--history"
+      style={{ marginTop: 24 }}
+    >
+      <ReactECharts
+        className="responsive-dashboard-chart__canvas"
+        option={option}
+        notMerge={true}
+        lazyUpdate={true}
+        style={{ width: "100%", height: "100%" }}
+      />
+    </div>
   );
 }

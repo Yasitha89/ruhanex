@@ -207,6 +207,7 @@ export default function Keda1() {
   return (
     // <Card>
     <div
+      className="keda-dashboard-page"
       style={{
         position: "relative",
         display: "flex",

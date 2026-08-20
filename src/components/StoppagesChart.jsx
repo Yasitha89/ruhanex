@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import "./DashboardCharts.css";
 
 function formatDuration(milliseconds) {
   const totalMinutes = Math.max(0, Math.floor(Number(milliseconds) / 60000));
@@ -223,6 +224,51 @@ export default function StoppagesChart({
         },
       ],
 
+      media: [
+        {
+          query: { maxWidth: 600 },
+          option: {
+            title: {
+              top: 2,
+              textStyle: {
+                rich: {
+                  label: { fontSize: 15, fontWeight: 400, color: "#888" },
+                  value: { fontSize: 15, fontWeight: 600, color: "#5c5b5b" },
+                },
+              },
+            },
+            toolbox: { show: false },
+            grid: {
+              top: 58,
+              left: 12,
+              right: 10,
+              bottom: 88,
+              containLabel: true,
+            },
+            xAxis: {
+              name: "Start time",
+              nameGap: 48,
+              axisLabel: {
+                rotate: 35,
+                interval: "auto",
+                fontSize: 10,
+                hideOverlap: true,
+              },
+              nameTextStyle: { fontSize: 11 },
+            },
+            yAxis: {
+              name: "Downtime (min)",
+              nameTextStyle: { fontSize: 11 },
+              axisLabel: { fontSize: 10, formatter: "{value}" },
+            },
+            dataZoom: [
+              { type: "inside", xAxisIndex: 0 },
+              { type: "slider", xAxisIndex: 0, bottom: 18, height: 18 },
+            ],
+          },
+        },
+      ],
+
       series: [
         {
           name: "Downtime",
@@ -320,13 +366,13 @@ export default function StoppagesChart({
   }
 
   return (
-    <ReactECharts
-      option={option}
-      onEvents={events}
-      style={{
-        width: "100%",
-        height: 500,
-      }}
-    />
+    <div className="responsive-dashboard-chart responsive-dashboard-chart--stoppages">
+      <ReactECharts
+        className="responsive-dashboard-chart__canvas"
+        option={option}
+        onEvents={events}
+        style={{ width: "100%", height: "100%" }}
+      />
+    </div>
   );
 }

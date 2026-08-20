@@ -156,6 +156,6 @@ export default function ProductionChart({ data }) {
   );
 
   return (
-    <ReactECharts option={option} onEvents={onEvents} style={{ height: 350 }} />
+    <ReactECharts option={option} onEvents={onEvents} style={{ height: 380 }} />
   );
 }
