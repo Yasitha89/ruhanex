@@ -10,7 +10,6 @@ import {
   message,
   Row,
   Select,
-  Space,
   Tabs,
   Typography,
 } from "antd";
@@ -245,9 +244,14 @@ export default function EnergyHistoricalReport() {
   const [panel, setPanel] = useState("ATS1");
   const [deviceId, setDeviceId] = useState(1);
 
-  const [dateRange, setDateRange] = useState([
-    dayjs().subtract(1, "day"),
+  const [electricityDateRange, setElectricityDateRange] = useState([
+    dayjs().subtract(1, "hour"),
     dayjs(),
+  ]);
+
+  const [energyDateRange, setEnergyDateRange] = useState([
+    dayjs().subtract(1, "day").startOf("day"),
+    dayjs().endOf("day"),
   ]);
 
   // Electricity tab states
@@ -270,13 +274,7 @@ export default function EnergyHistoricalReport() {
   const [energyData, setEnergyData] = useState([]);
   const [energyLoading, setEnergyLoading] = useState(false);
 
-  const getRequestValues = () => {
-    if (!Array.isArray(dateRange) || dateRange.length !== 2) {
-      message.warning("Please select a valid date range");
-
-      return null;
-    }
-
+  const validateCommonRequest = () => {
     if (!panel) {
       message.warning("Please select a panel");
       return null;
@@ -284,22 +282,73 @@ export default function EnergyHistoricalReport() {
 
     if (!Number.isFinite(Number(deviceId))) {
       message.warning("Please enter a valid device ID");
-
       return null;
     }
 
     return {
       panel,
       deviceId: Number(deviceId),
+    };
+  };
 
-      fromTime: dateRange[0].startOf("day").toISOString(),
+  const getElectricityRequestValues = () => {
+    const common = validateCommonRequest();
 
-      toTime: dateRange[1].endOf("day").toISOString(),
+    if (!common) {
+      return null;
+    }
+
+    if (
+      !Array.isArray(electricityDateRange) ||
+      electricityDateRange.length !== 2 ||
+      !electricityDateRange[0] ||
+      !electricityDateRange[1]
+    ) {
+      message.warning("Please select a valid date and time range");
+      return null;
+    }
+
+    const fromTime = electricityDateRange[0];
+    const toTime = electricityDateRange[1];
+
+    if (!fromTime.isBefore(toTime)) {
+      message.warning("End date/time must be later than start date/time");
+      return null;
+    }
+
+    return {
+      ...common,
+      fromTime: fromTime.toISOString(),
+      toTime: toTime.toISOString(),
+    };
+  };
+
+  const getEnergyRequestValues = () => {
+    const common = validateCommonRequest();
+
+    if (!common) {
+      return null;
+    }
+
+    if (
+      !Array.isArray(energyDateRange) ||
+      energyDateRange.length !== 2 ||
+      !energyDateRange[0] ||
+      !energyDateRange[1]
+    ) {
+      message.warning("Please select a valid date range");
+      return null;
+    }
+
+    return {
+      ...common,
+      fromTime: energyDateRange[0].startOf("day").toISOString(),
+      toTime: energyDateRange[1].endOf("day").toISOString(),
     };
   };
 
   const loadElectricityData = async () => {
-    const request = getRequestValues();
+    const request = getElectricityRequestValues();
 
     if (!request) {
       return;
@@ -345,7 +394,7 @@ export default function EnergyHistoricalReport() {
   };
 
   const loadEnergyData = async () => {
-    const request = getRequestValues();
+    const request = getEnergyRequestValues();
 
     if (!request) {
       return;
@@ -616,104 +665,103 @@ export default function EnergyHistoricalReport() {
     );
   };
 
-  const commonControls = (
-    <Row gutter={[16, 16]}>
-      <Col xs={24} sm={12} md={5}>
-        <Text strong>Panel</Text>
+  const sharedPanelControl = (
+    <>
+      <Text strong>Panel</Text>
+      <Select
+        value={panel}
+        options={panelOptions}
+        onChange={(value) => {
+          setPanel(value);
+          setElectricityData([]);
+          setEnergyData([]);
+        }}
+        style={{ width: "100%", marginTop: 6 }}
+      />
+    </>
+  );
 
-        <Select
-          value={panel}
-          options={panelOptions}
-          onChange={(value) => {
-            setPanel(value);
-            setElectricityData([]);
-            setEnergyData([]);
-          }}
-          style={{
-            width: "100%",
-            marginTop: 6,
-          }}
-        />
-      </Col>
-
-      <Col xs={24} sm={12} md={5}>
-        <Text strong>Device ID</Text>
-
-        <InputNumber
-          value={deviceId}
-          min={1}
-          precision={0}
-          onChange={(value) => {
-            setDeviceId(Number(value));
-            setElectricityData([]);
-            setEnergyData([]);
-          }}
-          style={{
-            width: "100%",
-            marginTop: 6,
-          }}
-        />
-      </Col>
-
-      <Col xs={24} md={14}>
-        <Text strong>Date range</Text>
-
-        <RangePicker
-          value={dateRange}
-          onChange={(values) => {
-            setDateRange(values || []);
-            setElectricityData([]);
-            setEnergyData([]);
-          }}
-          allowClear
-          style={{
-            width: "100%",
-            marginTop: 6,
-          }}
-        />
-      </Col>
-    </Row>
+  const sharedDeviceControl = (
+    <>
+      <Text strong>Device ID</Text>
+      <InputNumber
+        value={deviceId}
+        min={1}
+        precision={0}
+        onChange={(value) => {
+          setDeviceId(Number(value));
+          setElectricityData([]);
+          setEnergyData([]);
+        }}
+        style={{ width: "100%", marginTop: 6 }}
+      />
+    </>
   );
 
   const electricityTab = (
     <div style={{ paddingTop: 8 }}>
-      {commonControls}
+      <Row gutter={[12, 12]} align="bottom">
+        <Col xs={24} sm={12} md={4} xl={3}>
+          {sharedPanelControl}
+        </Col>
 
-      <Space
-        wrap
-        style={{
-          marginTop: 16,
-          marginBottom: 16,
-        }}
-      >
-        <Button
-          type="primary"
-          icon={<SearchOutlined />}
-          loading={electricityLoading}
-          onClick={loadElectricityData}
-        >
-          Load Electricity Data
-        </Button>
+        <Col xs={24} sm={12} md={4} xl={3}>
+          {sharedDeviceControl}
+        </Col>
 
-        <Button
-          icon={<DownloadOutlined />}
-          disabled={!electricityData.length}
-          onClick={exportElectricityExcel}
-        >
-          Export Electricity
-        </Button>
+        <Col xs={24} md={16} lg={9} xl={10}>
+          <Text strong>Date & time range</Text>
+          <RangePicker
+            value={electricityDateRange}
+            showTime={{ format: "HH:mm" }}
+            format="YYYY-MM-DD HH:mm"
+            order={false}
+            needConfirm
+            onChange={(values) => {
+              setElectricityDateRange(values || []);
+              setElectricityData([]);
+            }}
+            allowClear
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col flex="none">
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            loading={electricityLoading}
+            onClick={loadElectricityData}
+          >
+            Load Data
+          </Button>
+        </Col>
+
+        <Col flex="none">
+          <Button
+            icon={<DownloadOutlined />}
+            disabled={!electricityData.length}
+            onClick={exportElectricityExcel}
+          >
+            Export
+          </Button>
+        </Col>
 
         {electricityAggregationWindow && (
-          <Text type="secondary">
-            Aggregation: {electricityAggregationWindow}
-          </Text>
+          <Col flex="none">
+            <Text type="secondary">
+              Aggregation: {electricityAggregationWindow}
+            </Text>
+          </Col>
         )}
-      </Space>
+      </Row>
 
+      <div style={{ marginTop: 16 }}>
       <EnergyHistoricalTable
         data={electricityData}
         loading={electricityLoading}
       />
+      </div>
 
       <div style={{ marginTop: 24 }}>
         <Text
@@ -751,12 +799,31 @@ export default function EnergyHistoricalReport() {
 
   const energyTab = (
     <div style={{ paddingTop: 8 }}>
-      {commonControls}
+      <Row gutter={[12, 12]} align="bottom">
+        <Col xs={24} sm={12} md={4} xl={3}>
+          {sharedPanelControl}
+        </Col>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col xs={24} sm={12} md={6}>
-          <Text strong>Energy interval</Text>
+        <Col xs={24} sm={12} md={4} xl={3}>
+          {sharedDeviceControl}
+        </Col>
 
+        <Col xs={24} md={10} lg={7} xl={7}>
+          <Text strong>Date range</Text>
+          <RangePicker
+            value={energyDateRange}
+            format="YYYY-MM-DD"
+            onChange={(values) => {
+              setEnergyDateRange(values || []);
+              setEnergyData([]);
+            }}
+            allowClear
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col xs={24} sm={12} md={6} lg={4} xl={3}>
+          <Text strong>Interval</Text>
           <Select
             value={energyInterval}
             options={energyIntervalOptions}
@@ -764,51 +831,46 @@ export default function EnergyHistoricalReport() {
               setEnergyInterval(value);
               setEnergyData([]);
             }}
-            style={{
-              width: "100%",
-              marginTop: 6,
-            }}
+            style={{ width: "100%", marginTop: 6 }}
           />
         </Col>
-      </Row>
 
-      <Space
-        wrap
-        style={{
-          marginTop: 16,
-          marginBottom: 16,
-        }}
-      >
-        <Button
-          type="primary"
-          icon={<SearchOutlined />}
-          loading={energyLoading}
-          onClick={loadEnergyData}
-        >
-          Load Energy Usage
-        </Button>
+        <Col flex="none">
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            loading={energyLoading}
+            onClick={loadEnergyData}
+          >
+            Load Data
+          </Button>
+        </Col>
 
-        <Button
-          icon={<DownloadOutlined />}
-          disabled={!energyData.length}
-          onClick={exportEnergyExcel}
-        >
-          Export Energy
-        </Button>
+        <Col flex="none">
+          <Button
+            icon={<DownloadOutlined />}
+            disabled={!energyData.length}
+            onClick={exportEnergyExcel}
+          >
+            Export
+          </Button>
+        </Col>
 
         {energyData.length > 0 && (
-          <Text strong>
-            Total usage:{" "}
-            {totalEnergyUsage.toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}{" "}
-            kWh
-          </Text>
+          <Col flex="none">
+            <Text strong>
+              Total: {totalEnergyUsage.toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} kWh
+            </Text>
+          </Col>
         )}
-      </Space>
+      </Row>
 
+      <div style={{ marginTop: 16 }}>
       <EnergyUsageTable data={energyData} loading={energyLoading} />
+      </div>
 
       <EnergyUsageChart
         data={energyData}
