@@ -48,14 +48,15 @@ export const getEnergyData = async ({ panel, deviceId }) => {
 
 /**
  * Get current, voltage, power, PF and frequency history.
- * The backend automatically chooses an aggregation window
- * based on the requested date range.
+ * The frontend supplies a validated aggregation interval based on
+ * the selected date/time range.
  */
 export const getHistoricalElectricityData = async ({
   panel,
   deviceId,
   fromTime,
   toTime,
+  interval,
 }) => {
   const response = await api.get("/api/getHistoricalElectricityData", {
     params: {
@@ -63,6 +64,7 @@ export const getHistoricalElectricityData = async ({
       device_id: deviceId,
       from_time: fromTime,
       to_time: toTime,
+      interval,
     },
   });
 

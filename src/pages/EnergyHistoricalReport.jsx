@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 
 import {
@@ -11,11 +11,11 @@ import {
   Row,
   Select,
   Tabs,
+  TimePicker,
   Typography,
 } from "antd";
 
 import { DownloadOutlined, SearchOutlined } from "@ant-design/icons";
-
 
 import {
   getHistoricalElectricityData,
@@ -136,6 +136,67 @@ const energyIntervalOptions = [
   },
 ];
 
+const electricityAggregationOptions = {
+  "5s": "5 seconds",
+  "10s": "10 seconds",
+  "30s": "30 seconds",
+  "1m": "1 minute",
+  "5m": "5 minutes",
+  "15m": "15 minutes",
+  "30m": "30 minutes",
+  "1h": "1 hour",
+  "6h": "6 hours",
+  "1d": "1 day",
+};
+
+function getElectricityAggregationConfig(range) {
+  if (!Array.isArray(range) || range.length !== 2 || !range[0] || !range[1]) {
+    return { allowed: ["1m", "5m", "15m", "1h"], recommended: "1m" };
+  }
+
+  const durationMinutes = range[1].diff(range[0], "minute", true);
+
+  if (durationMinutes <= 60) {
+    return {
+      allowed: ["5s", "10s", "30s", "1m", "5m"],
+      recommended: "1m",
+    };
+  }
+
+  if (durationMinutes <= 6 * 60) {
+    return {
+      allowed: ["10s", "30s", "1m", "5m", "15m"],
+      recommended: "5m",
+    };
+  }
+
+  if (durationMinutes <= 24 * 60) {
+    return {
+      allowed: ["1m", "5m", "15m", "30m", "1h"],
+      recommended: "15m",
+    };
+  }
+
+  if (durationMinutes <= 7 * 24 * 60) {
+    return {
+      allowed: ["5m", "15m", "30m", "1h", "6h"],
+      recommended: "1h",
+    };
+  }
+
+  if (durationMinutes <= 31 * 24 * 60) {
+    return {
+      allowed: ["30m", "1h", "6h", "1d"],
+      recommended: "6h",
+    };
+  }
+
+  return {
+    allowed: ["1h", "6h", "1d"],
+    recommended: "1d",
+  };
+}
+
 function normalizeElectricityRecord(record, index) {
   const timestamp =
     record.timestamp ||
@@ -244,10 +305,16 @@ export default function EnergyHistoricalReport() {
   const [panel, setPanel] = useState("ATS1");
   const [deviceId, setDeviceId] = useState(1);
 
-  const [electricityDateRange, setElectricityDateRange] = useState([
+  const [electricityFromDate, setElectricityFromDate] = useState(
+    dayjs().subtract(1, "hour").startOf("day"),
+  );
+  const [electricityFromTime, setElectricityFromTime] = useState(
     dayjs().subtract(1, "hour"),
-    dayjs(),
-  ]);
+  );
+  const [electricityToDate, setElectricityToDate] = useState(
+    dayjs().startOf("day"),
+  );
+  const [electricityToTime, setElectricityToTime] = useState(dayjs());
 
   const [energyDateRange, setEnergyDateRange] = useState([
     dayjs().subtract(1, "day").startOf("day"),
@@ -263,8 +330,61 @@ export default function EnergyHistoricalReport() {
 
   const [electricityData, setElectricityData] = useState([]);
 
+  const [electricityAggregation, setElectricityAggregation] = useState("1m");
   const [electricityAggregationWindow, setElectricityAggregationWindow] =
     useState("");
+
+  const electricityDateTimeRange = useMemo(() => {
+    if (
+      !electricityFromDate ||
+      !electricityFromTime ||
+      !electricityToDate ||
+      !electricityToTime
+    ) {
+      return [];
+    }
+
+    const fromDateTime = electricityFromDate
+      .hour(electricityFromTime.hour())
+      .minute(electricityFromTime.minute())
+      .second(0)
+      .millisecond(0);
+
+    const toDateTime = electricityToDate
+      .hour(electricityToTime.hour())
+      .minute(electricityToTime.minute())
+      .second(0)
+      .millisecond(0);
+
+    return [fromDateTime, toDateTime];
+  }, [
+    electricityFromDate,
+    electricityFromTime,
+    electricityToDate,
+    electricityToTime,
+  ]);
+
+  const electricityAggregationConfig = useMemo(
+    () => getElectricityAggregationConfig(electricityDateTimeRange),
+    [electricityDateTimeRange],
+  );
+
+  const electricityAggregationSelectOptions = useMemo(
+    () =>
+      electricityAggregationConfig.allowed.map((value) => ({
+        value,
+        label: electricityAggregationOptions[value],
+      })),
+    [electricityAggregationConfig],
+  );
+
+  useEffect(() => {
+    if (
+      !electricityAggregationConfig.allowed.includes(electricityAggregation)
+    ) {
+      setElectricityAggregation(electricityAggregationConfig.recommended);
+    }
+  }, [electricityAggregationConfig, electricityAggregation]);
 
   const [electricityLoading, setElectricityLoading] = useState(false);
 
@@ -299,17 +419,17 @@ export default function EnergyHistoricalReport() {
     }
 
     if (
-      !Array.isArray(electricityDateRange) ||
-      electricityDateRange.length !== 2 ||
-      !electricityDateRange[0] ||
-      !electricityDateRange[1]
+      !Array.isArray(electricityDateTimeRange) ||
+      electricityDateTimeRange.length !== 2 ||
+      !electricityDateTimeRange[0] ||
+      !electricityDateTimeRange[1]
     ) {
       message.warning("Please select a valid date and time range");
       return null;
     }
 
-    const fromTime = electricityDateRange[0];
-    const toTime = electricityDateRange[1];
+    const fromTime = electricityDateTimeRange[0];
+    const toTime = electricityDateTimeRange[1];
 
     if (!fromTime.isBefore(toTime)) {
       message.warning("End date/time must be later than start date/time");
@@ -320,6 +440,7 @@ export default function EnergyHistoricalReport() {
       ...common,
       fromTime: fromTime.toISOString(),
       toTime: toTime.toISOString(),
+      interval: electricityAggregation,
     };
   };
 
@@ -698,30 +819,89 @@ export default function EnergyHistoricalReport() {
     </>
   );
 
+  const handleElectricityDateTimeChange = (setter, value) => {
+    setter(value);
+    setElectricityData([]);
+    setElectricityAggregationWindow("");
+  };
+
   const electricityTab = (
     <div style={{ paddingTop: 8 }}>
-      <Row gutter={[12, 12]} align="bottom">
-        <Col xs={24} sm={12} md={4} xl={3}>
+      <Row gutter={[10, 10]} align="bottom" wrap>
+        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
           {sharedPanelControl}
         </Col>
 
-        <Col xs={24} sm={12} md={4} xl={3}>
+        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
           {sharedDeviceControl}
         </Col>
 
-        <Col xs={24} md={16} lg={9} xl={10}>
-          <Text strong>Date & time range</Text>
-          <RangePicker
-            value={electricityDateRange}
-            showTime={{ format: "HH:mm" }}
-            format="YYYY-MM-DD HH:mm"
-            order={false}
-            needConfirm
-            onChange={(values) => {
-              setElectricityDateRange(values || []);
+        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
+          <Text strong>From date</Text>
+          <DatePicker
+            value={electricityFromDate}
+            format="YYYY-MM-DD"
+            onChange={(value) =>
+              handleElectricityDateTimeChange(setElectricityFromDate, value)
+            }
+            allowClear={false}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col xs={24} sm={12} md={3} lg={2} xl={2}>
+          <Text strong>From time</Text>
+          <TimePicker
+            value={electricityFromTime}
+            format="HH:mm"
+            minuteStep={1}
+            onChange={(value) =>
+              handleElectricityDateTimeChange(setElectricityFromTime, value)
+            }
+            needConfirm={false}
+            allowClear={false}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
+          <Text strong>To date</Text>
+          <DatePicker
+            value={electricityToDate}
+            format="YYYY-MM-DD"
+            onChange={(value) =>
+              handleElectricityDateTimeChange(setElectricityToDate, value)
+            }
+            allowClear={false}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col xs={24} sm={12} md={3} lg={2} xl={2}>
+          <Text strong>To time</Text>
+          <TimePicker
+            value={electricityToTime}
+            format="HH:mm"
+            minuteStep={1}
+            onChange={(value) =>
+              handleElectricityDateTimeChange(setElectricityToTime, value)
+            }
+            needConfirm={false}
+            allowClear={false}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        <Col xs={24} sm={12} md={6} lg={3} xl={3}>
+          <Text strong>Aggregation</Text>
+          <Select
+            value={electricityAggregation}
+            options={electricityAggregationSelectOptions}
+            onChange={(value) => {
+              setElectricityAggregation(value);
               setElectricityData([]);
+              setElectricityAggregationWindow("");
             }}
-            allowClear
             style={{ width: "100%", marginTop: 6 }}
           />
         </Col>
@@ -732,6 +912,7 @@ export default function EnergyHistoricalReport() {
             icon={<SearchOutlined />}
             loading={electricityLoading}
             onClick={loadElectricityData}
+            style={{ whiteSpace: "nowrap" }}
           >
             Load Data
           </Button>
@@ -742,6 +923,7 @@ export default function EnergyHistoricalReport() {
             icon={<DownloadOutlined />}
             disabled={!electricityData.length}
             onClick={exportElectricityExcel}
+            style={{ whiteSpace: "nowrap" }}
           >
             Export
           </Button>
@@ -749,18 +931,18 @@ export default function EnergyHistoricalReport() {
 
         {electricityAggregationWindow && (
           <Col flex="none">
-            <Text type="secondary">
-              Aggregation: {electricityAggregationWindow}
+            <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
+              Applied: {electricityAggregationWindow}
             </Text>
           </Col>
         )}
       </Row>
 
       <div style={{ marginTop: 16 }}>
-      <EnergyHistoricalTable
-        data={electricityData}
-        loading={electricityLoading}
-      />
+        <EnergyHistoricalTable
+          data={electricityData}
+          loading={electricityLoading}
+        />
       </div>
 
       <div style={{ marginTop: 24 }}>
@@ -859,17 +1041,19 @@ export default function EnergyHistoricalReport() {
         {energyData.length > 0 && (
           <Col flex="none">
             <Text strong>
-              Total: {totalEnergyUsage.toLocaleString("en-US", {
+              Total:{" "}
+              {totalEnergyUsage.toLocaleString("en-US", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
-              })} kWh
+              })}{" "}
+              kWh
             </Text>
           </Col>
         )}
       </Row>
 
       <div style={{ marginTop: 16 }}>
-      <EnergyUsageTable data={energyData} loading={energyLoading} />
+        <EnergyUsageTable data={energyData} loading={energyLoading} />
       </div>
 
       <EnergyUsageChart
