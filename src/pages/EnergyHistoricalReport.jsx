@@ -6,6 +6,7 @@ import {
   Card,
   Col,
   DatePicker,
+  Grid,
   InputNumber,
   message,
   Row,
@@ -16,6 +17,7 @@ import {
 } from "antd";
 
 import { DownloadOutlined, SearchOutlined } from "@ant-design/icons";
+
 
 import {
   getHistoricalElectricityData,
@@ -150,7 +152,12 @@ const electricityAggregationOptions = {
 };
 
 function getElectricityAggregationConfig(range) {
-  if (!Array.isArray(range) || range.length !== 2 || !range[0] || !range[1]) {
+  if (
+    !Array.isArray(range) ||
+    range.length !== 2 ||
+    !range[0] ||
+    !range[1]
+  ) {
     return { allowed: ["1m", "5m", "15m", "1h"], recommended: "1m" };
   }
 
@@ -300,6 +307,9 @@ function normalizeEnergyUsageRecord(record, index) {
 }
 
 export default function EnergyHistoricalReport() {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+
   const [activeTab, setActiveTab] = useState("electricity");
 
   const [panel, setPanel] = useState("ATS1");
@@ -379,9 +389,7 @@ export default function EnergyHistoricalReport() {
   );
 
   useEffect(() => {
-    if (
-      !electricityAggregationConfig.allowed.includes(electricityAggregation)
-    ) {
+    if (!electricityAggregationConfig.allowed.includes(electricityAggregation)) {
       setElectricityAggregation(electricityAggregationConfig.recommended);
     }
   }, [electricityAggregationConfig, electricityAggregation]);
@@ -436,11 +444,17 @@ export default function EnergyHistoricalReport() {
       return null;
     }
 
+    const effectiveInterval = electricityAggregationConfig.allowed.includes(
+      electricityAggregation,
+    )
+      ? electricityAggregation
+      : electricityAggregationConfig.recommended;
+
     return {
       ...common,
       fromTime: fromTime.toISOString(),
       toTime: toTime.toISOString(),
-      interval: electricityAggregation,
+      interval: effectiveInterval,
     };
   };
 
@@ -825,6 +839,132 @@ export default function EnergyHistoricalReport() {
     setElectricityAggregationWindow("");
   };
 
+  const electricityDateTimeControls = isMobile ? (
+    <>
+      <Col xs={24}>
+        <Text strong>From</Text>
+        <Row gutter={8} style={{ marginTop: 6 }}>
+          <Col span={14}>
+            <DatePicker
+              value={electricityFromDate}
+              format="YYYY-MM-DD"
+              onChange={(value) =>
+                handleElectricityDateTimeChange(setElectricityFromDate, value)
+              }
+              allowClear={false}
+              inputReadOnly={false}
+              style={{ width: "100%" }}
+            />
+          </Col>
+          <Col span={10}>
+            <TimePicker
+              value={electricityFromTime}
+              format="HH:mm"
+              minuteStep={1}
+              needConfirm={false}
+              onChange={(value) =>
+                handleElectricityDateTimeChange(setElectricityFromTime, value)
+              }
+              allowClear={false}
+              inputReadOnly={false}
+              style={{ width: "100%" }}
+            />
+          </Col>
+        </Row>
+      </Col>
+
+      <Col xs={24}>
+        <Text strong>To</Text>
+        <Row gutter={8} style={{ marginTop: 6 }}>
+          <Col span={14}>
+            <DatePicker
+              value={electricityToDate}
+              format="YYYY-MM-DD"
+              onChange={(value) =>
+                handleElectricityDateTimeChange(setElectricityToDate, value)
+              }
+              allowClear={false}
+              inputReadOnly={false}
+              style={{ width: "100%" }}
+            />
+          </Col>
+          <Col span={10}>
+            <TimePicker
+              value={electricityToTime}
+              format="HH:mm"
+              minuteStep={1}
+              needConfirm={false}
+              onChange={(value) =>
+                handleElectricityDateTimeChange(setElectricityToTime, value)
+              }
+              allowClear={false}
+              inputReadOnly={false}
+              style={{ width: "100%" }}
+            />
+          </Col>
+        </Row>
+      </Col>
+    </>
+  ) : (
+    <>
+      <Col md={4} lg={3} xl={3}>
+        <Text strong>From date</Text>
+        <DatePicker
+          value={electricityFromDate}
+          format="YYYY-MM-DD"
+          onChange={(value) =>
+            handleElectricityDateTimeChange(setElectricityFromDate, value)
+          }
+          allowClear={false}
+          style={{ width: "100%", marginTop: 6 }}
+        />
+      </Col>
+
+      <Col md={3} lg={2} xl={2}>
+        <Text strong>From time</Text>
+        <TimePicker
+          value={electricityFromTime}
+          format="HH:mm"
+          minuteStep={1}
+          needConfirm={false}
+          onChange={(value) =>
+            handleElectricityDateTimeChange(setElectricityFromTime, value)
+          }
+          allowClear={false}
+          style={{ width: "100%", marginTop: 6 }}
+        />
+      </Col>
+
+      <Col md={4} lg={3} xl={3}>
+        <Text strong>To date</Text>
+        <DatePicker
+          value={electricityToDate}
+          format="YYYY-MM-DD"
+          onChange={(value) =>
+            handleElectricityDateTimeChange(setElectricityToDate, value)
+          }
+          allowClear={false}
+          style={{ width: "100%", marginTop: 6 }}
+        />
+      </Col>
+
+      <Col md={3} lg={2} xl={2}>
+        <Text strong>To time</Text>
+        <TimePicker
+          value={electricityToTime}
+          format="HH:mm"
+          minuteStep={1}
+          needConfirm={false}
+          onChange={(value) =>
+            handleElectricityDateTimeChange(setElectricityToTime, value)
+          }
+          allowClear={false}
+          style={{ width: "100%", marginTop: 6 }}
+        />
+      </Col>
+    </>
+  );
+
   const electricityTab = (
     <div style={{ paddingTop: 8 }}>
       <Row gutter={[10, 10]} align="bottom" wrap>
@@ -836,61 +976,7 @@ export default function EnergyHistoricalReport() {
           {sharedDeviceControl}
         </Col>
 
-        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
-          <Text strong>From date</Text>
-          <DatePicker
-            value={electricityFromDate}
-            format="YYYY-MM-DD"
-            onChange={(value) =>
-              handleElectricityDateTimeChange(setElectricityFromDate, value)
-            }
-            allowClear={false}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} md={3} lg={2} xl={2}>
-          <Text strong>From time</Text>
-          <TimePicker
-            value={electricityFromTime}
-            format="HH:mm"
-            minuteStep={1}
-            onChange={(value) =>
-              handleElectricityDateTimeChange(setElectricityFromTime, value)
-            }
-            needConfirm={false}
-            allowClear={false}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} md={4} lg={3} xl={3}>
-          <Text strong>To date</Text>
-          <DatePicker
-            value={electricityToDate}
-            format="YYYY-MM-DD"
-            onChange={(value) =>
-              handleElectricityDateTimeChange(setElectricityToDate, value)
-            }
-            allowClear={false}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} md={3} lg={2} xl={2}>
-          <Text strong>To time</Text>
-          <TimePicker
-            value={electricityToTime}
-            format="HH:mm"
-            minuteStep={1}
-            onChange={(value) =>
-              handleElectricityDateTimeChange(setElectricityToTime, value)
-            }
-            needConfirm={false}
-            allowClear={false}
-            style={{ width: "100%", marginTop: 6 }}
-          />
-        </Col>
+        {electricityDateTimeControls}
 
         <Col xs={24} sm={12} md={6} lg={3} xl={3}>
           <Text strong>Aggregation</Text>
@@ -906,31 +992,61 @@ export default function EnergyHistoricalReport() {
           />
         </Col>
 
-        <Col flex="none">
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            loading={electricityLoading}
-            onClick={loadElectricityData}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            Load Data
-          </Button>
-        </Col>
+        {isMobile ? (
+          <Col xs={24}>
+            <Row gutter={8}>
+              <Col span={12}>
+                <Button
+                  block
+                  type="primary"
+                  icon={<SearchOutlined />}
+                  loading={electricityLoading}
+                  onClick={loadElectricityData}
+                >
+                  Load Data
+                </Button>
+              </Col>
+              <Col span={12}>
+                <Button
+                  block
+                  icon={<DownloadOutlined />}
+                  disabled={!electricityData.length}
+                  onClick={exportElectricityExcel}
+                >
+                  Export
+                </Button>
+              </Col>
+            </Row>
+          </Col>
+        ) : (
+          <>
+            <Col flex="none">
+              <Button
+                type="primary"
+                icon={<SearchOutlined />}
+                loading={electricityLoading}
+                onClick={loadElectricityData}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Load Data
+              </Button>
+            </Col>
 
-        <Col flex="none">
-          <Button
-            icon={<DownloadOutlined />}
-            disabled={!electricityData.length}
-            onClick={exportElectricityExcel}
-            style={{ whiteSpace: "nowrap" }}
-          >
-            Export
-          </Button>
-        </Col>
+            <Col flex="none">
+              <Button
+                icon={<DownloadOutlined />}
+                disabled={!electricityData.length}
+                onClick={exportElectricityExcel}
+                style={{ whiteSpace: "nowrap" }}
+              >
+                Export
+              </Button>
+            </Col>
+          </>
+        )}
 
         {electricityAggregationWindow && (
-          <Col flex="none">
+          <Col xs={24} md="flex">
             <Text type="secondary" style={{ whiteSpace: "nowrap" }}>
               Applied: {electricityAggregationWindow}
             </Text>
@@ -1041,19 +1157,17 @@ export default function EnergyHistoricalReport() {
         {energyData.length > 0 && (
           <Col flex="none">
             <Text strong>
-              Total:{" "}
-              {totalEnergyUsage.toLocaleString("en-US", {
+              Total: {totalEnergyUsage.toLocaleString("en-US", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
-              })}{" "}
-              kWh
+              })} kWh
             </Text>
           </Col>
         )}
       </Row>
 
       <div style={{ marginTop: 16 }}>
-        <EnergyUsageTable data={energyData} loading={energyLoading} />
+      <EnergyUsageTable data={energyData} loading={energyLoading} />
       </div>
 
       <EnergyUsageChart
