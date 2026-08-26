@@ -20,10 +20,7 @@ import {
   ReloadOutlined,
   RightOutlined,
 } from "@ant-design/icons";
-import {
-  getEnergyData,
-  getHistoricalEnergyUsage,
-} from "../api/energyApi";
+import { getEnergyData, getHistoricalEnergyUsage } from "../api/energyApi";
 import EnergyPowerGauge from "../components/EnergyPowerGauge";
 import EnergyOverviewMiniChart from "../components/EnergyOverviewMiniChart";
 import EnergyOverviewUsageChart from "../components/EnergyOverviewUsageChart";
@@ -43,12 +40,55 @@ const DEVICE_ID = 1;
 const VIEW_OPTIONS = ["Day", "Week", "Month", "Year", "Total"];
 
 const SUMMARY_PERIODS = [
-  { key: "24h", title: "24 Hours", amount: 24, unit: "hour", interval: "1h" },
-  { key: "7d", title: "7 Days", amount: 7, unit: "day", interval: "1d" },
-  { key: "30d", title: "30 Days", amount: 30, unit: "day", interval: "1d" },
-  { key: "12m", title: "12 Months", amount: 12, unit: "month", interval: "1mo" },
-  { key: "3y", title: "3 Years", amount: 3, unit: "year", interval: "1mo" },
+  { key: "today", title: "Today", interval: "1h" },
+  { key: "7d", title: "Last 7 Days", interval: "1d" },
+  { key: "month", title: "This Month", interval: "1d" },
+  { key: "year", title: "This Year", interval: "1mo" },
+  { key: "3y", title: "Last 3 Years", interval: "1mo" },
 ];
+
+function getSummaryRequest(period, referenceTime = colomboNow()) {
+  const now = asColomboCalendarTime(referenceTime);
+
+  if (period.key === "today") {
+    return {
+      fromTime: toApiIso(now.startOf("day")),
+      toTime: toApiIso(now),
+      interval: period.interval,
+    };
+  }
+
+  if (period.key === "7d") {
+    return {
+      // Include today plus the previous six Sri Lankan calendar days.
+      fromTime: toApiIso(now.startOf("day").subtract(6, "day")),
+      toTime: toApiIso(now),
+      interval: period.interval,
+    };
+  }
+
+  if (period.key === "month") {
+    return {
+      fromTime: toApiIso(now.startOf("month")),
+      toTime: toApiIso(now),
+      interval: period.interval,
+    };
+  }
+
+  if (period.key === "year") {
+    return {
+      fromTime: toApiIso(now.startOf("year")),
+      toTime: toApiIso(now),
+      interval: period.interval,
+    };
+  }
+
+  return {
+    fromTime: toApiIso(now.startOf("month").subtract(35, "month")),
+    toTime: toApiIso(now),
+    interval: period.interval,
+  };
+}
 
 const monthOptions = Array.from({ length: 12 }, (_, index) => ({
   value: index,
@@ -99,26 +139,26 @@ function normalizeEnergyUsageRecord(record, index) {
     device_id: Number(record.device_id),
     intervalStart:
       record.intervalStart || record.interval_start || record._start,
-    intervalEnd:
-      record.intervalEnd || record.interval_end || record._stop,
+    intervalEnd: record.intervalEnd || record.interval_end || record._stop,
     firstEnergyKwh: firstEnergy,
     lastEnergyKwh: lastEnergy,
     energyUsageKwh:
-      returnedUsage !== null
-        ? Math.max(0, returnedUsage)
-        : fallbackUsage,
+      returnedUsage !== null ? Math.max(0, returnedUsage) : fallbackUsage,
   };
 }
 
 function extractUsageRecords(result) {
-  const raw = Array.isArray(result) ? result : result?.data || result?.records || [];
+  const raw = Array.isArray(result)
+    ? result
+    : result?.data || result?.records || [];
 
   return raw
     .map(normalizeEnergyUsageRecord)
     .filter((record) => record.intervalStart)
     .sort(
       (a, b) =>
-        new Date(a.intervalStart).getTime() - new Date(b.intervalStart).getTime(),
+        new Date(a.intervalStart).getTime() -
+        new Date(b.intervalStart).getTime(),
     );
 }
 
@@ -217,19 +257,18 @@ export default function EnergyOverview() {
     }
   }, []);
 
-  const loadSummaryPeriod = useCallback(async (period, endTime) => {
+  const loadSummaryPeriod = useCallback(async (period, referenceTime) => {
     setSummaryLoading((current) => ({ ...current, [period.key]: true }));
     setSummaryErrors((current) => ({ ...current, [period.key]: "" }));
 
     try {
-      const end = endTime || colomboNow();
-      const start = end.subtract(period.amount, period.unit);
+      const request = getSummaryRequest(period, referenceTime || colomboNow());
       const result = await getHistoricalEnergyUsage({
         panel: PANEL,
         deviceId: DEVICE_ID,
-        fromTime: toApiIso(start),
-        toTime: toApiIso(end),
-        interval: period.interval,
+        fromTime: request.fromTime,
+        toTime: request.toTime,
+        interval: request.interval,
       });
 
       setSummaryData((current) => ({
@@ -306,10 +345,16 @@ export default function EnergyOverview() {
     return () => window.clearTimeout(timer);
   }, [loadMainChart]);
 
-  const activePower = Number(liveData?.power?.active_kw ?? liveData?.power_active_kw ?? 0);
+  const activePower = Number(
+    liveData?.power?.active_kw ?? liveData?.power_active_kw ?? 0,
+  );
   const liveStatus = String(liveData?.status || "").toUpperCase();
-  const isLive = Boolean(liveData) && !liveError && !["OFFLINE", "ERROR", "FAULT"].includes(liveStatus);
-  const gaugeMax = Math.max(100, Math.ceil((activePower * 1.35) / 100) * 100);
+  const isLive =
+    Boolean(liveData) &&
+    !liveError &&
+    !["OFFLINE", "ERROR", "FAULT"].includes(liveStatus);
+  //const gaugeMax = Math.max(100, Math.ceil((activePower * 1.35) / 100) * 100);
+  const gaugeMax = 1600;
 
   const refreshAll = () => {
     setLiveLoading(true);
@@ -317,7 +362,6 @@ export default function EnergyOverview() {
     loadSummaryData();
     loadMainChart();
   };
-
 
   const getExportBaseName = () => {
     const safeCaption = String(viewRequest.caption || view)
@@ -355,7 +399,8 @@ export default function EnergyOverview() {
       worksheet.getCell("A1").alignment = { horizontal: "center" };
 
       worksheet.mergeCells("A2:H2");
-      worksheet.getCell("A2").value = `${view}: ${viewRequest.caption} | Time zone: Asia/Colombo (UTC+05:30) | Aggregation: ${viewRequest.interval}`;
+      worksheet.getCell("A2").value =
+        `${view}: ${viewRequest.caption} | Time zone: Asia/Colombo (UTC+05:30) | Aggregation: ${viewRequest.interval}`;
       worksheet.getCell("A2").alignment = { horizontal: "center" };
 
       worksheet.getRow(4).values = [
@@ -410,7 +455,8 @@ export default function EnergyOverview() {
         "",
         "Total",
         chartData.reduce(
-          (sum, record) => sum + Math.max(0, Number(record.energyUsageKwh) || 0),
+          (sum, record) =>
+            sum + Math.max(0, Number(record.energyUsageKwh) || 0),
           0,
         ),
       ]);
@@ -483,7 +529,9 @@ export default function EnergyOverview() {
           <DatePicker
             allowClear={false}
             value={anchorDate}
-            onChange={(value) => value && setAnchorDate(asColomboCalendarTime(value))}
+            onChange={(value) =>
+              value && setAnchorDate(asColomboCalendarTime(value))
+            }
           />
         )}
 
@@ -492,7 +540,9 @@ export default function EnergyOverview() {
             picker="week"
             allowClear={false}
             value={anchorDate}
-            onChange={(value) => value && setAnchorDate(asColomboCalendarTime(value))}
+            onChange={(value) =>
+              value && setAnchorDate(asColomboCalendarTime(value))
+            }
           />
         )}
 
@@ -527,9 +577,7 @@ export default function EnergyOverview() {
             value={anchorDate.year()}
             options={yearOptions}
             onChange={(year) =>
-              setAnchorDate((value) =>
-                asColomboCalendarTime(value).year(year),
-              )
+              setAnchorDate((value) => asColomboCalendarTime(value).year(year))
             }
           />
         )}
@@ -550,7 +598,9 @@ export default function EnergyOverview() {
           <Title level={2} style={{ margin: 0 }}>
             Energy and Power - {PANEL}
           </Title>
-          <Text type="secondary">Live power and aggregated energy consumption</Text>
+          <Text type="secondary">
+            Live power and aggregated energy consumption
+          </Text>
         </div>
 
         <Space>
@@ -583,12 +633,16 @@ export default function EnergyOverview() {
               loading={liveLoading}
             />
             <div className="energy-live-caption">
-              {isLive ? "Updated automatically every 5 seconds" : "Waiting for live data"}
+              {isLive
+                ? "Updated automatically every 5 seconds"
+                : "Waiting for live data"}
             </div>
           </Col>
 
           <Col xs={24} lg={17} xl={18}>
-            <div className="energy-section-heading energy-overview-heading">Overview</div>
+            <div className="energy-section-heading energy-overview-heading">
+              Overview
+            </div>
             <div className="energy-mini-grid">
               {SUMMARY_PERIODS.map((period) => (
                 <EnergyOverviewMiniChart
@@ -598,6 +652,13 @@ export default function EnergyOverview() {
                   data={summaryData[period.key] || []}
                   loading={Boolean(summaryLoading[period.key])}
                   error={summaryErrors[period.key] || ""}
+                  forceUnit={
+                    period.key === "today" ||
+                    period.key === "7d" ||
+                    period.key === "month"
+                      ? "kWh"
+                      : undefined
+                  }
                 />
               ))}
             </div>

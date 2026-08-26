@@ -40,6 +40,7 @@ export default function EnergyOverviewMiniChart({
   interval = "1h",
   loading = false,
   error = "",
+  forceUnit,
 }) {
   const total = useMemo(
     () =>
@@ -52,7 +53,13 @@ export default function EnergyOverviewMiniChart({
 
   // Select the display unit once from the total for this card. Every bar,
   // tooltip value and the total then uses exactly the same unit.
-  const displayUnit = useMemo(() => getEnergyDisplayUnit(total), [total]);
+  const displayUnit = useMemo(() => {
+    if (forceUnit === "kWh") {
+      return { unit: "kWh", divisor: 1, decimals: 2 };
+    }
+
+    return getEnergyDisplayUnit(total);
+  }, [total, forceUnit]);
 
   const option = useMemo(
     () => ({
