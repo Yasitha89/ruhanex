@@ -1,5 +1,18 @@
 import { useState, useEffect, useMemo } from "react";
-import { Card, Select, DatePicker, Space, Flex, Tag, Badge, Modal, Form, Input, message, Descriptions } from "antd";
+import {
+  Card,
+  Select,
+  DatePicker,
+  Space,
+  Flex,
+  Tag,
+  Badge,
+  Modal,
+  Form,
+  Input,
+  message,
+  Descriptions,
+} from "antd";
 import ProductionChart from "../components/ProductionChart";
 import DowntimeChart from "../components/DowntimeChart";
 import StoppagesChart from "../components/StoppagesChart";
@@ -249,8 +262,18 @@ export default function Keda1() {
             }
           >
             <div className="shift_statBar">
-              <Row className="keda-summary-grid" gutter={[12, 12]} style={{ marginBottom: "15px" }}>
-                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
+              <Row
+                className="keda-summary-grid"
+                gutter={[12, 12]}
+                style={{ marginBottom: "15px" }}
+              >
+                <Col
+                  className="keda-summary-item"
+                  xs={24}
+                  sm={24}
+                  md={12}
+                  lg={6}
+                >
                   <Statistic
                     title="Shift Status"
                     value={shiftStatus} // Keep the value as a plain string
@@ -264,20 +287,38 @@ export default function Keda1() {
                     )}
                   />
                 </Col>
-                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
+                <Col
+                  className="keda-summary-item"
+                  xs={24}
+                  sm={24}
+                  md={12}
+                  lg={6}
+                >
                   <Statistic
                     title="Total Downtime"
                     value={formatDuration(totalDowntimeCurrentShift)}
                   />
                 </Col>
-                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
+                <Col
+                  className="keda-summary-item"
+                  xs={24}
+                  sm={24}
+                  md={12}
+                  lg={6}
+                >
                   <Statistic
                     title="Speed"
                     value={lineSpeed}
                     suffix={<span style={{ fontSize: "14px" }}>Tiles/min</span>}
                   />
                 </Col>
-                <Col className="keda-summary-item" xs={24} sm={24} md={12} lg={6}>
+                <Col
+                  className="keda-summary-item"
+                  xs={24}
+                  sm={24}
+                  md={12}
+                  lg={6}
+                >
                   <Statistic
                     title="Production"
                     value={lastValue}
@@ -401,7 +442,9 @@ export default function Keda1() {
                 {selectedDowntime.shift || "-"}
               </Descriptions.Item>
               <Descriptions.Item label="Start">
-                {dayjs(selectedDowntime.startTime).format("YYYY-MM-DD HH:mm:ss")}
+                {dayjs(selectedDowntime.startTime).format(
+                  "YYYY-MM-DD HH:mm:ss",
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="End">
                 {selectedDowntime.isOpenStop
@@ -417,7 +460,10 @@ export default function Keda1() {
 
             <Form form={downtimeForm} layout="vertical">
               <Form.Item label="Machine" name="machine">
-                <Input placeholder="Enter machine / equipment" maxLength={100} />
+                <Input
+                  placeholder="Enter machine / equipment"
+                  maxLength={100}
+                />
               </Form.Item>
 
               <Form.Item
@@ -442,7 +488,7 @@ export default function Keda1() {
           </>
         )}
       </Modal>
-            {/* <Card title="Downtime History">
+      {/* <Card title="Downtime History">
         <StoppagesChart
           data={shiftStoppages}
           loading={false}
