@@ -1,7 +1,16 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
-// https://vite.dev/config/
+// Build the application as one JavaScript bundle.
+// Route lazy-loading and dynamic imports have also been removed from src/.
 export default defineConfig({
   plugins: [react()],
-})
+  build: {
+    cssCodeSplit: false,
+    rolldownOptions: {
+      output: {
+        codeSplitting: false,
+      },
+    },
+  },
+});

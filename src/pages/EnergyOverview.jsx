@@ -1,3 +1,5 @@
+import ExcelJS from "exceljs";
+import { saveAs } from "file-saver";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -439,14 +441,6 @@ export default function EnergyOverview() {
     }
 
     try {
-      // Load the large export libraries only when the user requests an Excel file.
-      const [excelModule, fileSaverModule] = await Promise.all([
-        import("exceljs"),
-        import("file-saver"),
-      ]);
-      const ExcelJS = excelModule.default || excelModule;
-      const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
-
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "Ruhanex Industrial IoT Platform";
       workbook.created = new Date();

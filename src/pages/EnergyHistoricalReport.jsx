@@ -1,3 +1,5 @@
+import ExcelJS from "exceljs";
+import { saveAs } from "file-saver";
 import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 
@@ -626,13 +628,6 @@ export default function EnergyHistoricalReport() {
       return;
     }
 
-    const [excelModule, fileSaverModule] = await Promise.all([
-      import("exceljs"),
-      import("file-saver"),
-    ]);
-    const ExcelJS = excelModule.default || excelModule;
-    const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
-
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Electricity");
 
@@ -748,13 +743,6 @@ export default function EnergyHistoricalReport() {
 
       return;
     }
-
-    const [excelModule, fileSaverModule] = await Promise.all([
-      import("exceljs"),
-      import("file-saver"),
-    ]);
-    const ExcelJS = excelModule.default || excelModule;
-    const saveAs = fileSaverModule.saveAs || fileSaverModule.default;
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Energy Usage");
