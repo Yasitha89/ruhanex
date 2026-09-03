@@ -202,14 +202,14 @@ export default function CompactEnergyCard({ data, title, loading = false }) {
             <DataRow
               label="Active:"
               value={power.active_kw}
-              unit="kW"
+              unit="KW"
               precision={3}
             />
 
             <DataRow
               label="Reactive:"
               value={power.reactive_kvar}
-              unit="kvar"
+              unit="KVAR"
               precision={3}
             />
 

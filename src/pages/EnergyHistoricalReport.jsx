@@ -18,7 +18,6 @@ import {
 
 import { DownloadOutlined, SearchOutlined } from "@ant-design/icons";
 
-
 import {
   getHistoricalElectricityData,
   getHistoricalEnergyUsage,
@@ -38,13 +37,20 @@ const panelOptions = [
     label: "ATS1",
     value: "ATS1",
   },
+];
+
+const energyDeviceOptions = [
   {
-    label: "ATS2",
-    value: "ATS2",
+    label: "ATS",
+    value: 1,
   },
   {
-    label: "MSB1",
-    value: "MSB1",
+    label: "ATS GEN",
+    value: 2,
+  },
+  {
+    label: "MSB",
+    value: 3,
   },
 ];
 
@@ -152,12 +158,7 @@ const electricityAggregationOptions = {
 };
 
 function getElectricityAggregationConfig(range) {
-  if (
-    !Array.isArray(range) ||
-    range.length !== 2 ||
-    !range[0] ||
-    !range[1]
-  ) {
+  if (!Array.isArray(range) || range.length !== 2 || !range[0] || !range[1]) {
     return { allowed: ["1m", "5m", "15m", "1h"], recommended: "1m" };
   }
 
@@ -289,7 +290,10 @@ function normalizeEnergyUsageRecord(record, index) {
     key: record._id || record.id || `${record.intervalStart}-${index}`,
 
     panel: record.panel,
-    device_id: Number(record.device_id),
+    device_id:
+      record.device_id === null || record.device_id === undefined
+        ? ""
+        : String(record.device_id),
 
     intervalStart:
       record.intervalStart || record.interval_start || record._start,
@@ -389,7 +393,9 @@ export default function EnergyHistoricalReport() {
   );
 
   useEffect(() => {
-    if (!electricityAggregationConfig.allowed.includes(electricityAggregation)) {
+    if (
+      !electricityAggregationConfig.allowed.includes(electricityAggregation)
+    ) {
       setElectricityAggregation(electricityAggregationConfig.recommended);
     }
   }, [electricityAggregationConfig, electricityAggregation]);
@@ -397,6 +403,9 @@ export default function EnergyHistoricalReport() {
   const [electricityLoading, setElectricityLoading] = useState(false);
 
   // Energy tab states
+  // Energy history can combine one or more meters. The Node-RED API receives
+  // these as a comma-separated parameter, for example: device_ids=1,3.
+  const [energyDeviceIds, setEnergyDeviceIds] = useState([1]);
   const [energyInterval, setEnergyInterval] = useState("1h");
 
   const [energyData, setEnergyData] = useState([]);
@@ -459,9 +468,21 @@ export default function EnergyHistoricalReport() {
   };
 
   const getEnergyRequestValues = () => {
-    const common = validateCommonRequest();
+    if (!Array.isArray(energyDeviceIds) || energyDeviceIds.length === 0) {
+      message.warning("Please select at least one device ID");
+      return null;
+    }
 
-    if (!common) {
+    const validDeviceIds = [
+      ...new Set(
+        energyDeviceIds
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ];
+
+    if (validDeviceIds.length === 0) {
+      message.warning("Please select at least one valid device ID");
       return null;
     }
 
@@ -476,7 +497,8 @@ export default function EnergyHistoricalReport() {
     }
 
     return {
-      ...common,
+      panel,
+      deviceIds: validDeviceIds,
       fromTime: energyDateRange[0].startOf("day").toISOString(),
       toTime: energyDateRange[1].endOf("day").toISOString(),
     };
@@ -548,7 +570,21 @@ export default function EnergyHistoricalReport() {
         : result?.data || result?.records || [];
 
       const normalized = rawRecords
-        .map(normalizeEnergyUsageRecord)
+        .map((record, index) =>
+          normalizeEnergyUsageRecord(
+            {
+              ...record,
+
+              // The combined energy endpoint may not return panel/device
+              // metadata because multiple meters are merged before summing.
+              panel:
+                record.panel ??
+                (request.deviceIds.length > 1 ? "Combined" : ""),
+              device_id: record.device_id ?? request.deviceIds.join(","),
+            },
+            index,
+          ),
+        )
         .filter((record) => record.intervalStart && record.intervalEnd)
         .sort(
           (a, b) =>
@@ -796,7 +832,7 @@ export default function EnergyHistoricalReport() {
       new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
-      `${panel}_Energy_Usage_${energyInterval}.xlsx`,
+      `Devices_${energyDeviceIds.join("-")}_Energy_Usage_${energyInterval}.xlsx`,
     );
   };
 
@@ -826,6 +862,24 @@ export default function EnergyHistoricalReport() {
         onChange={(value) => {
           setDeviceId(Number(value));
           setElectricityData([]);
+          setEnergyData([]);
+        }}
+        style={{ width: "100%", marginTop: 6 }}
+      />
+    </>
+  );
+
+  const energyDeviceControl = (
+    <>
+      <Text strong>Device ID</Text>
+      <Select
+        mode="multiple"
+        value={energyDeviceIds}
+        options={energyDeviceOptions}
+        placeholder="Select device IDs"
+        maxTagCount="responsive"
+        onChange={(values) => {
+          setEnergyDeviceIds(values);
           setEnergyData([]);
         }}
         style={{ width: "100%", marginTop: 6 }}
@@ -1103,7 +1157,7 @@ export default function EnergyHistoricalReport() {
         </Col>
 
         <Col xs={24} sm={12} md={4} xl={3}>
-          {sharedDeviceControl}
+          {energyDeviceControl}
         </Col>
 
         <Col xs={24} md={10} lg={7} xl={7}>
@@ -1157,17 +1211,19 @@ export default function EnergyHistoricalReport() {
         {energyData.length > 0 && (
           <Col flex="none">
             <Text strong>
-              Total: {totalEnergyUsage.toLocaleString("en-US", {
+              Total:{" "}
+              {totalEnergyUsage.toLocaleString("en-US", {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
-              })} kWh
+              })}{" "}
+              kWh
             </Text>
           </Col>
         )}
       </Row>
 
       <div style={{ marginTop: 16 }}>
-      <EnergyUsageTable data={energyData} loading={energyLoading} />
+        <EnergyUsageTable data={energyData} loading={energyLoading} />
       </div>
 
       <EnergyUsageChart

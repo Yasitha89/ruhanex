@@ -1,83 +1,92 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Col, Row, Typography, message } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { Alert, Col, Row, Typography } from "antd";
 
 import EnergySummaryCard from "../components/EnergySummaryCard";
 import { getEnergyData } from "../api/energyApi.js";
 
 const { Title, Text } = Typography;
 
+const ENERGY_METERS = [
+  {
+    key: "ats-panel",
+    title: "ATS Panel",
+    panel: "ATS1",
+    deviceId: 1,
+  },
+  {
+    key: "ats-generator",
+    title: "ATS Generator",
+    panel: "ATS1",
+    deviceId: 2,
+  },
+  {
+    key: "msb-panel",
+    title: "MSB Panel",
+    panel: "ATS1",
+    deviceId: 3,
+  },
+];
+
+function createInitialMeterState() {
+  return ENERGY_METERS.reduce((state, meter) => {
+    state[meter.key] = {
+      data: null,
+      loading: true,
+      error: "",
+    };
+
+    return state;
+  }, {});
+}
+
 export default function EnergyDashboard() {
-  const [energyData, setEnergyData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
+  const [meters, setMeters] = useState(createInitialMeterState);
 
-  const loadEnergyData = useCallback(async ({ showLoading = false } = {}) => {
-    if (showLoading) {
-      setRefreshing(true);
-    }
+  const loadEnergyData = useCallback(async () => {
+    const results = await Promise.allSettled(
+      ENERGY_METERS.map((meter) =>
+        getEnergyData({
+          panel: meter.panel,
+          deviceId: meter.deviceId,
+        }),
+      ),
+    );
 
-    setError("");
+    setMeters((previous) => {
+      const next = { ...previous };
 
-    try {
-      const result = await getEnergyData({
-        panel: "ATS1",
-        deviceId: 1,
+      results.forEach((result, index) => {
+        const meter = ENERGY_METERS[index];
+
+        if (result.status === "fulfilled" && result.value) {
+          next[meter.key] = {
+            data: result.value,
+            loading: false,
+            error: "",
+          };
+          return;
+        }
+
+        const errorMessage =
+          result.status === "rejected"
+            ? result.reason?.message || "Unable to load energy data."
+            : "No energy data was returned by the server.";
+
+        console.error(
+          `Energy data loading error for ${meter.title}:`,
+          result.status === "rejected" ? result.reason : errorMessage,
+        );
+
+        next[meter.key] = {
+          // Keep the most recently received valid data visible if a refresh fails.
+          data: previous[meter.key]?.data ?? null,
+          loading: false,
+          error: errorMessage,
+        };
       });
-      //   let result = {};
-      //   const result_ = {
-      //     panel: "ATS1",
-      //     device_id: 1,
-      //     timestamp_ms: 15200,
-      //     current: {
-      //       l1_a: 4.52,
-      //       l2_a: 4.48,
-      //       l3_a: 4.6,
-      //       avg_a: 4.53,
-      //     },
-      //     voltage: {
-      //       l1_l2_v: 400.12,
-      //       l2_l3_v: 399.85,
-      //       l3_l1_v: 400.5,
-      //       ll_avg_v: 400.15,
-      //       l1_n_v: 231.02,
-      //       l2_n_v: 230.85,
-      //       l3_n_v: 231.2,
-      //       ln_avg_v: 231.02,
-      //     },
-      //     power: {
-      //       active_kw: 3.125,
-      //       reactive_kvar: 0.41,
-      //       apparent_kva: 3.152,
-      //       power_factor: 0.99,
-      //       frequency_hz: 50.02,
-      //     },
-      //     energy: {
-      //       active_kwh: 1152568.235,
-      //     },
-      //     status: "OK",
-      //   };
-      //   result = result_;
-      if (!result) {
-        throw new Error("No energy data was returned by the server.");
-      }
-      setEnergyData(result);
-    } catch (err) {
-      console.error("Energy data loading error:", err);
 
-      const errorMessage =
-        err instanceof Error ? err.message : "Unable to load energy data.";
-
-      setError(errorMessage);
-
-      if (showLoading) {
-        message.error(errorMessage);
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -105,9 +114,28 @@ export default function EnergyDashboard() {
       </div>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} md={16} lg={12} xl={10}>
-          <EnergySummaryCard title="ATS Panel Energy Meter" data={energyData} />
-        </Col>
+        {ENERGY_METERS.map((meter) => {
+          const meterState = meters[meter.key] || {};
+
+          return (
+            <Col key={meter.key} xs={24} xl={12} xxl={8}>
+              {meterState.error ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={`${meter.title}: ${meterState.error}`}
+                  style={{ marginBottom: 8 }}
+                />
+              ) : null}
+
+              <EnergySummaryCard
+                title={meter.title}
+                data={meterState.data}
+                loading={meterState.loading}
+              />
+            </Col>
+          );
+        })}
       </Row>
     </div>
   );

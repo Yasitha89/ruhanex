@@ -125,7 +125,7 @@ export default function Sidebar() {
             },
             {
               key: "energy_meter",
-              label: "ATS1",
+              label: "Meters",
               onClick: () => navigate("/energydashboard"),
             },
           ],

@@ -35,7 +35,8 @@ import "./EnergyOverview.css";
 const { Title, Text } = Typography;
 
 const PANEL = "ATS1";
-const DEVICE_ID = 1;
+const DEVICE_IDS = [1, 3];
+const DEVICE_LABEL = "Devices 1 + 3";
 
 const VIEW_OPTIONS = ["Day", "Week", "Month", "Year", "Total"];
 
@@ -247,11 +248,32 @@ export default function EnergyOverview() {
 
   const loadLiveData = useCallback(async () => {
     try {
-      const result = await getEnergyData({ panel: PANEL, deviceId: DEVICE_ID });
-      setLiveData(result || null);
+      const results = await Promise.all(
+        DEVICE_IDS.map((deviceId) => getEnergyData({ panel: PANEL, deviceId })),
+      );
+
+      const activeKw = results.reduce(
+        (sum, item) =>
+          sum + Number(item?.power?.active_kw ?? item?.power_active_kw ?? 0),
+        0,
+      );
+
+      const allOnline = results.every((item) => {
+        const status = String(item?.status || "").toUpperCase();
+        return item && !["OFFLINE", "ERROR", "FAULT"].includes(status);
+      });
+
+      // Keep the same shape consumed by the existing gauge, but the active
+      // power value now represents the total of Device 1 and Device 3.
+      setLiveData({
+        power: { active_kw: activeKw },
+        status: allOnline ? "OK" : "OFFLINE",
+      });
       setLiveError("");
     } catch (error) {
-      setLiveError(error?.message || "Unable to load live power data.");
+      setLiveError(
+        error?.message || "Unable to load combined live power data.",
+      );
     } finally {
       setLiveLoading(false);
     }
@@ -264,8 +286,7 @@ export default function EnergyOverview() {
     try {
       const request = getSummaryRequest(period, referenceTime || colomboNow());
       const result = await getHistoricalEnergyUsage({
-        panel: PANEL,
-        deviceId: DEVICE_ID,
+        deviceIds: DEVICE_IDS,
         fromTime: request.fromTime,
         toTime: request.toTime,
         interval: request.interval,
@@ -302,8 +323,7 @@ export default function EnergyOverview() {
 
     try {
       const result = await getHistoricalEnergyUsage({
-        panel: PANEL,
-        deviceId: DEVICE_ID,
+        deviceIds: DEVICE_IDS,
         fromTime: viewRequest.fromTime,
         toTime: viewRequest.toTime,
         interval: viewRequest.interval,
@@ -368,7 +388,7 @@ export default function EnergyOverview() {
       .replace(/[^a-zA-Z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
 
-    return `Energy_${PANEL}_${view}_${safeCaption || "Data"}`;
+    return `Energy_Devices_1_3_${view}_${safeCaption || "Data"}`;
   };
 
   const exportChartDataToExcel = async () => {
@@ -394,7 +414,7 @@ export default function EnergyOverview() {
       worksheet.views = [{ state: "frozen", ySplit: 4 }];
 
       worksheet.mergeCells("A1:H1");
-      worksheet.getCell("A1").value = `Energy Usage - ${PANEL}`;
+      worksheet.getCell("A1").value = `Energy Usage - ${DEVICE_LABEL}`;
       worksheet.getCell("A1").font = { bold: true, size: 16 };
       worksheet.getCell("A1").alignment = { horizontal: "center" };
 
@@ -421,8 +441,8 @@ export default function EnergyOverview() {
       chartData.forEach((record, index) => {
         worksheet.addRow([
           index + 1,
-          record.panel || PANEL,
-          record.device_id || DEVICE_ID,
+          record.panel || "Combined",
+          record.device_id || DEVICE_LABEL,
           formatColomboApiTime(record.intervalStart, "DD/MM/YYYY HH:mm:ss"),
           formatColomboApiTime(record.intervalEnd, "DD/MM/YYYY HH:mm:ss"),
           Number(record.firstEnergyKwh || 0),
@@ -596,11 +616,9 @@ export default function EnergyOverview() {
       <div className="energy-overview-header">
         <div>
           <Title level={2} style={{ margin: 0 }}>
-            Energy and Power - {PANEL}
+            Electricity Energy
           </Title>
-          <Text type="secondary">
-            Live power and aggregated energy consumption
-          </Text>
+          <Text type="secondary">Total Power Consumption of the Factory</Text>
         </div>
 
         <Space>

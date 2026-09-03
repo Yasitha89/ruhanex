@@ -80,19 +80,32 @@ export const getHistoricalElectricityData = async ({
 export const getHistoricalEnergyUsage = async ({
   panel,
   deviceId,
+  deviceIds,
   fromTime,
   toTime,
   interval,
 }) => {
-  const response = await api.get("/api/getHistoricalEnergyUsage", {
-    params: {
-      panel,
-      device_id: deviceId,
-      from_time: fromTime,
-      to_time: toTime,
-      interval,
-    },
-  });
+  const hasMultipleDeviceIds = Array.isArray(deviceIds) && deviceIds.length > 0;
+
+  const params = {
+    from_time: fromTime,
+    to_time: toTime,
+    interval,
+  };
+
+  // Backward compatible with the existing single-meter API while also
+  // supporting the combined-meter Node-RED flow:
+  //   device_ids=1,3
+  // The combined flow intentionally does not require a panel filter so that
+  // meters can be summed even if they use different panel tags later.
+  if (hasMultipleDeviceIds) {
+    params.device_ids = deviceIds.join(",");
+  } else {
+    params.panel = panel;
+    params.device_id = deviceId;
+  }
+
+  const response = await api.get("/api/getHistoricalEnergyUsage", { params });
 
   return response.data;
 };
