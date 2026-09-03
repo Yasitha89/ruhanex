@@ -29,6 +29,7 @@ function formatConvertedEnergy(kwh, displayUnit) {
 }
 
 function labelForInterval(timestamp, interval) {
+  if (interval === "1y") return formatColomboApiTime(timestamp, "YYYY");
   if (interval === "1mo") return formatColomboApiTime(timestamp, "MMM YY");
   if (interval === "1d") return formatColomboApiTime(timestamp, "DD MMM");
   return formatColomboApiTime(timestamp, "HH:mm");

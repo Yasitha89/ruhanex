@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Tag,
+  Tabs,
   Typography,
   message,
 } from "antd";
@@ -35,8 +36,21 @@ import "./EnergyOverview.css";
 const { Title, Text } = Typography;
 
 const PANEL = "ATS1";
-const DEVICE_IDS = [1, 3];
-const DEVICE_LABEL = "Devices 1 + 3";
+
+const ENERGY_SOURCES = {
+  ceb: {
+    key: "ceb",
+    label: "",
+    deviceIds: [1, 3],
+    description: "Power and energy supplied by CEB",
+  },
+  generator: {
+    key: "generator",
+    label: "",
+    deviceIds: [2],
+    description: "Power and energy supplied by Generators",
+  },
+};
 
 const VIEW_OPTIONS = ["Day", "Week", "Month", "Year", "Total"];
 
@@ -45,7 +59,7 @@ const SUMMARY_PERIODS = [
   { key: "7d", title: "Last 7 Days", interval: "1d" },
   { key: "month", title: "This Month", interval: "1d" },
   { key: "year", title: "This Year", interval: "1mo" },
-  { key: "3y", title: "Last 3 Years", interval: "1mo" },
+  { key: "3y", title: "Last 3 Years", interval: "1y" },
 ];
 
 function getSummaryRequest(period, referenceTime = colomboNow()) {
@@ -199,7 +213,7 @@ function getViewRequest(view, anchor) {
     return {
       fromTime: toApiIso(selected.startOf("year")),
       toTime: toApiIso(selected.endOf("year")),
-      interval: "1mo",
+      interval: "1y",
       caption: selected.format("YYYY"),
     };
   }
@@ -209,7 +223,7 @@ function getViewRequest(view, anchor) {
   return {
     fromTime: toApiIso(start),
     toTime: toApiIso(end),
-    interval: "1mo",
+    interval: "1y",
     caption: `Last 3 Years`,
   };
 }
@@ -224,6 +238,14 @@ function moveAnchor(view, anchor, direction) {
 }
 
 export default function EnergyOverview() {
+  const [activeSourceKey, setActiveSourceKey] = useState("ceb");
+  const activeSource = ENERGY_SOURCES[activeSourceKey];
+  const activeDeviceIds = activeSource.deviceIds;
+  const activeDeviceLabel =
+    activeDeviceIds.length > 1
+      ? `Devices ${activeDeviceIds.join(" + ")}`
+      : `Device ${activeDeviceIds[0]}`;
+
   const [liveData, setLiveData] = useState(null);
   const [liveError, setLiveError] = useState("");
   const [liveLoading, setLiveLoading] = useState(true);
@@ -247,9 +269,14 @@ export default function EnergyOverview() {
   );
 
   const loadLiveData = useCallback(async () => {
+    setLiveLoading(true);
+    setLiveError("");
+
     try {
       const results = await Promise.all(
-        DEVICE_IDS.map((deviceId) => getEnergyData({ panel: PANEL, deviceId })),
+        activeDeviceIds.map((deviceId) =>
+          getEnergyData({ panel: PANEL, deviceId }),
+        ),
       );
 
       const activeKw = results.reduce(
@@ -263,52 +290,57 @@ export default function EnergyOverview() {
         return item && !["OFFLINE", "ERROR", "FAULT"].includes(status);
       });
 
-      // Keep the same shape consumed by the existing gauge, but the active
-      // power value now represents the total of Device 1 and Device 3.
       setLiveData({
         power: { active_kw: activeKw },
         status: allOnline ? "OK" : "OFFLINE",
       });
-      setLiveError("");
     } catch (error) {
+      setLiveData(null);
       setLiveError(
-        error?.message || "Unable to load combined live power data.",
+        error?.message ||
+          `Unable to load ${activeSource.label.toLowerCase()} live power data.`,
       );
     } finally {
       setLiveLoading(false);
     }
-  }, []);
+  }, [activeDeviceIds, activeSource.label]);
 
-  const loadSummaryPeriod = useCallback(async (period, referenceTime) => {
-    setSummaryLoading((current) => ({ ...current, [period.key]: true }));
-    setSummaryErrors((current) => ({ ...current, [period.key]: "" }));
+  const loadSummaryPeriod = useCallback(
+    async (period, referenceTime) => {
+      setSummaryLoading((current) => ({ ...current, [period.key]: true }));
+      setSummaryErrors((current) => ({ ...current, [period.key]: "" }));
 
-    try {
-      const request = getSummaryRequest(period, referenceTime || colomboNow());
-      const result = await getHistoricalEnergyUsage({
-        deviceIds: DEVICE_IDS,
-        fromTime: request.fromTime,
-        toTime: request.toTime,
-        interval: request.interval,
-      });
+      try {
+        const request = getSummaryRequest(
+          period,
+          referenceTime || colomboNow(),
+        );
+        const result = await getHistoricalEnergyUsage({
+          deviceIds: activeDeviceIds,
+          fromTime: request.fromTime,
+          toTime: request.toTime,
+          interval: request.interval,
+        });
 
-      setSummaryData((current) => ({
-        ...current,
-        [period.key]: extractUsageRecords(result),
-      }));
-    } catch (error) {
-      setSummaryData((current) => ({ ...current, [period.key]: [] }));
-      setSummaryErrors((current) => ({
-        ...current,
-        [period.key]:
-          error?.response?.data?.message ||
-          error?.message ||
-          `Unable to load ${period.title} energy data.`,
-      }));
-    } finally {
-      setSummaryLoading((current) => ({ ...current, [period.key]: false }));
-    }
-  }, []);
+        setSummaryData((current) => ({
+          ...current,
+          [period.key]: extractUsageRecords(result),
+        }));
+      } catch (error) {
+        setSummaryData((current) => ({ ...current, [period.key]: [] }));
+        setSummaryErrors((current) => ({
+          ...current,
+          [period.key]:
+            error?.response?.data?.message ||
+            error?.message ||
+            `Unable to load ${period.title} energy data.`,
+        }));
+      } finally {
+        setSummaryLoading((current) => ({ ...current, [period.key]: false }));
+      }
+    },
+    [activeDeviceIds],
+  );
 
   const loadSummaryData = useCallback(() => {
     const end = colomboNow();
@@ -323,7 +355,7 @@ export default function EnergyOverview() {
 
     try {
       const result = await getHistoricalEnergyUsage({
-        deviceIds: DEVICE_IDS,
+        deviceIds: activeDeviceIds,
         fromTime: viewRequest.fromTime,
         toTime: viewRequest.toTime,
         interval: viewRequest.interval,
@@ -340,7 +372,7 @@ export default function EnergyOverview() {
     } finally {
       setChartLoading(false);
     }
-  }, [viewRequest]);
+  }, [activeDeviceIds, viewRequest]);
 
   useEffect(() => {
     const initialTimer = window.setTimeout(loadLiveData, 0);
@@ -350,6 +382,14 @@ export default function EnergyOverview() {
       window.clearInterval(refreshTimer);
     };
   }, [loadLiveData]);
+
+  useEffect(() => {
+    setSummaryLoading(
+      Object.fromEntries(SUMMARY_PERIODS.map((period) => [period.key, true])),
+    );
+    setChartLoading(true);
+    setLiveLoading(true);
+  }, [activeSourceKey]);
 
   useEffect(() => {
     const initialTimer = window.setTimeout(loadSummaryData, 0);
@@ -368,13 +408,14 @@ export default function EnergyOverview() {
   const activePower = Number(
     liveData?.power?.active_kw ?? liveData?.power_active_kw ?? 0,
   );
+
   const liveStatus = String(liveData?.status || "").toUpperCase();
   const isLive =
     Boolean(liveData) &&
     !liveError &&
     !["OFFLINE", "ERROR", "FAULT"].includes(liveStatus);
-  //const gaugeMax = Math.max(100, Math.ceil((activePower * 1.35) / 100) * 100);
-  const gaugeMax = 1600;
+
+  const gaugeMax = 2500;
 
   const refreshAll = () => {
     setLiveLoading(true);
@@ -388,7 +429,7 @@ export default function EnergyOverview() {
       .replace(/[^a-zA-Z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
 
-    return `Energy_Devices_1_3_${view}_${safeCaption || "Data"}`;
+    return `Energy_${activeSource.label}_${view}_${safeCaption || "Data"}`;
   };
 
   const exportChartDataToExcel = async () => {
@@ -414,7 +455,7 @@ export default function EnergyOverview() {
       worksheet.views = [{ state: "frozen", ySplit: 4 }];
 
       worksheet.mergeCells("A1:H1");
-      worksheet.getCell("A1").value = `Energy Usage - ${DEVICE_LABEL}`;
+      worksheet.getCell("A1").value = `Energy Usage - ${activeSource.label}`;
       worksheet.getCell("A1").font = { bold: true, size: 16 };
       worksheet.getCell("A1").alignment = { horizontal: "center" };
 
@@ -442,7 +483,7 @@ export default function EnergyOverview() {
         worksheet.addRow([
           index + 1,
           record.panel || "Combined",
-          record.device_id || DEVICE_LABEL,
+          record.device_id || activeDeviceLabel,
           formatColomboApiTime(record.intervalStart, "DD/MM/YYYY HH:mm:ss"),
           formatColomboApiTime(record.intervalEnd, "DD/MM/YYYY HH:mm:ss"),
           Number(record.firstEnergyKwh || 0),
@@ -611,32 +652,14 @@ export default function EnergyOverview() {
     );
   };
 
-  return (
-    <div className="energy-overview-page">
-      <div className="energy-overview-header">
-        <div>
-          <Title level={2} style={{ margin: 0 }}>
-            Electricity Energy
-          </Title>
-          <Text type="secondary">Total Power Consumption of the Factory</Text>
-        </div>
-
-        <Space>
-          <Tag color={isLive ? "success" : "default"}>
-            {isLive ? "● Live" : "● Offline"}
-          </Tag>
-          <Button icon={<ReloadOutlined />} onClick={refreshAll}>
-            Refresh
-          </Button>
-        </Space>
-      </div>
-
+  const sourceDashboardContent = (
+    <>
       {liveError && (
         <Alert
           style={{ marginBottom: 16 }}
           type="warning"
           showIcon
-          message="Live power unavailable"
+          message={`${activeSource.label} live power unavailable`}
           description={liveError}
         />
       )}
@@ -644,27 +667,23 @@ export default function EnergyOverview() {
       <Card className="energy-overview-top-card" bordered={false}>
         <Row gutter={[0, 22]} align="stretch">
           <Col xs={24} lg={7} xl={6} className="energy-current-power-column">
-            <div className="energy-section-heading">Current Power</div>
             <EnergyPowerGauge
               value={activePower}
               max={gaugeMax}
               loading={liveLoading}
             />
-            <div className="energy-live-caption">
-              {isLive
-                ? "Updated automatically every 5 seconds"
-                : "Waiting for live data"}
-            </div>
+            <div className="energy-live-caption">{activeSource.label}</div>
           </Col>
 
           <Col xs={24} lg={17} xl={18}>
             <div className="energy-section-heading energy-overview-heading">
               Overview
             </div>
+
             <div className="energy-mini-grid">
               {SUMMARY_PERIODS.map((period) => (
                 <EnergyOverviewMiniChart
-                  key={period.key}
+                  key={`${activeSourceKey}-${period.key}`}
                   title={period.title}
                   interval={period.interval}
                   data={summaryData[period.key] || []}
@@ -710,6 +729,7 @@ export default function EnergyOverview() {
               >
                 Excel
               </Button>
+
               <Button
                 icon={<PictureOutlined />}
                 onClick={saveChartAsImage}
@@ -741,6 +761,62 @@ export default function EnergyOverview() {
           loading={chartLoading}
         />
       </Card>
+    </>
+  );
+
+  return (
+    <div className="energy-overview-page">
+      <div className="energy-overview-header">
+        <div>
+          <Title level={2} style={{ margin: 0 }}>
+            Energy and Power
+          </Title>
+          <Text type="secondary">{activeSource.description}</Text>
+        </div>
+
+        <Space>
+          <Tag color={isLive ? "success" : "default"}>
+            {isLive ? "● Live" : "● Offline"}
+          </Tag>
+
+          <Button icon={<ReloadOutlined />} onClick={refreshAll}>
+            Refresh
+          </Button>
+        </Space>
+      </div>
+
+      <Tabs
+        className="energy-source-tabs"
+        type="card"
+        activeKey={activeSourceKey}
+        destroyOnHidden={false}
+        onChange={(key) => {
+          setActiveSourceKey(key);
+
+          // Clear the previous source's data when changing tabs so values from
+          // CEB are never briefly displayed in Generator (or vice versa).
+          setLiveData(null);
+          setLiveError("");
+          setLiveLoading(true);
+          setSummaryData({});
+          setSummaryErrors({});
+          setChartData([]);
+          setChartError("");
+        }}
+        items={[
+          {
+            key: "ceb",
+            label: "CEB",
+            children: activeSourceKey === "ceb" ? sourceDashboardContent : null,
+          },
+          {
+            key: "generator",
+            label: "Generator",
+            children:
+              activeSourceKey === "generator" ? sourceDashboardContent : null,
+          },
+        ]}
+      />
     </div>
   );
 }

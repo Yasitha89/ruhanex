@@ -4,6 +4,18 @@ import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import "./DashboardCharts.css";
 
+function isTouchCapableDevice() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+
+  return (
+    "ontouchstart" in window ||
+    Number(navigator.maxTouchPoints || 0) > 0 ||
+    window.matchMedia?.("(hover: none) and (pointer: coarse)")?.matches === true
+  );
+}
+
 function formatDuration(milliseconds) {
   const totalMinutes = Math.max(0, Math.floor(Number(milliseconds) / 60000));
 
@@ -40,6 +52,7 @@ export default function StoppagesChart({
   loading = false,
   onBarClick,
 }) {
+  const touchDevice = useMemo(() => isTouchCapableDevice(), []);
   const chartData = useMemo(() => {
     const currentTime = Date.now();
 
@@ -125,7 +138,9 @@ export default function StoppagesChart({
         },
       },
       tooltip: {
+        show: !touchDevice,
         trigger: "item",
+        triggerOn: touchDevice ? "none" : "mousemove|click",
         confine: true,
 
         formatter: (params) => {
