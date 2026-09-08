@@ -25,6 +25,12 @@ const ENERGY_METERS = [
     panel: "ATS1",
     deviceId: 3,
   },
+  {
+    key: "msb-generator",
+    title: "MSB Generator",
+    panel: "ATS1",
+    deviceId: 4,
+  },
 ];
 
 function createInitialMeterState() {

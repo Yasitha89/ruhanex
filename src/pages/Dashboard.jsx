@@ -17,7 +17,7 @@ export default function Dashboard() {
   const loadData = async () => {
     try {
       const data = await getDashboardStats(
-        "KEDA 1",
+        "Keda 1",
         currentShift,
         currentShiftFromTime,
         currentShiftToTime,

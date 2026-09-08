@@ -16,6 +16,8 @@ export default function Sidebar() {
     switch (location.pathname) {
       case "/keda1":
         return "keda1";
+      case "/gl1":
+        return "gl1";
       case "/energyoverview":
         return "energy_overview";
       case "/energydashboard":
@@ -98,6 +100,11 @@ export default function Sidebar() {
               key: "keda1",
               label: "Keda 1",
               onClick: () => navigate("/keda1"),
+            },
+            {
+              key: "gl1",
+              label: "Glaze Line 1",
+              onClick: () => navigate("/gl1"),
             },
             // Future production lines
             // {

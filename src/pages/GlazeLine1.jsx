@@ -56,7 +56,7 @@ export default function Keda1() {
   const [downtimeModalOpen, setDowntimeModalOpen] = useState(false);
   const [savingDowntime, setSavingDowntime] = useState(false);
   const [downtimeForm] = Form.useForm();
-  const line = "Keda 1";
+  const line = "Keda 2";
 
   const loadLiveSummary = async () => {
     try {
@@ -70,7 +70,7 @@ export default function Keda1() {
       setLineSpeed(Number(summary?.speed || 0));
       setTotalDowntimeCurrentShift(Number(summary?.downtimeMinutes || 0));
     } catch (error) {
-      console.error("Failed to load Keda 1 live summary:", error);
+      console.error("Failed to load Glaze Line 1 live summary:", error);
       setSensorStatus("Offline");
     }
   };
@@ -110,7 +110,7 @@ export default function Keda1() {
       setData(productionData || []);
       setShiftStoppages(stoppagesResponse || []);
     } catch (error) {
-      console.error("Failed to load Keda 1 shift details:", error);
+      console.error("Failed to load Glaze Line 1 shift details:", error);
     }
   };
 
@@ -210,7 +210,7 @@ export default function Keda1() {
   return (
     // <Card>
     <div
-      className="keda-dashboard-page"
+      className="glazeline-dashboard-page"
       style={{
         position: "relative",
         display: "flex",
@@ -218,7 +218,7 @@ export default function Keda1() {
         gap: 20, // 👈 controls vertical spacing
       }}
     >
-      <h3 style={{ textAlign: "left" }}>Keda 1 Production Dashboard</h3>
+      <h3 style={{ textAlign: "left" }}>Glaze Line 1 Production Dashboard</h3>
       <Row>
         <Col xs={24} span={8}>
           <Card

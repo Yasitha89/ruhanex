@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Card,
   Select,
   DatePicker,
   Space,
+  Flex,
   Tag,
   Badge,
   Modal,
@@ -13,11 +14,14 @@ import {
   Descriptions,
 } from "antd";
 import ProductionChart from "../components/ProductionChart";
+import DowntimeChart from "../components/DowntimeChart";
 import StoppagesChart from "../components/StoppagesChart";
 import {
   getShiftData,
+  getShiftLast,
+  getShiftDowntime,
+  getLineSpeed,
   getShiftStoppages,
-  getLineLiveSummary,
   updateDowntimeReason,
 } from "../api/dashboardApi";
 import dayjs from "dayjs";
@@ -32,23 +36,20 @@ const { currentShift: initialShift } = getCurrentShiftTimeRange();
 
 export default function Keda1() {
   const [data, setData] = useState([]);
+  const [downtime, setDowntime] = useState([]);
   const [shiftStoppages, setShiftStoppages] = useState([]);
+  const [currentShiftDowntime, setCurrentShiftDowntime] = useState([]);
   const [shift, setShift] = useState(initialShift);
   const [lastValue, setLastValue] = useState(0);
-  const [tileSize, setTileSize] = useState("");
+  const [tileSize, setTileSize] = useState(0.18);
   const [currentShift, setCurrentShift] = useState("06-14");
   const [lineSpeed, setLineSpeed] = useState(0);
-  const [totalDowntimeCurrentShift, setTotalDowntimeCurrentShift] = useState(0);
-  const [date, setDate] = useState(() => {
-    const now = dayjs();
-
-    // 00:00 - 05:59 belongs to previous day's 22-06 shift
-    if (now.hour() < 6) {
-      return now.subtract(1, "day").startOf("day");
-    }
-
-    return now.startOf("day");
-  });
+  const [tilesPerMin, setTilesPerMin] = useState(0);
+  const [dateRange, setDateRange] = useState([
+    dayjs().subtract(6, "hour"),
+    dayjs(),
+  ]);
+  const [date, setDate] = useState(dayjs());
   const [selectedShiftLastValue, setSelectedShiftLastValue] = useState(0);
   const [shiftStatus, setShiftStatus] = useState("Stopped");
   const [sensorStatus, setSensorStatus] = useState("Connecting..");
@@ -56,62 +57,61 @@ export default function Keda1() {
   const [downtimeModalOpen, setDowntimeModalOpen] = useState(false);
   const [savingDowntime, setSavingDowntime] = useState(false);
   const [downtimeForm] = Form.useForm();
-  const line = "Keda 1";
 
-  const loadLiveSummary = async () => {
-    try {
-      const summary = await getLineLiveSummary(line);
+  const { RangePicker } = DatePicker;
 
-      setCurrentShift(summary?.currentShift || "06-14");
-      setShiftStatus(summary?.shiftStatus || "Unknown");
-      setSensorStatus(summary?.sensorStatus || "Unknown");
-      setTileSize(summary?.tileSize || "");
-      setLastValue(Number(summary?.shiftCount || 0));
-      setLineSpeed(Number(summary?.speed || 0));
-      setTotalDowntimeCurrentShift(Number(summary?.downtimeMinutes || 0));
-    } catch (error) {
-      console.error("Failed to load Keda 1 live summary:", error);
-      setSensorStatus("Offline");
-    }
-  };
+  const loadData = async () => {
+    const { fromTime, toTime } = getShiftTimeRange(date, shift);
+    const { currentShiftFromTime, currentShiftToTime, currentShift } =
+      getCurrentShiftTimeRange();
 
-  const loadSelectedShiftDetails = async () => {
-    try {
-      const { fromTime, toTime } = getShiftTimeRange(date, shift);
+    const [
+      data,
+      downtime,
+      last,
+      lineSpeed,
+      currentShiftDowntime,
+      stoppagesResponse,
+    ] = await Promise.all([
+      getShiftData(shift, fromTime, toTime),
+      getShiftDowntime(shift, fromTime, toTime), // this is to get the downtime based on the user selection in the date selection
+      getShiftLast(shift),
+      getLineSpeed(),
+      getShiftDowntime(currentShift, currentShiftFromTime, currentShiftToTime), // this is to get the current shift downtime to display in the current shift details card
+      getShiftStoppages(shift, date, "Keda1"), // this is to get the downtime based on the user selection in the date selection
+    ]);
+    if (shift !== "all") {
+      setSelectedShiftLastValue(
+        data?.findLast((item) => item?.value !== null)?.value,
+      );
+    } else {
+      const maxPerShift = new Map();
 
-      const [productionData, stoppagesResponse] = await Promise.all([
-        getShiftData(line, shift, fromTime, toTime),
-        getShiftStoppages(shift, date, line),
-      ]);
+      for (const item of data) {
+        const currentMax = maxPerShift.get(item.shift);
 
-      if (shift !== "all") {
-        setSelectedShiftLastValue(
-          productionData?.findLast((item) => item?.value !== null)?.value ?? 0,
-        );
-      } else {
-        const maxPerShift = new Map();
-
-        for (const item of productionData || []) {
-          const currentMax = maxPerShift.get(item.shift);
-
-          if (!currentMax || item.value > currentMax.value) {
-            maxPerShift.set(item.shift, item);
-          }
+        if (!currentMax || item.value > currentMax.value) {
+          maxPerShift.set(item.shift, item);
         }
-
-        const total = Array.from(maxPerShift.values()).reduce(
-          (sum, item) => sum + Number(item.value || 0),
-          0,
-        );
-
-        setSelectedShiftLastValue(total);
       }
 
-      setData(productionData || []);
-      setShiftStoppages(stoppagesResponse || []);
-    } catch (error) {
-      console.error("Failed to load Keda 1 shift details:", error);
+      const total = Array.from(maxPerShift.values()).reduce(
+        (sum, item) => sum + item.value,
+        0,
+      );
+
+      setSelectedShiftLastValue(total);
     }
+    setCurrentShift(currentShift);
+    setShiftStatus(last?.shiftStatus);
+    setTileSize(last?.tileSize);
+    setData(data);
+    setDowntime(downtime);
+    setCurrentShiftDowntime(currentShiftDowntime);
+    setLastValue(last?.value ?? 0);
+    setSensorStatus(last?.sensorStatus);
+    setLineSpeed(lineSpeed?.lineSpeed);
+    setShiftStoppages(stoppagesResponse);
   };
 
   const onChange = (value) => {
@@ -119,34 +119,44 @@ export default function Keda1() {
   };
 
   useEffect(() => {
-    loadLiveSummary();
+    // initial load
 
-    const liveInterval = setInterval(loadLiveSummary, 5000);
-
-    return () => clearInterval(liveInterval);
-  }, []);
-
-  useEffect(() => {
-    loadSelectedShiftDetails();
-
-    const current = getCurrentShiftTimeRange();
-    const currentShiftDate = dayjs(current.currentShiftFromTime).format(
-      "YYYY-MM-DD",
-    );
-    const selectedDate = dayjs(date).format("YYYY-MM-DD");
-
-    const selectionIncludesLiveShift =
-      selectedDate === currentShiftDate &&
-      (shift === current.currentShift || shift === "all");
-
-    if (!selectionIncludesLiveShift) {
-      return undefined;
+    if (dateRange && dateRange.length === 2 && dateRange[0] && dateRange[1]) {
+      loadData();
     }
 
-    const detailInterval = setInterval(loadSelectedShiftDetails, 5000);
+    // live refresh
+    const interval = setInterval(() => {
+      loadData();
+    }, 5000);
 
-    return () => clearInterval(detailInterval);
-  }, [shift, date]);
+    // cleanup (IMPORTANT)
+    return () => clearInterval(interval);
+  }, [shift, dateRange, date]);
+
+  const totalDowntimeCurrentShift = useMemo(() => {
+    let startTime = null;
+    let total = 0;
+
+    currentShiftDowntime.forEach((event) => {
+      if (event.downStatus === "STOP_START") {
+        startTime = new Date(Number(event.ts));
+      }
+
+      if (event.downStatus === "STOP_END" && startTime) {
+        const endTime = new Date(Number(event.ts));
+        total += Math.floor((endTime - startTime) / 60000);
+        startTime = null;
+      }
+    });
+
+    if (startTime) {
+      const now = new Date();
+      total += Math.floor((now - startTime) / 60000);
+    }
+
+    return total;
+  }, [currentShiftDowntime]);
 
   const openDowntimeModal = (selectedEvent) => {
     setSelectedDowntime(selectedEvent);
@@ -185,7 +195,7 @@ export default function Keda1() {
 
       message.success("Downtime reason updated successfully.");
       closeDowntimeModal();
-      await Promise.all([loadLiveSummary(), loadSelectedShiftDetails()]);
+      await loadData();
     } catch (error) {
       if (error?.errorFields) {
         return;

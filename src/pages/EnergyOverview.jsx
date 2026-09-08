@@ -49,7 +49,7 @@ const ENERGY_SOURCES = {
   generator: {
     key: "generator",
     label: "",
-    deviceIds: [2],
+    deviceIds: [2, 4],
     description: "Power and energy supplied by Generators",
   },
 };

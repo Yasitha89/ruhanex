@@ -7,10 +7,9 @@ const api = axios.create({
   baseURL: "https://ruhanex.chikirisoft.com/api",
 });
 
-export const getShiftData = async (line, shift, fromTime, toTime) => {
+export const getShiftData = async (shift, fromTime, toTime) => {
   const response = await api.get("/api/shift-count", {
     params: {
-      line,
       shift,
       fromTime,
       toTime,
@@ -83,14 +82,6 @@ export const getShiftLast = async (shift) => {
 
 export const getLineSpeed = async () => {
   const res = await api.get("/api/line_speed");
-  return res.data;
-};
-
-export const getLineLiveSummary = async (line = "Keda 2") => {
-  const res = await api.get("/api/line-live-summary", {
-    params: { line },
-  });
-
   return res.data;
 };
 

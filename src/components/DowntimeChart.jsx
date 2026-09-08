@@ -1,160 +1,260 @@
 import ReactECharts from "echarts-for-react";
-import dayjs from "dayjs";
-import { useState, useMemo } from "react";
-import { Row, Col, Statistic } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { Row, Col } from "antd";
 
-export default function DowntimeChart({ data }) {
-  let tempTotalDowntime = 0;
+export default function DowntimeChart({ data = [] }) {
+  // Used to continuously update an active/open stoppage.
+  const [currentTime, setCurrentTime] = useState(Date.now());
 
-  // const { downtime, totalDowntime } = useMemo(() => {
-  //   const downtime = [];
-  //   let startTime = null;
-  //   let total = 0;
+  // Update once every second while component is mounted.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
 
-  //   data.forEach((event) => {
-  //     if (event.downStatus === "STOP_START") {
-  //       startTime = new Date(Number(event.ts));
-  //     }
+    return () => clearInterval(timer);
+  }, []);
 
-  //     if (event.downStatus === "STOP_END" && startTime) {
-  //       const endTime = new Date(Number(event.ts));
-  //       const duration = (endTime - startTime) / 1000;
-
-  //       total += duration;
-
-  //       downtime.push({
-  //         start: startTime,
-  //         end: endTime,
-  //         duration,
-  //       });
-
-  //       startTime = null;
-  //     }
-  //   });
-
-  //   return {
-  //     downtime,
-  //     totalDowntime: total,
-  //   };
-  // }, [data]);
+  // ============================================================
+  // CALCULATE DOWNTIME
+  //
+  // IMPORTANT:
+  // - Do NOT round each individual stop before totaling.
+  // - Add milliseconds first.
+  // - Divide by 60000 only once at the end.
+  // ============================================================
 
   const { downtime, totalDowntime } = useMemo(() => {
     const downtime = [];
+
     let startTime = null;
-    let total = 0;
+
+    // Keep total in milliseconds for maximum accuracy.
+    let totalMs = 0;
 
     data.forEach((event) => {
+      // ========================================================
+      // STOP START
+      // ========================================================
+
       if (event.downStatus === "STOP_START") {
-        startTime = new Date(Number(event.ts));
+        const timestamp = Number(event.ts);
+
+        if (Number.isFinite(timestamp)) {
+          startTime = new Date(timestamp);
+        }
       }
 
+      // ========================================================
+      // STOP END
+      // ========================================================
+
       if (event.downStatus === "STOP_END" && startTime) {
-        const endTime = new Date(Number(event.ts));
-        const duration = Math.floor((endTime - startTime) / 60000);
+        const timestamp = Number(event.ts);
 
-        total += duration;
+        if (!Number.isFinite(timestamp)) {
+          return;
+        }
 
-        downtime.push({
-          start: startTime,
-          end: endTime,
-          duration,
-        });
+        const endTime = new Date(timestamp);
+
+        const durationMs = endTime.getTime() - startTime.getTime();
+
+        // Ignore invalid / negative duration.
+        if (durationMs > 0) {
+          // Add precise milliseconds to total.
+          totalMs += durationMs;
+
+          // Duration in minutes.
+          const durationMinutes = durationMs / 60000;
+
+          downtime.push({
+            start: startTime,
+            end: endTime,
+            duration: durationMinutes,
+            durationMs,
+            type: "completed",
+          });
+        }
 
         startTime = null;
       }
     });
 
-    // IMPORTANT: handle OPEN STOP (still running downtime)
+    // ==========================================================
+    // HANDLE OPEN STOP
+    // ==========================================================
 
     if (startTime) {
-      const now = new Date();
-      const duration = Math.floor((now - startTime) / 60000);
+      const endTime = new Date(currentTime);
 
-      total += duration;
+      const durationMs = endTime.getTime() - startTime.getTime();
 
-      downtime.push({
-        start: startTime,
-        end: now,
-        duration,
-        type: "active", // still ongoing stop
-      });
+      if (durationMs > 0) {
+        totalMs += durationMs;
+
+        const durationMinutes = durationMs / 60000;
+
+        downtime.push({
+          start: startTime,
+          end: endTime,
+          duration: durationMinutes,
+          durationMs,
+          type: "active",
+        });
+      }
     }
+
+    // ==========================================================
+    // CONVERT TOTAL TO MINUTES ONLY ONCE
+    // ==========================================================
+
+    const totalDowntime = totalMs / 60000;
+
     return {
       downtime,
-      totalDowntime: total,
+      totalDowntime,
     };
-  }, [data]);
+  }, [data, currentTime]);
 
-  const barData = downtime.map((d) => ({
-    name: d.start.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    value: Math.floor(d.duration), // minutes
-  }));
+  // ============================================================
+  // BAR CHART DATA
+  // ============================================================
 
-  const onEvents = {
-    datazoom: (params) => {
-      const start = params.batch?.[0]?.start || 0;
-      setIsZoomedOut(start < 30);
-    },
-  };
+  const barData = useMemo(() => {
+    return downtime.map((d) => ({
+      name: d.start.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+
+      // Keep 2 decimals for each bar.
+      value: Number(d.duration.toFixed(2)),
+
+      type: d.type,
+    }));
+  }, [downtime]);
+
+  // ============================================================
+  // FORMAT TOTAL DOWNTIME
+  //
+  // Example:
+  // 65.8 minutes -> 01 hour: 05 minutes
+  //
+  // This follows the same display style as your Node-RED API,
+  // which floors the displayed whole minutes.
+  // ============================================================
 
   const formatDuration = (totalMinutes) => {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = Math.floor(totalMinutes % 60);
+    if (!Number.isFinite(totalMinutes) || totalMinutes < 0) {
+      return "00 hour: 00 minutes";
+    }
 
-    return `${String(hours).padStart(2, "0")} hour: ${String(minutes).padStart(2, "0")} minutes`;
+    const wholeMinutes = Math.floor(totalMinutes);
+
+    const hours = Math.floor(wholeMinutes / 60);
+
+    const minutes = wholeMinutes % 60;
+
+    return `${String(hours).padStart(2, "0")} hour: ${String(minutes).padStart(
+      2,
+      "0",
+    )} minutes`;
   };
 
-  // 2. Build ECharts option
-  const option = {
-    tooltip: {
-      trigger: "axis",
-      formatter: (params) => {
-        const p = params[0];
-        return `${p.name}<br/>Downtime: ${p.value} min`;
-      },
-    },
+  // ============================================================
+  // ECHARTS OPTIONS
+  // ============================================================
 
-    xAxis: {
-      type: "category",
-      name: "Downtime Started Time",
-      nameLocation: "bottom",
-      nameGap: 50,
-      boundaryGap: false,
-      data: barData.map((d) => d.name),
-    },
+  const option = useMemo(
+    () => ({
+      tooltip: {
+        trigger: "axis",
 
-    yAxis: {
-      type: "value",
-      name: "Minutes",
-      nameLocation: "bottom",
-      nameRotate: 90,
-      nameGap: 50,
-    },
+        formatter: (params) => {
+          const p = params?.[0];
 
-    series: [
-      {
-        type: "bar",
-        data: barData.map((d) => d.value),
-        itemStyle: {
-          color: "#ff4d4f",
+          if (!p) {
+            return "";
+          }
+
+          return `
+            ${p.name}
+            <br/>
+            Downtime: ${Number(p.value).toFixed(2)} min
+          `;
         },
-        barWidth: 10, // Width in pixels
       },
-    ],
-  };
+
+      xAxis: {
+        type: "category",
+        name: "Downtime Started Time",
+        nameLocation: "middle",
+        nameGap: 35,
+        boundaryGap: true,
+        data: barData.map((d) => d.name),
+      },
+
+      yAxis: {
+        type: "value",
+        name: "Minutes",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 45,
+        min: 0,
+      },
+
+      series: [
+        {
+          type: "bar",
+
+          data: barData.map((d) => ({
+            value: d.value,
+          })),
+
+          itemStyle: {
+            color: "#ff4d4f",
+          },
+
+          barWidth: 10,
+        },
+      ],
+    }),
+    [barData],
+  );
+
+  // ============================================================
+  // UI
+  // ============================================================
 
   return (
     <div>
       <Row justify="center" align="middle">
         <Col>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 20, color: "#888" }}>Total Downtime:</span>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 20,
+                color: "#888",
+              }}
+            >
+              Total Downtime:
+            </span>
 
-            <span style={{ fontSize: 20, fontWeight: 600, color: "#5c5b5b" }}>
-              {formatDuration(totalDowntime)}{" "}
+            <span
+              style={{
+                fontSize: 20,
+                fontWeight: 600,
+                color: "#5c5b5b",
+              }}
+            >
+              {formatDuration(totalDowntime)}
             </span>
           </div>
         </Col>
@@ -162,8 +262,9 @@ export default function DowntimeChart({ data }) {
 
       <ReactECharts
         option={option}
-        onEvents={onEvents}
-        style={{ height: 350 }}
+        style={{
+          height: 350,
+        }}
       />
     </div>
   );
