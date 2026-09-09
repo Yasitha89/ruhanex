@@ -7,9 +7,9 @@ const api = axios.create({
   baseURL: "https://ruhanex.chikirisoft.com/api",
 });
 
-export const getEnergyData = async ({ panel, deviceId }) => {
+export const getEnergyMeterData = async ({ panel, deviceId }) => {
   try {
-    const response = await api.get("/api/getEnergyData", {
+    const response = await api.get("/api/getEnergyMeterData", {
       params: {
         panel,
         device_id: deviceId,
@@ -81,10 +81,12 @@ export const getHistoricalEnergyUsage = async ({
   panel,
   deviceId,
   deviceIds,
+  meters,
   fromTime,
   toTime,
   interval,
 }) => {
+  const hasMeters = Array.isArray(meters) && meters.length > 0;
   const hasMultipleDeviceIds = Array.isArray(deviceIds) && deviceIds.length > 0;
 
   const params = {
@@ -93,14 +95,48 @@ export const getHistoricalEnergyUsage = async ({
     interval,
   };
 
-  // Backward compatible with the existing single-meter API while also
-  // supporting the combined-meter Node-RED flow:
-  //   device_ids=1,3
-  // The combined flow intentionally does not require a panel filter so that
-  // meters can be summed even if they use different panel tags later.
-  if (hasMultipleDeviceIds) {
+  /*
+   * Supported request modes
+   * -----------------------
+   *
+   * 1. Single meter (existing API)
+   *    panel=ATS1&device_id=1
+   *
+   * 2. Multiple meters from the same panel (existing combined API)
+   *    panel=ATS1&device_ids=1,3
+   *
+   * 3. Multiple meters from multiple panels (future multi-panel API)
+   *    meters=ATS1:1,MSB:1,GEN:2
+   *
+   * The panel + device_id pair is the meter's technical identity.
+   * Device labels returned by the backend should only be used for display.
+   */
+  if (hasMeters) {
+    params.meters = meters
+      .map((meter) => {
+        const meterPanel = meter?.panel;
+        const meterDeviceId = meter?.deviceId ?? meter?.device_id;
+
+        if (meterPanel == null || meterDeviceId == null) {
+          return null;
+        }
+
+        return `${meterPanel}:${meterDeviceId}`;
+      })
+      .filter(Boolean)
+      .join(",");
+
+    if (!params.meters) {
+      throw new Error(
+        "At least one valid meter with panel and deviceId is required.",
+      );
+    }
+  } else if (hasMultipleDeviceIds) {
+    // Backward-compatible multi-device request for one panel.
+    params.panel = panel;
     params.device_ids = deviceIds.join(",");
   } else {
+    // Backward-compatible single-meter request.
     params.panel = panel;
     params.device_id = deviceId;
   }

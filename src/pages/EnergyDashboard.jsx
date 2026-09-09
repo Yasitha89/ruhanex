@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Col, Row, Typography } from "antd";
 
 import EnergySummaryCard from "../components/EnergySummaryCard";
-import { getEnergyData } from "../api/energyApi.js";
+import { getEnergyMeterData } from "../api/energyApi.js";
 
 const { Title, Text } = Typography;
 
@@ -51,7 +51,7 @@ export default function EnergyDashboard() {
   const loadEnergyData = useCallback(async () => {
     const results = await Promise.allSettled(
       ENERGY_METERS.map((meter) =>
-        getEnergyData({
+        getEnergyMeterData({
           panel: meter.panel,
           deviceId: meter.deviceId,
         }),

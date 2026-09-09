@@ -23,10 +23,15 @@ import {
   ReloadOutlined,
   RightOutlined,
 } from "@ant-design/icons";
-import { getEnergyData, getHistoricalEnergyUsage } from "../api/energyApi";
+import { getEnergyMeterData, getHistoricalEnergyUsage } from "../api/energyApi";
 import EnergyPowerGauge from "../components/EnergyPowerGauge";
 import EnergyOverviewMiniChart from "../components/EnergyOverviewMiniChart";
 import EnergyOverviewUsageChart from "../components/EnergyOverviewUsageChart";
+import {
+  getEnergyDeviceLabel,
+  getEnergyMeterKey,
+  getEnergyMeters,
+} from "../utils/energyMeter";
 import {
   asColomboCalendarTime,
   colomboNow,
@@ -54,7 +59,7 @@ const ENERGY_SOURCES = {
   },
 };
 
-const VIEW_OPTIONS = ["Day", "Week", "Month", "Year", "Total"];
+const VIEW_OPTIONS = ["Day", "Week", "Month", "Year"];
 
 const SUMMARY_PERIODS = [
   { key: "today", title: "Today", interval: "1h" },
@@ -154,6 +159,7 @@ function normalizeEnergyUsageRecord(record, index) {
       `${record.intervalStart || record.interval_start || record._start}-${index}`,
     panel: record.panel,
     device_id: Number(record.device_id),
+    device_label: getEnergyDeviceLabel(record),
     intervalStart:
       record.intervalStart || record.interval_start || record._start,
     intervalEnd: record.intervalEnd || record.interval_end || record._stop,
@@ -211,22 +217,11 @@ function getViewRequest(view, anchor) {
     };
   }
 
-  if (view === "Year") {
-    return {
-      fromTime: toApiIso(selected.startOf("year")),
-      toTime: toApiIso(selected.endOf("year")),
-      interval: "1y",
-      caption: selected.format("YYYY"),
-    };
-  }
-
-  const end = colomboNow().endOf("day");
-  const start = end.subtract(3, "year").startOf("month");
   return {
-    fromTime: toApiIso(start),
-    toTime: toApiIso(end),
-    interval: "1y",
-    caption: `Last 3 Years`,
+    fromTime: toApiIso(selected.startOf("year")),
+    toTime: toApiIso(selected.endOf("year")),
+    interval: "1mo",
+    caption: selected.format("YYYY"),
   };
 }
 
@@ -277,7 +272,7 @@ export default function EnergyOverview() {
     try {
       const results = await Promise.all(
         activeDeviceIds.map((deviceId) =>
-          getEnergyData({ panel: PANEL, deviceId }),
+          getEnergyMeterData({ panel: PANEL, deviceId }),
         ),
       );
 
@@ -322,6 +317,7 @@ export default function EnergyOverview() {
           fromTime: request.fromTime,
           toTime: request.toTime,
           interval: request.interval,
+          panel: PANEL,
         });
 
         setSummaryData((current) => ({
@@ -361,6 +357,7 @@ export default function EnergyOverview() {
         fromTime: viewRequest.fromTime,
         toTime: viewRequest.toTime,
         interval: viewRequest.interval,
+        panel: PANEL,
       });
 
       setChartData(extractUsageRecords(result));
@@ -441,92 +438,267 @@ export default function EnergyOverview() {
     }
 
     try {
+      // ============================================================
+      // GET ALL DEVICE IDs
+      // ============================================================
+
+      const meters = getEnergyMeters(chartData);
+
+      // ============================================================
+      // GROUP RECORDS BY INTERVAL
+      //
+      // Example:
+      //
+      // 08:00 - Device 1 = 50 kWh
+      // 08:00 - Device 3 = 30 kWh
+      //
+      // becomes:
+      //
+      // 08:00 | Device 1 = 50 | Device 3 = 30 | Total = 80
+      // ============================================================
+
+      const grouped = new Map();
+
+      chartData.forEach((record) => {
+        if (!record?.intervalStart) {
+          return;
+        }
+
+        const key = record.intervalStart;
+
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            intervalStart: record.intervalStart,
+            intervalEnd: record.intervalEnd,
+            devices: {},
+            totalEnergyUsageKwh: 0,
+          });
+        }
+
+        const groupedRecord = grouped.get(key);
+
+        const meterKey = getEnergyMeterKey(record);
+        const usage = Math.max(0, Number(record.energyUsageKwh) || 0);
+
+        groupedRecord.devices[meterKey] =
+          Number(groupedRecord.devices[meterKey] || 0) + usage;
+
+        groupedRecord.totalEnergyUsageKwh += usage;
+
+        // If interval end differs slightly between device records,
+        // keep the latest interval end.
+        if (
+          record.intervalEnd &&
+          (!groupedRecord.intervalEnd ||
+            new Date(record.intervalEnd).getTime() >
+              new Date(groupedRecord.intervalEnd).getTime())
+        ) {
+          groupedRecord.intervalEnd = record.intervalEnd;
+        }
+      });
+
+      // ============================================================
+      // SORT BY TIME
+      // ============================================================
+
+      const groupedRows = Array.from(grouped.values()).sort(
+        (a, b) =>
+          new Date(a.intervalStart).getTime() -
+          new Date(b.intervalStart).getTime(),
+      );
+
+      // ============================================================
+      // CREATE WORKBOOK
+      // ============================================================
+
       const workbook = new ExcelJS.Workbook();
+
       workbook.creator = "Ruhanex Industrial IoT Platform";
+
       workbook.created = new Date();
 
       const worksheet = workbook.addWorksheet("Energy Usage");
-      worksheet.views = [{ state: "frozen", ySplit: 4 }];
 
-      worksheet.mergeCells("A1:H1");
-      worksheet.getCell("A1").value = `Energy Usage - ${activeSource.label}`;
-      worksheet.getCell("A1").font = { bold: true, size: 16 };
-      worksheet.getCell("A1").alignment = { horizontal: "center" };
-
-      worksheet.mergeCells("A2:H2");
-      worksheet.getCell("A2").value =
-        `${view}: ${viewRequest.caption} | Time zone: Asia/Colombo (UTC+05:30) | Aggregation: ${viewRequest.interval}`;
-      worksheet.getCell("A2").alignment = { horizontal: "center" };
-
-      worksheet.getRow(4).values = [
-        "No.",
-        "Panel",
-        "Device ID",
-        "Interval Start (Sri Lanka)",
-        "Interval End (Sri Lanka)",
-        "First Energy (kWh)",
-        "Last Energy (kWh)",
-        "Energy Usage (kWh)",
+      worksheet.views = [
+        {
+          state: "frozen",
+          ySplit: 4,
+        },
       ];
 
-      const headerRow = worksheet.getRow(4);
-      headerRow.font = { bold: true };
-      headerRow.alignment = { horizontal: "center", vertical: "middle" };
+      // ============================================================
+      // DYNAMIC COLUMN COUNT
+      //
+      // No.
+      // Start
+      // End
+      // Device columns
+      // Total
+      // ============================================================
 
-      chartData.forEach((record, index) => {
+      const totalColumns = 4 + meters.length;
+
+      const lastColumnLetter = worksheet.getColumn(totalColumns).letter;
+
+      // ============================================================
+      // TITLE
+      // ============================================================
+
+      worksheet.mergeCells(`A1:${lastColumnLetter}1`);
+
+      worksheet.getCell("A1").value = `Energy Usage - ${activeSource.label}`;
+
+      worksheet.getCell("A1").font = {
+        bold: true,
+        size: 16,
+      };
+
+      worksheet.getCell("A1").alignment = {
+        horizontal: "center",
+      };
+
+      // ============================================================
+      // SUBTITLE
+      // ============================================================
+
+      worksheet.mergeCells(`A2:${lastColumnLetter}2`);
+
+      worksheet.getCell("A2").value =
+        `${view}: ${viewRequest.caption} | ` +
+        `Time zone: Asia/Colombo (UTC+05:30) | ` +
+        `Aggregation: ${viewRequest.interval}`;
+
+      worksheet.getCell("A2").alignment = {
+        horizontal: "center",
+      };
+
+      // ============================================================
+      // HEADERS
+      // ============================================================
+
+      const headers = [
+        "No.",
+        "Interval Start (Sri Lanka)",
+        "Interval End (Sri Lanka)",
+
+        ...meters.map((meter) => `${meter.label} (kWh)`),
+
+        "Total Energy Usage (kWh)",
+      ];
+
+      worksheet.getRow(4).values = headers;
+
+      const headerRow = worksheet.getRow(4);
+
+      headerRow.font = {
+        bold: true,
+      };
+
+      headerRow.alignment = {
+        horizontal: "center",
+        vertical: "middle",
+      };
+
+      // ============================================================
+      // ADD GROUPED DATA
+      // ============================================================
+
+      groupedRows.forEach((record, index) => {
         worksheet.addRow([
           index + 1,
-          record.panel || "Combined",
-          record.device_id || activeDeviceLabel,
+
           formatColomboApiTime(record.intervalStart, "DD/MM/YYYY HH:mm:ss"),
+
           formatColomboApiTime(record.intervalEnd, "DD/MM/YYYY HH:mm:ss"),
-          Number(record.firstEnergyKwh || 0),
-          Number(record.lastEnergyKwh || 0),
-          Number(record.energyUsageKwh || 0),
+
+          ...meters.map((meter) => Number(record.devices[meter.key] || 0)),
+
+          Number(record.totalEnergyUsageKwh || 0),
         ]);
       });
 
-      worksheet.columns = [
-        { width: 8 },
-        { width: 12 },
-        { width: 12 },
-        { width: 25 },
-        { width: 25 },
-        { width: 20 },
-        { width: 20 },
-        { width: 20 },
-      ];
+      // ============================================================
+      // COLUMN WIDTHS
+      // ============================================================
 
-      worksheet.getColumn(6).numFmt = "#,##0.00";
-      worksheet.getColumn(7).numFmt = "#,##0.00";
-      worksheet.getColumn(8).numFmt = "#,##0.00";
+      worksheet.getColumn(1).width = 8;
+
+      worksheet.getColumn(2).width = 25;
+
+      worksheet.getColumn(3).width = 25;
+
+      meters.forEach((_, index) => {
+        const columnIndex = 4 + index;
+
+        worksheet.getColumn(columnIndex).width = 20;
+
+        worksheet.getColumn(columnIndex).numFmt = "#,##0.00";
+      });
+
+      const totalColumnIndex = 4 + meters.length;
+
+      worksheet.getColumn(totalColumnIndex).width = 24;
+
+      worksheet.getColumn(totalColumnIndex).numFmt = "#,##0.00";
+
+      // ============================================================
+      // CALCULATE DEVICE TOTALS
+      // ============================================================
+
+      const deviceTotals = Object.fromEntries(
+        meters.map((meter) => [meter.key, 0]),
+      );
+
+      let grandTotal = 0;
+
+      groupedRows.forEach((record) => {
+        meters.forEach((meter) => {
+          deviceTotals[meter.key] += Number(record.devices[meter.key] || 0);
+        });
+
+        grandTotal += Number(record.totalEnergyUsageKwh || 0);
+      });
+
+      // ============================================================
+      // TOTAL ROW
+      // ============================================================
 
       const totalRow = worksheet.addRow([
         "",
         "",
-        "",
-        "",
-        "",
-        "",
         "Total",
-        chartData.reduce(
-          (sum, record) =>
-            sum + Math.max(0, Number(record.energyUsageKwh) || 0),
-          0,
-        ),
+
+        ...meters.map((meter) => deviceTotals[meter.key]),
+
+        grandTotal,
       ]);
-      totalRow.font = { bold: true };
-      totalRow.getCell(8).numFmt = "#,##0.00";
+
+      totalRow.font = {
+        bold: true,
+      };
+
+      meters.forEach((_, index) => {
+        totalRow.getCell(4 + index).numFmt = "#,##0.00";
+      });
+
+      totalRow.getCell(totalColumnIndex).numFmt = "#,##0.00";
+
+      // ============================================================
+      // DOWNLOAD
+      // ============================================================
 
       const buffer = await workbook.xlsx.writeBuffer();
+
       saveAs(
         new Blob([buffer], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }),
+
         `${getExportBaseName()}.xlsx`,
       );
     } catch (error) {
       console.error("Energy Excel export failed:", error);
+
       message.error("Unable to export the chart data to Excel.");
     }
   };
@@ -564,14 +736,10 @@ export default function EnergyOverview() {
 
   const handleViewChange = (nextView) => {
     setView(nextView);
-    if (nextView !== "Total") setAnchorDate(colomboNow());
+    setAnchorDate(colomboNow());
   };
 
   const renderPeriodControls = () => {
-    if (view === "Total") {
-      return <Text strong>{viewRequest.caption}</Text>;
-    }
-
     return (
       <Space wrap size="small" className="energy-period-controls">
         <Button

@@ -29,6 +29,7 @@ import EnergyHistoricalTable from "../components/EnergyHistoricalTable";
 import EnergyHistoricalChart from "../components/EnergyHistoricalChart";
 
 import EnergyUsageTable from "../components/EnergyUsageTable";
+import { getEnergyDeviceLabel, getEnergyMeterKey, getEnergyMeters } from "../utils/energyMeter";
 import EnergyUsageChart from "../components/EnergyUsageChart";
 
 const { RangePicker } = DatePicker;
@@ -289,22 +290,26 @@ function normalizeEnergyUsageRecord(record, index) {
       : 0;
 
   return {
-    key: record._id || record.id || `${record.intervalStart}-${index}`,
+    key:
+      record._id ||
+      record.id ||
+      `${record.device_id ?? "device"}-${record.intervalStart}-${index}`,
 
     panel: record.panel,
     device_id:
       record.device_id === null || record.device_id === undefined
         ? ""
         : String(record.device_id),
+    device_label: getEnergyDeviceLabel(record),
 
     intervalStart:
       record.intervalStart || record.interval_start || record._start,
 
     intervalEnd: record.intervalEnd || record.interval_end || record._stop,
 
-    firstEnergyKwh: Number.isFinite(firstEnergy) ? firstEnergy : 0,
+    firstEnergyKwh: Number.isFinite(firstEnergy) ? firstEnergy : null,
 
-    lastEnergyKwh: Number.isFinite(lastEnergy) ? lastEnergy : 0,
+    lastEnergyKwh: Number.isFinite(lastEnergy) ? lastEnergy : null,
 
     energyUsageKwh: Number.isFinite(returnedUsage)
       ? Math.max(0, returnedUsage)
@@ -577,12 +582,8 @@ export default function EnergyHistoricalReport() {
             {
               ...record,
 
-              // The combined energy endpoint may not return panel/device
-              // metadata because multiple meters are merged before summing.
-              panel:
-                record.panel ??
-                (request.deviceIds.length > 1 ? "Combined" : ""),
-              device_id: record.device_id ?? request.deviceIds.join(","),
+              panel: record.panel ?? request.panel ?? "",
+              device_id: record.device_id ?? "",
             },
             index,
           ),
@@ -740,7 +741,69 @@ export default function EnergyHistoricalReport() {
   const exportEnergyExcel = async () => {
     if (!energyData.length) {
       message.warning("There is no energy data to export");
+      return;
+    }
 
+    // Use panel + device_id as the internal identity. This prevents collisions
+    // when future multi-panel selection includes the same device ID on two panels.
+    const meters = getEnergyMeters(energyData);
+
+    const getBucketKey = (timestamp) => {
+      if (!timestamp) return "";
+      if (energyInterval === "1y") return dayjs(timestamp).format("YYYY");
+      if (energyInterval === "1mo") return dayjs(timestamp).format("YYYY-MM");
+      if (energyInterval === "1d") return dayjs(timestamp).format("YYYY-MM-DD");
+
+      if (energyInterval === "6h") {
+        const local = dayjs(timestamp);
+        const bucketHour = Math.floor(local.hour() / 6) * 6;
+        return `${local.format("YYYY-MM-DD")} ${String(bucketHour).padStart(2, "0")}:00`;
+      }
+
+      return dayjs(timestamp).format("YYYY-MM-DD HH");
+    };
+
+    const grouped = new Map();
+
+    for (const record of energyData) {
+      if (!record?.intervalStart) continue;
+
+      const bucketKey = getBucketKey(record.intervalStart);
+      if (!bucketKey) continue;
+
+      const meterKey = getEnergyMeterKey(record);
+
+      if (!grouped.has(bucketKey)) {
+        grouped.set(bucketKey, {
+          key: bucketKey,
+          intervalStart: record.intervalStart,
+          intervalEnd: record.intervalEnd,
+          meters: {},
+          totalEnergyUsageKwh: 0,
+        });
+      }
+
+      const row = grouped.get(bucketKey);
+      const usage = Math.max(0, Number(record.energyUsageKwh) || 0);
+
+      row.meters[meterKey] = Number(row.meters[meterKey] || 0) + usage;
+      row.totalEnergyUsageKwh += usage;
+
+      const currentEnd = new Date(row.intervalEnd || 0).getTime();
+      const newEnd = new Date(record.intervalEnd || 0).getTime();
+      if (Number.isFinite(newEnd) && newEnd > currentEnd) {
+        row.intervalEnd = record.intervalEnd;
+      }
+    }
+
+    const groupedRows = Array.from(grouped.values()).sort(
+      (a, b) =>
+        new Date(a.intervalStart).getTime() -
+        new Date(b.intervalStart).getTime(),
+    );
+
+    if (!groupedRows.length) {
+      message.warning("There is no grouped energy data to export");
       return;
     }
 
@@ -748,79 +811,74 @@ export default function EnergyHistoricalReport() {
     const worksheet = workbook.addWorksheet("Energy Usage");
 
     worksheet.columns = [
+      { header: "Interval Start", key: "intervalStart", width: 22 },
+      { header: "Interval End", key: "intervalEnd", width: 22 },
+      ...meters.map((meter, index) => ({
+        header: `${meter.label} (kWh)`,
+        key: `meter_${index}`,
+        width: Math.max(20, Math.min(34, meter.label.length + 8)),
+      })),
       {
-        header: "Interval Start",
-        key: "intervalStart",
-        width: 22,
-      },
-      {
-        header: "Interval End",
-        key: "intervalEnd",
-        width: 22,
-      },
-      {
-        header: "Panel",
-        key: "panel",
-        width: 12,
-      },
-      {
-        header: "Device ID",
-        key: "device_id",
-        width: 12,
-      },
-      {
-        header: "First Energy (kWh)",
-        key: "firstEnergyKwh",
-        width: 20,
-      },
-      {
-        header: "Last Energy (kWh)",
-        key: "lastEnergyKwh",
-        width: 20,
-      },
-      {
-        header: "Energy Usage (kWh)",
-        key: "energyUsageKwh",
-        width: 21,
+        header: "Total Energy Usage (kWh)",
+        key: "totalEnergyUsageKwh",
+        width: 24,
       },
     ];
 
-    energyData.forEach((record) => {
-      worksheet.addRow({
-        ...record,
-
-        intervalStart: dayjs(record.intervalStart).format(
-          "YYYY-MM-DD HH:mm:ss",
-        ),
-
+    for (const record of groupedRows) {
+      const row = {
+        intervalStart: dayjs(record.intervalStart).format("YYYY-MM-DD HH:mm:ss"),
         intervalEnd: dayjs(record.intervalEnd).format("YYYY-MM-DD HH:mm:ss"),
+        totalEnergyUsageKwh: Number(record.totalEnergyUsageKwh.toFixed(2)),
+      };
+
+      meters.forEach((meter, index) => {
+        row[`meter_${index}`] = Number(
+          (Number(record.meters?.[meter.key]) || 0).toFixed(2),
+        );
       });
-    });
+
+      worksheet.addRow(row);
+    }
+
+    const meterTotals = Object.fromEntries(
+      meters.map((meter) => [
+        meter.key,
+        groupedRows.reduce(
+          (sum, row) =>
+            sum + Math.max(0, Number(row.meters?.[meter.key]) || 0),
+          0,
+        ),
+      ]),
+    );
+
+    const grandTotal = groupedRows.reduce(
+      (sum, row) =>
+        sum + Math.max(0, Number(row.totalEnergyUsageKwh) || 0),
+      0,
+    );
 
     worksheet.addRow({});
-    worksheet.addRow({
-      intervalEnd: "Total Energy Usage",
-      energyUsageKwh: totalEnergyUsage,
-    });
 
-    worksheet.getRow(1).font = {
-      bold: true,
+    const totalRow = {
+      intervalEnd: "Total",
+      totalEnergyUsageKwh: Number(grandTotal.toFixed(2)),
     };
 
-    worksheet.views = [
-      {
-        state: "frozen",
-        ySplit: 1,
-      },
-    ];
+    meters.forEach((meter, index) => {
+      totalRow[`meter_${index}`] = Number(meterTotals[meter.key].toFixed(2));
+    });
+
+    worksheet.addRow(totalRow);
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
 
     const buffer = await workbook.xlsx.writeBuffer();
-
     saveAs(
       new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
-      `Devices_${energyDeviceIds.join("-")}_Energy_Usage_${energyInterval}.xlsx`,
+      `Energy_Usage_${energyInterval}.xlsx`,
     );
   };
 
@@ -1211,7 +1269,11 @@ export default function EnergyHistoricalReport() {
       </Row>
 
       <div style={{ marginTop: 16 }}>
-        <EnergyUsageTable data={energyData} loading={energyLoading} />
+        <EnergyUsageTable
+          data={energyData}
+          loading={energyLoading}
+          interval={energyInterval}
+        />
       </div>
 
       <EnergyUsageChart

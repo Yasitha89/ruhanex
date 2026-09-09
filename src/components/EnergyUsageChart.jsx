@@ -1,15 +1,134 @@
 import { useMemo } from "react";
 import { Empty, Spin } from "antd";
 import ReactECharts from "echarts-for-react";
-import dayjs from "dayjs";
+import { formatColomboApiTime } from "../utils/energyTime";
+import { getEnergyMeterKey, getEnergyMeters } from "../utils/energyMeter";
 import "./DashboardCharts.css";
 
-function getIntervalLabel(timestamp, interval) {
-  if (interval === "1d") {
-    return dayjs(timestamp).format("YYYY-MM-DD");
+const DEVICE_COLORS = [
+  "#1677ff",
+  "#52c41a",
+  "#fa8c16",
+  "#722ed1",
+  "#13c2c2",
+  "#eb2f96",
+  "#faad14",
+  "#2f54eb",
+];
+
+function formatNumber(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0.00";
   }
 
-  return dayjs(timestamp).format("MM-DD HH:mm");
+  return number.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function getBucketKey(timestamp, interval) {
+  if (!timestamp) return "";
+
+  if (interval === "1y") {
+    return formatColomboApiTime(timestamp, "YYYY");
+  }
+
+  if (interval === "1mo") {
+    return formatColomboApiTime(timestamp, "YYYY-MM");
+  }
+
+  if (interval === "1d") {
+    return formatColomboApiTime(timestamp, "YYYY-MM-DD");
+  }
+
+  if (interval === "6h") {
+    const day = formatColomboApiTime(timestamp, "YYYY-MM-DD");
+    const hour = Number(formatColomboApiTime(timestamp, "HH"));
+    const bucketHour = Math.floor((Number.isFinite(hour) ? hour : 0) / 6) * 6;
+    return `${day} ${String(bucketHour).padStart(2, "0")}:00`;
+  }
+
+  return formatColomboApiTime(timestamp, "YYYY-MM-DD HH");
+}
+
+function getAxisLabel(timestamp, interval) {
+  if (interval === "1y") {
+    return formatColomboApiTime(timestamp, "YYYY");
+  }
+
+  if (interval === "1mo") {
+    return formatColomboApiTime(timestamp, "MMM YY");
+  }
+
+  if (interval === "1d") {
+    return formatColomboApiTime(timestamp, "DD MMM");
+  }
+
+  return formatColomboApiTime(timestamp, "DD MMM HH:mm");
+}
+
+function getTooltipLabel(timestamp, interval) {
+  if (interval === "1y") {
+    return formatColomboApiTime(timestamp, "YYYY");
+  }
+
+  if (interval === "1mo") {
+    return formatColomboApiTime(timestamp, "MMMM YYYY");
+  }
+
+  if (interval === "1d") {
+    return formatColomboApiTime(timestamp, "DD MMMM YYYY");
+  }
+
+  return formatColomboApiTime(timestamp, "DD MMMM YYYY, HH:mm");
+}
+
+function buildStackedData(data, interval) {
+  const grouped = new Map();
+
+  for (const record of data || []) {
+    if (!record?.intervalStart) continue;
+
+    const meterKey = getEnergyMeterKey(record);
+
+    const bucketKey = getBucketKey(record.intervalStart, interval);
+    if (!bucketKey) continue;
+
+    const value = Math.max(0, Number(record.energyUsageKwh) || 0);
+
+    if (!grouped.has(bucketKey)) {
+      grouped.set(bucketKey, {
+        bucketKey,
+        intervalStart: record.intervalStart,
+        intervalEnd: record.intervalEnd,
+        devices: {},
+        total: 0,
+      });
+    }
+
+    const bucket = grouped.get(bucketKey);
+
+    bucket.devices[meterKey] =
+      Number(bucket.devices[meterKey] || 0) + value;
+
+    bucket.total += value;
+
+    const currentEnd = new Date(bucket.intervalEnd || 0).getTime();
+    const newEnd = new Date(record.intervalEnd || 0).getTime();
+
+    if (Number.isFinite(newEnd) && newEnd > currentEnd) {
+      bucket.intervalEnd = record.intervalEnd;
+    }
+  }
+
+  return Array.from(grouped.values()).sort(
+    (a, b) =>
+      new Date(a.intervalStart).getTime() -
+      new Date(b.intervalStart).getTime(),
+  );
 }
 
 export default function EnergyUsageChart({
@@ -17,11 +136,45 @@ export default function EnergyUsageChart({
   loading = false,
   interval = "1h",
 }) {
+  const meters = useMemo(() => getEnergyMeters(data), [data]);
+
+  const chartData = useMemo(
+    () => buildStackedData(data, interval),
+    [data, interval],
+  );
+
   const option = useMemo(() => {
+    const series = meters.map((meter, index) => ({
+      name: meter.label,
+      type: "bar",
+      stack: "total-energy",
+      barMaxWidth: 36,
+      itemStyle: {
+        color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+      },
+      emphasis: {
+        focus: "series",
+      },
+      data: chartData.map((bucket) =>
+        Math.max(0, Number(bucket.devices?.[meter.key]) || 0),
+      ),
+    }));
+
     return {
+      animationDuration: 500,
+      animationEasing: "cubicOut",
+
       title: {
-        text: "Energy Usage",
+        text: "Energy Usage by Device",
         left: "center",
+      },
+
+      legend: {
+        type: "scroll",
+        top: 34,
+        left: 20,
+        right: 20,
+        data: meters.map((meter) => meter.label),
       },
 
       tooltip: {
@@ -29,76 +182,63 @@ export default function EnergyUsageChart({
         axisPointer: {
           type: "shadow",
         },
-
         formatter: (params) => {
-          if (!Array.isArray(params)) {
-            return "";
-          }
+          if (!Array.isArray(params) || !params.length) return "";
 
-          const item = params[0];
-          const record = data[item?.dataIndex];
+          const dataIndex = params[0]?.dataIndex;
+          const bucket = chartData[dataIndex];
+          if (!bucket) return "";
 
-          if (!record) {
-            return "";
-          }
-
-          return [
-            `<strong>${getIntervalLabel(
-              record.intervalStart,
+          const lines = [
+            `<div style="font-weight:600;margin-bottom:5px">${getTooltipLabel(
+              bucket.intervalStart,
               interval,
-            )}</strong>`,
+            )}</div>`,
+          ];
 
-            `Start: ${dayjs(record.intervalStart).format(
-              "YYYY-MM-DD HH:mm:ss",
-            )}`,
+          for (const item of params) {
+            lines.push(
+              `${item.marker} ${item.seriesName}: <strong>${formatNumber(
+                item.value,
+              )} kWh</strong>`,
+            );
+          }
 
-            `End: ${dayjs(record.intervalEnd).format("YYYY-MM-DD HH:mm:ss")}`,
+          lines.push(
+            `<div style="border-top:1px solid rgba(255,255,255,.22);margin-top:6px;padding-top:6px"><strong>Total: ${formatNumber(
+              bucket.total,
+            )} kWh</strong></div>`,
+          );
 
-            `${item.marker} Usage: ${Number(
-              record.energyUsageKwh,
-            ).toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })} kWh`,
-
-            `First reading: ${Number(record.firstEnergyKwh).toFixed(2)} kWh`,
-
-            `Last reading: ${Number(record.lastEnergyKwh).toFixed(2)} kWh`,
-          ].join("<br/>");
+          return lines.join("<br/>");
         },
       },
 
       grid: {
-        top: 80,
-        left: 75,
-        right: 35,
-        bottom: 100,
+        top: meters.length > 1 ? 90 : 72,
+        left: 74,
+        right: 28,
+        bottom: chartData.length > 30 ? 92 : 72,
         containLabel: true,
       },
 
       toolbox: {
         right: 20,
-
         feature: {
-          dataZoom: {
-            yAxisIndex: "none",
-          },
+          dataZoom: { yAxisIndex: "none" },
           restore: {},
-          saveAsImage: {
-            name: "Energy_Usage",
-          },
+          saveAsImage: { name: "Energy_Usage_By_Device" },
         },
       },
 
       xAxis: {
         type: "category",
-
-        data: data.map((record) =>
-          getIntervalLabel(record.intervalStart, interval),
+        data: chartData.map((bucket) =>
+          getAxisLabel(bucket.intervalStart, interval),
         ),
-
+        axisTick: { alignWithLabel: true },
         axisLabel: {
-          rotate: data.length > 10 ? 45 : 0,
+          rotate: chartData.length > 10 ? 45 : 0,
           hideOverlap: true,
         },
       },
@@ -107,90 +247,27 @@ export default function EnergyUsageChart({
         type: "value",
         name: "Energy (kWh)",
         min: 0,
-
         nameLocation: "middle",
         nameGap: 55,
-
+        splitLine: {
+          lineStyle: { type: "dashed" },
+        },
         axisLabel: {
-          formatter: "{value} kWh",
+          formatter: (value) => Number(value).toLocaleString("en-US"),
         },
       },
 
-      dataZoom: [
-        {
-          type: "inside",
-        },
-        {
-          type: "slider",
-          bottom: 25,
-        },
-      ],
-
-      media: [
-        {
-          query: { maxWidth: 600 },
-          option: {
-            title: { top: 2, textStyle: { fontSize: 15, fontWeight: 500 } },
-            toolbox: { show: false },
-            grid: {
-              top: 55,
-              left: 4,
-              right: 4,
-              bottom: 82,
-              containLabel: false,
-            },
-            xAxis: {
-              name: interval === "1d" ? "Date" : "Time",
-              nameLocation: "middle",
-              nameGap: 50,
-              nameTextStyle: { fontSize: 11 },
-              axisLabel: {
-                rotate: data.length > 6 ? 35 : 0,
-                fontSize: 9,
-                hideOverlap: true,
-                interval: "auto",
-              },
-            },
-            yAxis: {
-              name: "Energy (kWh)",
-              nameLocation: "end",
-              nameGap: 8,
-              nameTextStyle: { fontSize: 10, align: "left" },
-              axisLabel: {
-                inside: true,
-                fontSize: 9,
-                margin: 4,
-                formatter: "{value}",
-              },
-              axisTick: { inside: true },
-            },
-            dataZoom: [
-              { type: "inside" },
+      dataZoom:
+        chartData.length > 30
+          ? [
+              { type: "inside", start: 0, end: 100 },
               { type: "slider", bottom: 18, height: 18 },
-            ],
-          },
-        },
-      ],
+            ]
+          : [],
 
-      series: [
-        {
-          name: "Energy Usage",
-          type: "bar",
-          barMaxWidth: 45,
-
-          data: data.map((record) => {
-            const value = Number(record.energyUsageKwh);
-
-            return Number.isFinite(value) ? value : 0;
-          }),
-
-          emphasis: {
-            focus: "series",
-          },
-        },
-      ],
+      series,
     };
-  }, [data, interval]);
+  }, [chartData, meters, interval]);
 
   if (loading) {
     return (
@@ -207,7 +284,7 @@ export default function EnergyUsageChart({
     );
   }
 
-  if (!data.length) {
+  if (!chartData.length) {
     return (
       <div
         style={{
@@ -230,8 +307,8 @@ export default function EnergyUsageChart({
       <ReactECharts
         className="responsive-dashboard-chart__canvas"
         option={option}
-        notMerge={true}
-        lazyUpdate={true}
+        notMerge
+        lazyUpdate
         style={{ width: "100%", height: "100%" }}
       />
     </div>
