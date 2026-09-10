@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { PRODUCTION_LINES } from "../utils/constants";
 import {
   Card,
   Select,
@@ -56,7 +57,7 @@ export default function Keda1() {
   const [downtimeModalOpen, setDowntimeModalOpen] = useState(false);
   const [savingDowntime, setSavingDowntime] = useState(false);
   const [downtimeForm] = Form.useForm();
-  const line = "Keda 2";
+  const line = PRODUCTION_LINES[3];
 
   const loadLiveSummary = async () => {
     try {

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import ProtectedRoute from "./components/ProtectedRoute";
+import AuthorityGate from "./components/AuthorityGate";
 import Login from "./pages/login";
 import MainLayout from "./layouts/MainLayout";
 import Dashboard from "./pages/Dashboard";
@@ -11,6 +12,7 @@ import HistoricalReport from "./pages/HistoricalReport";
 import EnergyDashboard from "./pages/EnergyDashboard";
 import EnergyOverview from "./pages/EnergyOverview";
 import EnergyHistoricalReport from "./pages/EnergyHistoricalReport";
+import DeviceAdministration from "./pages/DeviceAdministration";
 
 function App() {
   return (
@@ -30,7 +32,28 @@ function App() {
           <Route path="keda1" element={<Keda1 />} />
           <Route path="gl1" element={<GlazeLine1 />} />
           <Route path="historical_data" element={<HistoricalReport />} />
-          <Route path="settings" element={<Settings />} />
+          <Route
+            path="settings"
+            element={
+              <AuthorityGate
+                authorityLevel="production_manager"
+                title="Production Manager Access Required"
+              >
+                <Settings />
+              </AuthorityGate>
+            }
+          />
+          <Route
+            path="device_administration"
+            element={
+              <AuthorityGate
+                authorityLevel="administrator"
+                title="Administrator Access Required"
+              >
+                <DeviceAdministration />
+              </AuthorityGate>
+            }
+          />
           <Route path="energyoverview" element={<EnergyOverview />} />
           <Route path="energydashboard" element={<EnergyDashboard />} />
           <Route

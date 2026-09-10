@@ -1,0 +1,10 @@
+.device-admin-page { width: 100%; }
+.device-admin-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.device-slave-card { margin-bottom: 12px; }
+.device-slave-remove { display: flex; justify-content: center; padding-top: 20px; }
+@media (max-width: 767px) {
+  .device-admin-header { flex-direction: column; }
+  .device-admin-header > .ant-space { width: 100%; }
+  .device-admin-header > .ant-space .ant-btn { flex: 1; }
+  .device-slave-remove { padding-top: 0; justify-content: flex-end; }
+}

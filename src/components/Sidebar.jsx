@@ -5,6 +5,7 @@ import {
   AppstoreOutlined,
   ThunderboltOutlined,
   BarChartOutlined,
+  ControlOutlined,
 } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -28,6 +29,8 @@ export default function Sidebar() {
         return "energy_history";
       case "/settings":
         return "settings";
+      case "/device_administration":
+        return "device_administration";
       case "/dashboard":
       default:
         return "dashboard";
@@ -82,7 +85,7 @@ export default function Sidebar() {
       theme="dark"
       mode="inline"
       selectedKeys={[selectedKey]}
-      defaultOpenKeys={["production", "energy", "reports"]}
+      defaultOpenKeys={["production", "energy", "reports", "administration"]}
       items={[
         {
           key: "dashboard",
@@ -157,10 +160,22 @@ export default function Sidebar() {
         },
 
         {
-          key: "settings",
-          icon: <SettingOutlined />,
-          label: "Settings",
-          onClick: () => navigate("/settings"),
+          key: "administration",
+          icon: <ControlOutlined />,
+          label: "Administration",
+          children: [
+            {
+              key: "device_administration",
+              label: "Device Administration",
+              onClick: () => navigate("/device_administration"),
+            },
+            {
+              key: "settings",
+              icon: <SettingOutlined />,
+              label: "Settings",
+              onClick: () => navigate("/settings"),
+            },
+          ],
         },
       ]}
     />
