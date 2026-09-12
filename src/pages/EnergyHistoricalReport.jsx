@@ -29,7 +29,11 @@ import EnergyHistoricalTable from "../components/EnergyHistoricalTable";
 import EnergyHistoricalChart from "../components/EnergyHistoricalChart";
 
 import EnergyUsageTable from "../components/EnergyUsageTable";
-import { getEnergyDeviceLabel, getEnergyMeterKey, getEnergyMeters } from "../utils/energyMeter";
+import {
+  getEnergyDeviceLabel,
+  getEnergyMeterKey,
+  getEnergyMeters,
+} from "../utils/energyMeter";
 import EnergyUsageChart from "../components/EnergyUsageChart";
 
 const { RangePicker } = DatePicker;
@@ -54,6 +58,10 @@ const energyDeviceOptions = [
   {
     label: "MSB",
     value: 3,
+  },
+  {
+    label: "MSB GEN",
+    value: 4,
   },
 ];
 
@@ -827,7 +835,9 @@ export default function EnergyHistoricalReport() {
 
     for (const record of groupedRows) {
       const row = {
-        intervalStart: dayjs(record.intervalStart).format("YYYY-MM-DD HH:mm:ss"),
+        intervalStart: dayjs(record.intervalStart).format(
+          "YYYY-MM-DD HH:mm:ss",
+        ),
         intervalEnd: dayjs(record.intervalEnd).format("YYYY-MM-DD HH:mm:ss"),
         totalEnergyUsageKwh: Number(record.totalEnergyUsageKwh.toFixed(2)),
       };
@@ -845,16 +855,14 @@ export default function EnergyHistoricalReport() {
       meters.map((meter) => [
         meter.key,
         groupedRows.reduce(
-          (sum, row) =>
-            sum + Math.max(0, Number(row.meters?.[meter.key]) || 0),
+          (sum, row) => sum + Math.max(0, Number(row.meters?.[meter.key]) || 0),
           0,
         ),
       ]),
     );
 
     const grandTotal = groupedRows.reduce(
-      (sum, row) =>
-        sum + Math.max(0, Number(row.totalEnergyUsageKwh) || 0),
+      (sum, row) => sum + Math.max(0, Number(row.totalEnergyUsageKwh) || 0),
       0,
     );
 

@@ -12,6 +12,7 @@ import HistoricalReport from "./pages/HistoricalReport";
 import EnergyDashboard from "./pages/EnergyDashboard";
 import EnergyOverview from "./pages/EnergyOverview";
 import EnergyHistoricalReport from "./pages/EnergyHistoricalReport";
+import EnergyLiveMonitor from "./pages/EnergyLiveMonitor";
 import DeviceAdministration from "./pages/DeviceAdministration";
 
 function App() {
@@ -56,6 +57,7 @@ function App() {
           />
           <Route path="energyoverview" element={<EnergyOverview />} />
           <Route path="energydashboard" element={<EnergyDashboard />} />
+          <Route path="energy_live" element={<EnergyLiveMonitor />} />
           <Route
             path="historical_data_energy"
             element={<EnergyHistoricalReport />}

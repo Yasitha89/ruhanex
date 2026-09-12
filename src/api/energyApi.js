@@ -145,3 +145,51 @@ export const getHistoricalEnergyUsage = async ({
 
   return response.data;
 };
+
+
+/**
+ * Get live / near-live electrical trend data for one or more energy meters.
+ * The backend accepts panel + device_id pairs through the `meters` query
+ * parameter and returns only the requested metric.
+ */
+export const getLiveEnergyData = async ({
+  meters,
+  metric,
+  range = "5m",
+  after,
+}) => {
+  if (!Array.isArray(meters) || meters.length === 0) {
+    throw new Error("At least one energy meter is required.");
+  }
+
+  const meterParam = meters
+    .map((meter) => {
+      const panel = String(meter?.panel ?? "").trim();
+      const deviceId = meter?.deviceId ?? meter?.device_id;
+
+      if (!panel || deviceId === undefined || deviceId === null || deviceId === "") {
+        return null;
+      }
+
+      return `${panel}:${deviceId}`;
+    })
+    .filter(Boolean)
+    .join(",");
+
+  if (!meterParam) {
+    throw new Error("No valid energy meters were supplied.");
+  }
+
+  const params = {
+    meters: meterParam,
+    metric,
+    range,
+  };
+
+  if (after) {
+    params.after = after;
+  }
+
+  const response = await api.get("/api/getLiveEnergyData", { params });
+  return response.data;
+};

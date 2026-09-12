@@ -6,6 +6,7 @@ import {
   ThunderboltOutlined,
   BarChartOutlined,
   ControlOutlined,
+  LineChartOutlined,
 } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -23,6 +24,8 @@ export default function Sidebar() {
         return "energy_overview";
       case "/energydashboard":
         return "energy_meter";
+      case "/energy_live":
+        return "energy_live";
       case "/historical_data":
         return "production_history";
       case "/historical_data_energy":
@@ -138,6 +141,12 @@ export default function Sidebar() {
               label: "Meters",
               onClick: () => navigate("/energydashboard"),
             },
+            {
+              key: "energy_live",
+              // icon: <LineChartOutlined />,
+              label: "Live Monitor",
+              onClick: () => navigate("/energy_live"),
+            },
           ],
         },
 
@@ -171,7 +180,7 @@ export default function Sidebar() {
             },
             {
               key: "settings",
-              icon: <SettingOutlined />,
+              // icon: <SettingOutlined />,
               label: "Settings",
               onClick: () => navigate("/settings"),
             },

@@ -1,0 +1,70 @@
+.energy-live-page {
+  width: 100%;
+}
+
+.energy-live-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.energy-live-controls {
+  margin-bottom: 16px;
+}
+
+.energy-live-control-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.energy-live-latest-card {
+  height: 100%;
+}
+
+.energy-live-latest-value {
+  margin: 4px 0 0 !important;
+}
+
+.energy-live-meter-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.energy-live-chart-card .ant-card-body {
+  padding: 12px 16px 8px;
+}
+
+.energy-live-chart-state {
+  min-height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.energy-live-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 767px) {
+  .energy-live-header {
+    flex-direction: column;
+  }
+
+  .energy-live-chart-card .ant-card-body {
+    padding: 8px;
+  }
+
+  .energy-live-chart-card canvas {
+    max-width: 100%;
+  }
+}
