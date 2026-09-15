@@ -1,0 +1,541 @@
+.production-line-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.production-dashboard-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.production-dashboard-heading h1 {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 42px);
+  color: #0d2b52;
+  line-height: 1.1;
+}
+
+.production-heading-subtitle {
+  margin-top: 4px;
+  font-size: 15px;
+  color: #34506f;
+  font-weight: 500;
+}
+
+.production-heading-statuses {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  gap: 8px;
+  flex: 1 1 650px;
+  max-width: 760px;
+}
+
+.production-header-chip {
+  min-width: 0;
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid #cfe1f6;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(13, 43, 82, 0.04);
+  color: #1677ff;
+}
+
+.production-header-chip > .anticon {
+  font-size: 24px;
+}
+
+.production-header-chip small,
+.production-header-chip strong {
+  display: block;
+}
+
+.production-header-chip small {
+  color: #60738c;
+  font-size: 11px;
+}
+
+.production-header-chip strong {
+  margin-top: 2px;
+  color: #0d2b52;
+  font-size: 16px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.production-running-chip {
+  color: #19a463;
+}
+
+.production-live-warning {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff2f0;
+  color: #cf1322;
+  border: 1px solid #ffccc7;
+}
+
+.production-kpi-card,
+.production-dashboard-card {
+  height: 100%;
+  border: 1px solid #d8e5f4;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(13, 43, 82, 0.035);
+}
+
+.production-kpi-card .ant-card-body {
+  height: 100%;
+  padding: 16px;
+}
+
+.production-kpi-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.production-kpi-icon {
+  flex: 0 0 58px;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 28px;
+  color: #fff;
+}
+
+.production-kpi-blue .production-kpi-icon { background: linear-gradient(145deg, #4096ff, #0958d9); }
+.production-kpi-green .production-kpi-icon { background: linear-gradient(145deg, #36cfc9, #16a34a); }
+.production-kpi-orange .production-kpi-icon { background: linear-gradient(145deg, #ff9c6e, #fa541c); }
+.production-kpi-purple .production-kpi-icon { background: linear-gradient(145deg, #9254de, #531dab); }
+
+.production-kpi-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.production-kpi-label {
+  color: #17375e;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.production-kpi-value {
+  margin-top: 4px;
+  color: #092f63;
+  font-size: clamp(26px, 2.2vw, 34px);
+  font-weight: 750;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+
+.production-kpi-suffix {
+  margin-left: 5px;
+  font-size: 0.62em;
+  font-weight: 700;
+}
+
+.production-kpi-subcontent {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #42617f;
+  font-size: 13px;
+}
+
+.production-kpi-subcontent span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.production-month-control {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.production-dashboard-card .ant-card-head {
+  min-height: 44px;
+  padding: 0 16px;
+  border-bottom-color: #e8f0f8;
+}
+
+.production-dashboard-card .ant-card-head-title {
+  color: #0d2b52;
+  font-weight: 700;
+}
+
+.production-chart-card .ant-card-body {
+  padding: 8px 10px 12px;
+}
+
+.production-month-total {
+  text-align: right;
+  padding: 0 8px 4px;
+  color: #0d2b52;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.production-chart-empty {
+  min-height: 245px;
+  display: grid;
+  place-items: center;
+}
+
+.production-analysis-card .ant-card-body {
+  padding: 10px;
+}
+
+.production-analysis-title {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.production-analysis-title > span:first-child {
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.analysis-filter-label {
+  color: #48627f;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.production-analysis-panel {
+  height: 100%;
+  border: 1px solid #e0e9f3;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px 10px 2px;
+}
+
+.production-panel-heading {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #123763;
+  font-size: 13px;
+}
+
+.production-panel-heading > strong {
+  font-size: 14px;
+}
+
+.production-dashboard-card .ant-descriptions-item-label {
+  color: #56708d;
+}
+
+.production-dashboard-card .ant-descriptions-item-content {
+  color: #0d2b52;
+  font-weight: 600;
+}
+
+@media (max-width: 1199px) {
+  .production-heading-statuses {
+    max-width: none;
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 767px) {
+  .production-dashboard-heading {
+    align-items: stretch;
+  }
+
+  .production-heading-statuses {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-header-chip {
+    min-height: 56px;
+    padding: 8px 9px;
+  }
+
+  .production-header-chip > .anticon {
+    font-size: 20px;
+  }
+
+  .production-header-chip strong {
+    font-size: 14px;
+  }
+
+  .production-kpi-card .ant-card-body {
+    padding: 12px;
+  }
+
+  .production-kpi-layout {
+    display: block;
+  }
+
+  .production-kpi-icon {
+    width: 42px;
+    height: 42px;
+    font-size: 21px;
+    margin-bottom: 8px;
+  }
+
+  .production-kpi-label {
+    font-size: 12px;
+  }
+
+  .production-kpi-value {
+    font-size: 24px;
+  }
+
+  .production-kpi-subcontent {
+    font-size: 11px;
+  }
+
+  .production-kpi-subcontent span {
+    display: block;
+  }
+
+  .production-analysis-title {
+    display: block;
+  }
+
+  .production-analysis-title > span:first-child {
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .production-analysis-title .ant-space {
+    width: 100%;
+  }
+
+  .production-analysis-title .ant-picker {
+    width: 145px;
+  }
+}
+
+@media (max-width: 480px) {
+  .production-heading-statuses {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .production-header-chip {
+    gap: 6px;
+  }
+
+  .production-header-chip small {
+    font-size: 10px;
+  }
+
+  .production-kpi-value {
+    font-size: 21px;
+  }
+
+  .production-kpi-suffix {
+    font-size: 12px;
+  }
+}
+
+/* =========================================================
+   Bottom stoppage / shift-details section
+   ========================================================= */
+
+.production-bottom-row {
+  align-items: flex-start;
+}
+
+.production-bottom-card {
+  height: auto;
+}
+
+.production-shift-details-card {
+  align-self: flex-start;
+}
+
+/* ---------------------------------------------------------
+   Stoppage Details: fixed card height + ONE scrollbar
+   --------------------------------------------------------- */
+
+/*
+ * The whole card has a fixed height.
+ * The card header remains fixed and ONLY .ant-card-body scrolls.
+ *
+ * There is no table scroll prop and no separate wrapper scrollbar.
+ */
+.production-stoppage-card {
+  height: 300px !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.production-stoppage-card > .ant-card-head {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+
+.production-stoppage-card > .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+
+  /*
+   * No top padding:
+   * the table header must sit directly below the Ant Design card header.
+   * Otherwise scrolling rows can become visible in the padded gap.
+   */
+  padding: 0 16px 12px;
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: #9fb8d2 #f4f7fb;
+}
+
+/* Chrome / Edge / Safari */
+.production-stoppage-card > .ant-card-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.production-stoppage-card > .ant-card-body::-webkit-scrollbar-track {
+  background: #f4f7fb;
+  border-radius: 8px;
+}
+
+.production-stoppage-card > .ant-card-body::-webkit-scrollbar-thumb {
+  background: #9fb8d2;
+  border-radius: 8px;
+  border: 2px solid #f4f7fb;
+}
+
+.production-stoppage-card > .ant-card-body::-webkit-scrollbar-thumb:hover {
+  background: #7897b8;
+}
+
+/*
+ * Table itself must never create an independent scroll area.
+ */
+.production-stoppage-table,
+.production-stoppage-table .ant-spin-nested-loading,
+.production-stoppage-table .ant-spin-container,
+.production-stoppage-table .ant-table,
+.production-stoppage-table .ant-table-container,
+.production-stoppage-table .ant-table-content,
+.production-stoppage-table .ant-table-body {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+/*
+ * Hide any Ant Design scrollbar helper/gutter defensively.
+ */
+.production-stoppage-table .ant-table-sticky-scroll,
+.production-stoppage-table .ant-table-cell-scrollbar {
+  display: none !important;
+}
+
+/*
+ * Keep a useful minimum width. If the screen is narrower, the SAME card body
+ * provides the horizontal scrollbar; no second table scrollbar is created.
+ */
+.production-stoppage-table table {
+  min-width: 700px;
+}
+
+/*
+ * The table header remains visible while the card body scrolls.
+ */
+.production-stoppage-table .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fafafa !important;
+  box-shadow: 0 1px 0 #f0f0f0;
+}
+
+/*
+ * Remove the table's own top spacing/radius so the sticky header joins
+ * cleanly to the card body immediately below the card heading.
+ */
+.production-stoppage-table .ant-table,
+.production-stoppage-table .ant-table-container,
+.production-stoppage-table .ant-table-content {
+  border-radius: 0 !important;
+}
+
+.production-stoppage-table .ant-table-container::before,
+.production-stoppage-table .ant-table-container::after {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------
+   Shift Production Details
+   --------------------------------------------------------- */
+
+.production-shift-details-card {
+  height: 300px !important;
+}
+
+.production-shift-details-card .ant-card-body {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.production-shift-details .ant-descriptions-item {
+  padding-bottom: 8px;
+}
+
+.production-shift-details .ant-descriptions-item-label {
+  white-space: nowrap;
+}
+
+.production-shift-details .ant-descriptions-item-content {
+  font-weight: 600;
+}
+
+@media (min-width: 768px) {
+  .production-shift-details .ant-descriptions-view table {
+    table-layout: fixed;
+  }
+}
+
+/* Phones */
+@media (max-width: 767px) {
+  .production-stoppage-card {
+    height: 300px !important;
+  }
+
+  .production-shift-details-card .ant-card-body {
+    padding: 14px;
+  }
+
+  .production-shift-details .ant-descriptions-item {
+    padding-bottom: 6px;
+  }
+
+  .production-shift-details .ant-descriptions-item-label,
+  .production-shift-details .ant-descriptions-item-content {
+    font-size: 13px;
+  }
+}
+
+/* 2026-09 production dashboard revision */
+.production-section-title,.production-analysis-title{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;flex-wrap:wrap;}
+.production-analysis-details-row{margin-top:12px;}
+.production-monthly-card>.ant-card-body,.production-analysis-card>.ant-card-body{padding:12px;}
+.production-monthly-panel{height:100%;}
+.production-stoppage-card,.production-shift-details-card{height:300px !important;}
+@media(max-width:767px){.production-stoppage-card,.production-shift-details-card{height:300px !important;}.production-section-title,.production-analysis-title{align-items:flex-start;}.production-section-title>.ant-space,.production-analysis-title>.ant-space{margin-left:auto;justify-content:flex-end;}}

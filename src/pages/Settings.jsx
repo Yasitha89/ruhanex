@@ -156,8 +156,9 @@ function LineSettingsForm({ line }) {
         >
           <InputNumber
             className="left-aligned-number"
-            min={1}
-            precision={0}
+            min={0.1}
+            step={0.1}
+            precision={2}
             style={{ width: "100%" }}
             addonAfter="Tiles/min"
           />
