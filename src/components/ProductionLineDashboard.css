@@ -30,10 +30,10 @@
 
 .production-heading-statuses {
   display: grid;
-  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  grid-template-columns: repeat(5, minmax(135px, 1fr));
   gap: 8px;
-  flex: 1 1 650px;
-  max-width: 760px;
+  flex: 1 1 820px;
+  max-width: 940px;
 }
 
 .production-header-chip {
@@ -74,6 +74,48 @@
 
 .production-running-chip {
   color: #19a463;
+}
+
+.production-ole-chip {
+  color: #0d2b52;
+  min-width: 92px;
+}
+
+.production-ole-chip small {
+  color: #0d2b52;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.production-ole-chip strong {
+  margin-top: 1px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.production-running-chip {
+  position: relative;
+  padding-right: 38px;
+}
+
+.production-sensor-signal {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.production-sensor-signal.is-online {
+  color: #22c55e;
+}
+
+.production-sensor-signal.is-offline {
+  color: #ff4d4f;
 }
 
 .production-live-warning {
@@ -539,3 +581,83 @@
 .production-monthly-panel{height:100%;}
 .production-stoppage-card,.production-shift-details-card{height:300px !important;}
 @media(max-width:767px){.production-stoppage-card,.production-shift-details-card{height:300px !important;}.production-section-title,.production-analysis-title{align-items:flex-start;}.production-section-title>.ant-space,.production-analysis-title>.ant-space{margin-left:auto;justify-content:flex-end;}}
+
+
+/* 2026-09-16 mobile/header refinements */
+
+@media (max-width: 767px) {
+
+  .production-shift-details-card {
+    height: 300px !important;
+    overflow: hidden;
+  }
+
+  .production-shift-details-card .ant-card-body {
+    height: calc(300px - 57px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #9bbfe5 transparent;
+  }
+
+  .production-shift-details-card .ant-card-body::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .production-shift-details-card .ant-card-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .production-shift-details-card .ant-card-body::-webkit-scrollbar-thumb {
+    background: #9bbfe5;
+    border-radius: 999px;
+  }
+}
+
+
+/* Shift-analysis chart title/axis spacing */
+.production-analysis-panel .production-panel-heading {
+  position: relative;
+  z-index: 2;
+  background: #fff;
+}
+
+.production-analysis-panel .echarts-for-react {
+  margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .production-analysis-panel .echarts-for-react {
+    margin-top: 10px;
+  }
+}
+
+
+/* OLE icon: same blue visual language as the other production header indicators */
+.production-ole-chip > .anticon {
+  color: #1677ff;
+}
+
+
+/* Line Status indicator: custom dot so Running and Stopped have identical sizing */
+.production-line-status-indicator {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  display: inline-block;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.production-line-status-indicator.is-running {
+  background: #52c41a;
+  box-shadow: 0 0 0 3px rgba(82, 196, 26, 0.12);
+}
+
+.production-line-status-indicator.is-stopped {
+  background: #ff4d4f;
+  box-shadow: 0 0 0 3px rgba(255, 77, 79, 0.12);
+}

@@ -883,7 +883,7 @@
 //           <Col xs={24} xl={9}>
 //             <Card
 //               className="production-dashboard-card production-bottom-card production-shift-details-card"
-//               title={`Shift Production Details (${selectedShift})`}
+//               title={`Shift Production Details (${selectedShift}, ${selectedDate.format("DD MMM YYYY")})`}
 //             >
 //               <Descriptions
 //                 className="production-shift-details"
@@ -1081,9 +1081,13 @@ import {
   DashboardOutlined,
   ReloadOutlined,
   RiseOutlined,
+  DownloadOutlined,
+  WifiOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
-import ProductionMonthlyPanel from "./ProductionMonthlyPanel";
+import ProductionMonthlyPanel, {
+  exportProductionWorkbook,
+} from "./ProductionMonthlyPanel";
 import ShiftDowntimeBarChart from "./ShiftDowntimeBarChart";
 import ShiftTileCountChart from "./ShiftTileCountChart";
 import {
@@ -1518,6 +1522,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
       targetTiles: Number(live.targetTiles || 0),
       targetSqm: Number(live.targetProduction || 0),
       achievement: Number(live.performance || 0),
+      ole: Number(live.ole || 0),
       maximumDowntimeMinutes: Number(live.maximumDowntimeMinutes || 0),
       completedStops: Number(live.completedStops || 0),
       totalDowntimeMinutes: Number(live.totalDowntimeMinutes || 0),
@@ -1540,19 +1545,16 @@ export default function ProductionLineDashboard({ line, title = line }) {
   }, [live]);
 
   const selectedDetails = useMemo(() => {
-    // Preferred source for both current and historical selections.
-    //
-    // Current shift:
-    //   /api/production/shift-summary -> InfluxDB + stoppages MongoDB
-    //
-    // Historical shift:
-    //   /api/production/shift-summary -> saved MongoDB shifts document
-    if (selectedShiftStats) {
-      return selectedShiftStats;
-    }
-
-    // Current-shift fallback. This keeps the UI useful if the hybrid
-    // shift-summary request temporarily fails.
+    /*
+     * Current shift:
+     *   Use /live-summary as the single source of truth.
+     *   This keeps Shift Production Details synchronized with the top KPI cards
+     *   on every live-summary refresh and avoids a second current-shift
+     *   /shift-summary response overwriting the live values.
+     *
+     * Historical/completed shift:
+     *   Use the saved /production/shift-summary lineStats.
+     */
     if (isSelectedCurrentShift && live) {
       return {
         tileSize: live.tileSize,
@@ -1561,13 +1563,23 @@ export default function ProductionLineDashboard({ line, title = line }) {
           live.productionSqm ||
             calculateTileSqm(live.tileSize, live.shiftCount),
         ),
-        actualOperatingMinutes: currentCalculations.operatingMinutes,
+
+        elapsedShiftMinutes: Number(live.elapsedShiftMinutes || 0),
+        actualOperatingMinutes: Number(live.actualOperatingMinutes || 0),
+        plannedProductionMinutes: Number(live.plannedProductionMinutes || 0),
+
         configuredPlannedDowntime: Number(
           live.configuredStandardPlannedDowntime ?? live.plannedDowntime ?? 0,
         ),
         plannedDowntimeMinutes: Number(live.plannedDowntimeMinutes || 0),
         standardPlannedDowntimeMinutes: Number(
           live.standardPlannedDowntimeMinutes || 0,
+        ),
+        recordedStandardDowntimeMinutes: Number(
+          live.recordedStandardDowntimeMinutes || 0,
+        ),
+        remainingStandardAllowanceMinutes: Number(
+          live.remainingStandardAllowanceMinutes || 0,
         ),
         additionalPlannedDowntimeMinutes: Number(
           live.additionalPlannedDowntimeMinutes || 0,
@@ -1579,21 +1591,34 @@ export default function ProductionLineDashboard({ line, title = line }) {
         totalDowntimeMinutes: Number(live.totalDowntimeMinutes || 0),
         maximumDowntimeMinutes: Number(live.maximumDowntimeMinutes || 0),
         completedStops: Number(live.completedStops || 0),
-        availability: currentCalculations.availability,
-        performance: currentCalculations.achievement,
+        openStop: Boolean(live.openStop),
+
+        availability: Number(live.availability || 0),
+        performance: Number(live.performance || 0),
+        quality: Number(live.quality ?? 100),
+        ole: Number(live.ole || 0),
+
+        targetTiles: Number(live.targetTiles || 0),
+        targetProduction: Number(live.targetProduction || 0),
+        ratedLineSpeed: Number(
+          live.ratedLineSpeed ?? live.configuredLineSpeed ?? 0,
+        ),
+
+        sensorStatus: live.sensorStatus || "Unknown",
+        shiftStatus: live.shiftStatus || "Unknown",
         currentSpeed: Number(live.speed || 0),
-        source: "live-fallback",
+
+        source: "live-summary",
+        updatedAt: live.timestamp || Date.now(),
       };
     }
 
+    if (selectedShiftStats) {
+      return selectedShiftStats;
+    }
+
     return {};
-  }, [
-    selectedShiftStats,
-    isSelectedCurrentShift,
-    live,
-    currentCalculations,
-    selectedStopSummary,
-  ]);
+  }, [isSelectedCurrentShift, live, selectedShiftStats]);
 
   const openDowntimeModal = (row) => {
     setSelectedDowntime(row);
@@ -1699,6 +1724,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
         </div>
 
         <div className="production-heading-statuses">
+          <div className="production-header-chip production-ole-chip">
+            <BarChartOutlined />
+            <div>
+              <small>OLE</small>
+              <strong>{fmt(live?.ole, 1)} %</strong>
+            </div>
+          </div>
           <div className="production-header-chip">
             <DashboardOutlined />
             <div>
@@ -1725,14 +1757,15 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </div>
           </div>
           <div className="production-header-chip production-running-chip">
-            <Badge
-              status={
+            <span
+              className={`production-line-status-indicator ${
                 (currentStopSummary?.openStop
                   ? "Stopped"
                   : live?.shiftStatus) === "Running"
-                  ? "success"
-                  : "error"
-              }
+                  ? "is-running"
+                  : "is-stopped"
+              }`}
+              aria-hidden="true"
             />
             <div>
               <small>Line Status</small>
@@ -1741,6 +1774,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
                   ? "Stopped"
                   : live?.shiftStatus || "Unknown"}
               </strong>
+              <span
+                className={`production-sensor-signal ${live?.sensorStatus === "Online" ? "is-online" : "is-offline"}`}
+                title={`Sensor ${live?.sensorStatus || "Unknown"}`}
+                aria-label={`Sensor ${live?.sensorStatus || "Unknown"}`}
+              >
+                <WifiOutlined />
+              </span>
             </div>
           </div>
         </div>
@@ -1812,7 +1852,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         <Col xs={12} lg={6}>
           <KpiCard
             icon={<DashboardOutlined />}
-            label="Performance vs Target"
+            label="Performance"
             value={fmt(live?.performance, 1)}
             suffix="%"
             tone="purple"
@@ -1832,7 +1872,18 @@ export default function ProductionLineDashboard({ line, title = line }) {
         title={
           <div className="production-section-title">
             <span>Monthly Production</span>
-            <Space size={8}>
+            <Space size={8} wrap>
+              <Button
+                type="default"
+                shape="circle"
+                icon={<DownloadOutlined />}
+                disabled={!monthly}
+                aria-label="Download Excel"
+                title="Download Excel"
+                onClick={() =>
+                  exportProductionWorkbook({ line, month, data: monthly })
+                }
+              />
               <span className="analysis-filter-label">Month</span>
               <DatePicker
                 picker="month"
@@ -1857,7 +1908,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         className="production-dashboard-card production-analysis-card"
         title={
           <div className="production-analysis-title">
-            <span>Current Shift Analysis</span>
+            <span>Shift Analysis</span>
             <Space size={8} wrap>
               <span className="analysis-filter-label">Date</span>
               <DatePicker
@@ -1909,7 +1960,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
               <div className="production-panel-heading">
                 <strong>Shift Tile Count ({selectedShift})</strong>
                 <span>
-                  Latest:{" "}
+                  {/* Tiles:{" "} */}
                   <strong>{fmt(tileSeries.at(-1)?.value, 0)} tiles</strong>
                 </span>
               </div>
@@ -1948,7 +1999,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
           <Col xs={24} xl={9}>
             <Card
               className="production-dashboard-card production-bottom-card production-shift-details-card"
-              title={`Shift Production Details (${selectedShift})`}
+              title={`Shift Production Details (${selectedShift}, ${selectedDate.format("DD MMM YYYY")})`}
             >
               <Descriptions
                 className="production-shift-details"
@@ -1994,6 +2045,9 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 </Descriptions.Item>
                 <Descriptions.Item label="Performance">
                   {fmt(selectedDetails.performance, 1)} %
+                </Descriptions.Item>
+                <Descriptions.Item label="OLE">
+                  {fmt(selectedDetails.ole, 1)} %
                 </Descriptions.Item>
                 {isSelectedCurrentShift ? (
                   <Descriptions.Item label="Current Speed">

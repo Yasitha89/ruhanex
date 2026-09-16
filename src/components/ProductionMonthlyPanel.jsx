@@ -1,6 +1,5 @@
 import { useMemo } from "react";
-import { Button, Card, Col, Empty, Row } from "antd";
-import { DownloadOutlined } from "@ant-design/icons";
+import { Card, Col, Empty, Row } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 
@@ -37,7 +36,7 @@ function primarySize(shift) {
   return sizes[0]?.size || "";
 }
 
-async function exportWorkbook({ line, month, data }) {
+export async function exportProductionWorkbook({ line, month, data }) {
   const ExcelJSImport = await import("exceljs");
   const ExcelJS = ExcelJSImport.default || ExcelJSImport;
   const workbook = new ExcelJS.Workbook();
@@ -182,7 +181,7 @@ export default function ProductionMonthlyPanel({
   const sizeOption = useMemo(
     () => ({
       animation: false,
-      grid: { left: 68, right: 85, top: 18, bottom: 25, containLabel: true },
+      grid: { left: 68, right: 150, top: 18, bottom: 25, containLabel: true },
       tooltip: {
         trigger: "item",
         confine: true,
@@ -211,6 +210,7 @@ export default function ProductionMonthlyPanel({
               `${fmt(params.data.raw.production)} m² (${fmt(params.data.raw.percentage, 1)}%)`,
             color: "#183153",
             fontWeight: 600,
+            fontSize: 11,
           },
           data: sizes.map((row) => ({
             value: Number(row.production || 0),
@@ -256,16 +256,6 @@ export default function ProductionMonthlyPanel({
           <Card
             className="production-dashboard-card production-chart-card"
             title={`Production by Tile Size - ${dayjs(month).format("MMMM YYYY")}`}
-            extra={
-              <Button
-                type="primary"
-                icon={<DownloadOutlined />}
-                disabled={!data}
-                onClick={() => exportWorkbook({ line, month, data })}
-              >
-                Download Excel
-              </Button>
-            }
             loading={loading}
           >
             {sizes.length ? (

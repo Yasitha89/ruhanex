@@ -15,7 +15,7 @@ export default function ShiftTileCountChart({ data = [] }) {
   const option = useMemo(
     () => ({
       animation: false,
-      grid: { left: 62, right: 20, top: 25, bottom: 48, containLabel: true },
+      grid: { left: 62, right: 20, top: 48, bottom: 48, containLabel: true },
       tooltip: {
         trigger: "axis",
         confine: true,
@@ -38,6 +38,9 @@ export default function ShiftTileCountChart({ data = [] }) {
         type: "value",
         min: 0,
         name: "Tile Count",
+        nameLocation: "end",
+        nameGap: 14,
+        nameTextStyle: { padding: [0, 0, 4, 0] },
         splitLine: { lineStyle: { color: "#eef2f7" } },
       },
       series: [
@@ -60,10 +63,20 @@ export default function ShiftTileCountChart({ data = [] }) {
   if (!points.length) {
     return (
       <div className="production-chart-empty">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No production samples" />
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="No production samples"
+        />
       </div>
     );
   }
 
-  return <ReactECharts option={option} notMerge lazyUpdate style={{ width: "100%", height: 245 }} />;
+  return (
+    <ReactECharts
+      option={option}
+      notMerge
+      lazyUpdate
+      style={{ width: "100%", height: 245 }}
+    />
+  );
 }

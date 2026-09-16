@@ -20,7 +20,7 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
   const option = useMemo(
     () => ({
       animation: false,
-      grid: { left: 55, right: 18, top: 25, bottom: 48, containLabel: true },
+      grid: { left: 55, right: 18, top: 48, bottom: 48, containLabel: true },
       tooltip: {
         trigger: "item",
         confine: true,
@@ -28,7 +28,9 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
           const row = rows[params.dataIndex];
           if (!row) return "";
 
-          const end = row.stopStop_ts ? dayjs(Number(row.stopStop_ts)).format("HH:mm:ss") : "Ongoing";
+          const end = row.stopStop_ts
+            ? dayjs(Number(row.stopStop_ts)).format("HH:mm:ss")
+            : "Ongoing";
 
           return `
             <div style="min-width:210px">
@@ -44,7 +46,9 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
       },
       xAxis: {
         type: "category",
-        data: rows.map((row) => dayjs(Number(row.stopStart_ts)).format("HH:mm")),
+        data: rows.map((row) =>
+          dayjs(Number(row.stopStart_ts)).format("HH:mm"),
+        ),
         name: "Start time",
         nameLocation: "middle",
         nameGap: 32,
@@ -54,6 +58,9 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
         type: "value",
         min: 0,
         name: "Downtime (min)",
+        nameLocation: "end",
+        nameGap: 14,
+        nameTextStyle: { padding: [0, 0, 4, 0] },
         splitLine: { lineStyle: { color: "#eef2f7" } },
       },
       series: [
@@ -67,6 +74,14 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
             },
           })),
           barMaxWidth: 18,
+          label: {
+            show: true,
+            position: "top",
+            distance: 6,
+            formatter: (params) => formatMinutes(params.value),
+            fontSize: 11,
+            fontWeight: 600,
+          },
         },
       ],
     }),
@@ -76,7 +91,10 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
   if (!rows.length) {
     return (
       <div className="production-chart-empty">
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No downtime events" />
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="No downtime events"
+        />
       </div>
     );
   }
@@ -89,7 +107,10 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
       style={{ width: "100%", height: 245 }}
       onEvents={{
         click: (params) => {
-          if (typeof onBarClick === "function" && Number.isInteger(params?.dataIndex)) {
+          if (
+            typeof onBarClick === "function" &&
+            Number.isInteger(params?.dataIndex)
+          ) {
             onBarClick(rows[params.dataIndex]);
           }
         },
