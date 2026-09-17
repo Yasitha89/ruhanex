@@ -351,6 +351,34 @@
     display: block;
   }
 
+  .production-kpi-subcontent .production-kpi-production-info {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.production-kpi-production-info > span {
+  display: inline-flex;
+  justify-content: flex-start;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.production-kpi-production-info > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.production-kpi-production-info > span:last-child strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
   .production-analysis-title {
     display: block;
   }

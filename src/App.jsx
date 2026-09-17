@@ -14,6 +14,7 @@ import EnergyOverview from "./pages/EnergyOverview";
 import EnergyHistoricalReport from "./pages/EnergyHistoricalReport";
 import EnergyLiveMonitor from "./pages/EnergyLiveMonitor";
 import DeviceAdministration from "./pages/DeviceAdministration";
+import ProductionMasterData from "./pages/ProductionMasterData";
 
 function App() {
   return (
@@ -52,6 +53,17 @@ function App() {
                 title="Administrator Access Required"
               >
                 <DeviceAdministration />
+              </AuthorityGate>
+            }
+          />
+          <Route
+            path="production_master_data"
+            element={
+              <AuthorityGate
+                authorityLevel="administrator"
+                title="Administrator Access Required"
+              >
+                <ProductionMasterData />
               </AuthorityGate>
             }
           />

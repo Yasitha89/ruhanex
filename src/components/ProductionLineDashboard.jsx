@@ -1057,6 +1057,7 @@
 // }
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AutoComplete,
   Badge,
   Button,
   Card,
@@ -1096,6 +1097,7 @@ import {
   getProductionShiftCountSeries,
   getProductionShiftStoppages,
   getProductionShiftSummary,
+  getProductionMachines,
   updateProductionDowntimeReason,
 } from "../api/productionDashboardApi";
 import { calculateTileSqm } from "../utils/shiftUtils";
@@ -1193,6 +1195,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
   const [selectedDowntime, setSelectedDowntime] = useState(null);
   const [downtimeModalOpen, setDowntimeModalOpen] = useState(false);
   const [savingDowntime, setSavingDowntime] = useState(false);
+  const [machineOptions, setMachineOptions] = useState([]);
+  const [machineSearching, setMachineSearching] = useState(false);
   const [downtimeForm] = Form.useForm();
   const selectedDowntimeType = Form.useWatch("downtimeType", downtimeForm);
   const selectedPlannedCategory = Form.useWatch(
@@ -1620,6 +1624,57 @@ export default function ProductionLineDashboard({ line, title = line }) {
     return {};
   }, [isSelectedCurrentShift, live, selectedShiftStats]);
 
+  const searchMachines = useCallback(
+    async (searchText = "") => {
+      const targetLine = String(selectedDowntime?.line || line || "").trim();
+
+      if (!targetLine) {
+        setMachineOptions([]);
+        return;
+      }
+
+      setMachineSearching(true);
+      try {
+        const response = await getProductionMachines({
+          line: targetLine,
+          search: searchText,
+        });
+
+        const machines = Array.isArray(response?.machines)
+          ? response.machines
+          : [];
+
+        setMachineOptions(
+          machines
+            .map((item) => {
+              const machineName =
+                typeof item === "string"
+                  ? item
+                  : String(item?.machineName || item?.name || "");
+              const machineCode =
+                typeof item === "string" ? "" : String(item?.machineCode || "");
+
+              if (!machineName) return null;
+
+              return {
+                value: machineName,
+                label: machineCode
+                  ? `${machineCode} — ${machineName}`
+                  : machineName,
+              };
+            })
+            .filter(Boolean),
+        );
+      } catch (error) {
+        console.error(`${targetLine}: machine search failed`, error);
+        setMachineOptions([]);
+      } finally {
+        setMachineSearching(false);
+      }
+    },
+    [line, selectedDowntime?.line],
+  );
+
   const openDowntimeModal = (row) => {
     setSelectedDowntime(row);
     downtimeForm.setFieldsValue({
@@ -1632,6 +1687,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
           : undefined,
       downtimeCode: row?.downtimeCode || undefined,
     });
+    setMachineOptions([]);
     setDowntimeModalOpen(true);
   };
 
@@ -1800,8 +1856,15 @@ export default function ProductionLineDashboard({ line, title = line }) {
             tone="blue"
           >
             <span>{fmt(live?.shiftCount, 0)} tiles</span>
-            <span>
-              Tile Size: <strong>{live?.tileSize || "-"}</strong>
+
+            <span className="production-kpi-production-info">
+              <span>
+                Size: <strong>{live?.tileSize || "-"}</strong>
+              </span>
+
+              <span>
+                Design: <strong>{live?.designCode || "-"}</strong>
+              </span>
             </span>
           </KpiCard>
         </Col>
@@ -2051,7 +2114,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 </Descriptions.Item>
                 {isSelectedCurrentShift ? (
                   <Descriptions.Item label="Current Speed">
-                    {fmt(selectedDetails.currentSpeed, 0)} tiles/min
+                    {fmt(selectedDetails.currentSpeed, 1)} tiles/min
                   </Descriptions.Item>
                 ) : null}
               </Descriptions>
@@ -2151,8 +2214,30 @@ export default function ProductionLineDashboard({ line, title = line }) {
                   ).map(({ value, label }) => ({ value, label }))}
                 />
               </Form.Item>
-              <Form.Item label="Machine" name="machine">
-                <Input maxLength={100} />
+              <Form.Item
+                label="Machine"
+                name="machine"
+                rules={[
+                  {
+                    required: true,
+                    message:
+                      "Please select a machine from the registered machine list",
+                  },
+                ]}
+              >
+                <AutoComplete
+                  options={machineOptions}
+                  onSearch={searchMachines}
+                  onFocus={() =>
+                    searchMachines(downtimeForm.getFieldValue("machine") || "")
+                  }
+                  placeholder="Type machine name or code"
+                  allowClear
+                  filterOption={false}
+                  notFoundContent={
+                    machineSearching ? "Searching..." : "No matching machine"
+                  }
+                />
               </Form.Item>
               <Form.Item
                 label="Downtime Reason"

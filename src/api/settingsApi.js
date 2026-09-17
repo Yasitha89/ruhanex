@@ -35,4 +35,45 @@ export async function saveLineSettings(settings) {
   }
 }
 
+export async function getDesignCodes({ tileSize, search = "" }) {
+  try {
+    const response = await api.get("/api/design-codes", {
+      params: { tileSize, search },
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, "Unable to load design codes."));
+  }
+}
+
+
+export async function getMachines({ line, search = "" }) {
+  try {
+    const response = await api.get("/api/production/machines", {
+      params: { line, search },
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, "Unable to load machines."));
+  }
+}
+
+export async function saveMachine(machine) {
+  try {
+    const response = await api.post("/api/production/machines", machine);
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, "Unable to save machine."));
+  }
+}
+
+export async function saveDesignCode(designCode) {
+  try {
+    const response = await api.post("/api/design-codes", designCode);
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, "Unable to save design code."));
+  }
+}
+
 export default api;

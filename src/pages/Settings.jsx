@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { PRODUCTION_LINES } from "../utils/constants";
+import { PRODUCTION_LINES, TILE_SIZE_OPTIONS } from "../utils/constants";
 import {
   Alert,
+  AutoComplete,
   Button,
   Card,
   Divider,
   Form,
+  Input,
   InputNumber,
   Select,
   Spin,
@@ -15,7 +17,11 @@ import {
 } from "antd";
 import { SaveOutlined } from "@ant-design/icons";
 
-import { getLineSettings, saveLineSettings } from "../api/settingsApi";
+import {
+  getDesignCodes,
+  getLineSettings,
+  saveLineSettings,
+} from "../api/settingsApi";
 import "./Settings.css";
 
 const { Title, Text } = Typography;
@@ -24,6 +30,7 @@ const LINE_NAMES = PRODUCTION_LINES;
 
 const DEFAULT_SETTINGS = {
   tileSize: "60x30",
+  designCode: "",
   lineSpeed: 30,
   plannedDowntime: 30,
   stopDelayMs: 60000,
@@ -31,21 +38,14 @@ const DEFAULT_SETTINGS = {
   requiredRunTimeMs: 60000,
 };
 
-const TILE_SIZE_OPTIONS = [
-  { value: "30x30", label: "30 × 30 cm" },
-  { value: "40x40", label: "40 × 40 cm" },
-  { value: "60x30", label: "60 × 30 cm" },
-  { value: "60x60", label: "60 × 60 cm" },
-  { value: "80x80", label: "80 × 80 cm" },
-  { value: "120x60", label: "120 × 60 cm" },
-];
-
 function LineSettingsForm({ line }) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
+  const [designOptions, setDesignOptions] = useState([]);
+  const [designSearching, setDesignSearching] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -74,6 +74,60 @@ function LineSettingsForm({ line }) {
     loadSettings();
   }, [loadSettings]);
 
+  const searchDesignCodes = useCallback(
+    async (searchText = "") => {
+      const tileSize = form.getFieldValue("tileSize");
+
+      if (!tileSize) {
+        setDesignOptions([]);
+        return;
+      }
+
+      setDesignSearching(true);
+
+      try {
+        const result = await getDesignCodes({
+          tileSize,
+          search: searchText,
+        });
+
+        const rows = Array.isArray(result?.designCodes)
+          ? result.designCodes
+          : [];
+
+        setDesignOptions(
+          rows
+            .map((item) => {
+              const code =
+                typeof item === "string"
+                  ? item
+                  : String(item?.designCode || "");
+
+              return {
+                value: code,
+                label: code,
+              };
+            })
+            .filter((item) => item.value),
+        );
+      } catch (err) {
+        console.error("Unable to search design codes:", err);
+        setDesignOptions([]);
+      } finally {
+        setDesignSearching(false);
+      }
+    },
+    [form],
+  );
+
+  const handleTileSizeChange = () => {
+    // A design belongs to a tile size. Clear the previous selection
+    // whenever the size changes, then load designs for the new size.
+    form.setFieldValue("designCode", "");
+    setDesignOptions([]);
+    searchDesignCodes("");
+  };
+
   const handleSave = async (values) => {
     setSaving(true);
     setError("");
@@ -82,6 +136,7 @@ function LineSettingsForm({ line }) {
       const payload = {
         line,
         tileSize: values.tileSize,
+        designCode: String(values.designCode || "").trim(),
         lineSpeed: Number(values.lineSpeed),
         plannedDowntime: Number(values.plannedDowntime),
         stopDelayMs: Number(values.stopDelayMs),
@@ -139,7 +194,42 @@ function LineSettingsForm({ line }) {
           name="tileSize"
           rules={[{ required: true, message: "Please select the tile size" }]}
         >
-          <Select className="left-aligned-select" options={TILE_SIZE_OPTIONS} />
+          <Select
+            className="left-aligned-select"
+            options={TILE_SIZE_OPTIONS}
+            onChange={handleTileSizeChange}
+          />
+        </Form.Item>
+
+        <Form.Item
+          label="Design Code"
+          name="designCode"
+          extra="Design code of the current production."
+          rules={[
+            {
+              max: 100,
+              message: "Design code must be 100 characters or fewer",
+            },
+          ]}
+        >
+          <AutoComplete
+            options={designOptions}
+            onSearch={searchDesignCodes}
+            onFocus={() =>
+              searchDesignCodes(form.getFieldValue("designCode") || "")
+            }
+            placeholder="Type to search design code"
+            allowClear
+            maxLength={100}
+            notFoundContent={
+              designSearching ? (
+                <Spin size="small" />
+              ) : (
+                "No matching design code"
+              )
+            }
+            filterOption={false}
+          />
         </Form.Item>
 
         <Form.Item

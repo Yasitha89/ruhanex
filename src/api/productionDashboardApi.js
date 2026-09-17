@@ -82,3 +82,14 @@ export const updateProductionDowntimeReason = async ({
 
   return response.data;
 };
+
+export const getProductionMachines = async ({ line, search = "" }) => {
+  const response = await api.get("/api/production/machines", {
+    params: {
+      line,
+      search,
+    },
+  });
+
+  return response.data;
+};

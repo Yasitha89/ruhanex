@@ -34,6 +34,8 @@ export default function Sidebar() {
         return "settings";
       case "/device_administration":
         return "device_administration";
+      case "/production_master_data":
+        return "production_master_data";
       case "/dashboard":
       default:
         return "dashboard";
@@ -177,6 +179,11 @@ export default function Sidebar() {
               key: "device_administration",
               label: "Device Administration",
               onClick: () => navigate("/device_administration"),
+            },
+            {
+              key: "production_master_data",
+              label: "Production Master Data",
+              onClick: () => navigate("/production_master_data"),
             },
             {
               key: "settings",

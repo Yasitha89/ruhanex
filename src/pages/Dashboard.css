@@ -1,0 +1,590 @@
+.overview-dashboard {
+  width: 100%;
+  padding-bottom: 24px;
+}
+
+.overview-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 24px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, #ffffff 0%, #f6f9ff 100%);
+  border: 1px solid #e8edf5;
+  border-radius: 16px;
+  box-shadow: 0 8px 26px rgba(15, 23, 42, 0.045);
+}
+
+.overview-hero .ant-typography {
+  margin-top: 0;
+  margin-bottom: 2px;
+}
+
+.overview-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.overview-context {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.overview-context-item {
+  min-width: 148px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #fff;
+  border: 1px solid #e7ecf3;
+  border-radius: 11px;
+}
+
+.overview-context-item > .anticon {
+  color: #2563eb;
+  font-size: 18px;
+}
+
+.overview-context-item div {
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-context-item span {
+  color: #7b8798;
+  font-size: 11px;
+}
+
+.overview-context-item strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.overview-shift-dot {
+  width: 11px !important;
+  height: 11px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, .12);
+}
+
+.overview-alert {
+  margin-bottom: 16px;
+}
+
+.overview-section-heading {
+  display: flex;
+  justify-content: space-between;
+  margin: 20px 2px 12px;
+}
+
+.overview-section-heading .ant-typography {
+  margin: 0;
+}
+
+.overview-line-card {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid #e7ecf3;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .035);
+}
+
+.overview-line-card .ant-card-body {
+  padding: 17px 18px 15px;
+}
+
+.overview-line-accent {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+}
+
+.overview-line-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.overview-line-top .ant-typography {
+  margin: 1px 0 0;
+}
+
+.overview-line-label {
+  font-size: 11px;
+}
+
+.overview-line-status .ant-badge-status-dot {
+  width: 9px;
+  height: 9px;
+}
+
+.overview-production-value {
+  margin-top: 13px;
+  color: #101828;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 750;
+  letter-spacing: -.03em;
+}
+
+.overview-production-value span {
+  margin-left: 5px;
+  color: #667085;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.overview-line-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid #eef2f6;
+  color: #667085;
+  font-size: 12px;
+}
+
+.overview-energy-row,
+.overview-chart-row {
+  margin-top: 14px;
+}
+
+.overview-energy-card {
+  border-radius: 14px;
+  border: 1px solid #e7ecf3;
+}
+
+.overview-energy-card .ant-card-body {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.overview-energy-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 21px;
+}
+
+.overview-energy-card .ant-statistic-content {
+  margin-top: 1px;
+  font-size: 25px;
+  font-weight: 700;
+}
+
+.overview-energy-card .ant-statistic-content-suffix {
+  margin-left: 5px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.overview-chart-card {
+  height: 100%;
+  border-radius: 14px;
+  border: 1px solid #e7ecf3;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .025);
+}
+
+.overview-chart-card .ant-card-head {
+  min-height: 52px;
+}
+
+.overview-chart-card .ant-card-head-title {
+  font-weight: 650;
+}
+
+.overview-empty {
+  height: 330px;
+  display: grid;
+  place-items: center;
+  color: #98a2b3;
+}
+
+.overview-snapshot-grid {
+  min-height: 330px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-content: center;
+}
+
+.overview-snapshot {
+  min-height: 120px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: #f8fafc;
+  border: 1px solid #edf1f5;
+  border-radius: 12px;
+}
+
+.overview-snapshot span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.overview-snapshot strong {
+  margin: 5px 0 2px;
+  color: #101828;
+  font-size: 24px;
+}
+
+.overview-snapshot small {
+  color: #98a2b3;
+}
+
+@media (max-width: 767px) {
+  .overview-hero {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 17px;
+  }
+
+  .overview-context {
+    justify-content: stretch;
+  }
+
+  .overview-context-item {
+    min-width: 0;
+    flex: 1 1 140px;
+  }
+
+  .overview-line-card .ant-card-body {
+    padding: 15px 16px 14px;
+  }
+
+  .overview-production-value {
+    font-size: 25px;
+  }
+
+  .overview-snapshot-grid {
+    grid-template-columns: 1fr 1fr;
+    min-height: auto;
+  }
+
+  .overview-snapshot {
+    min-height: 108px;
+    padding: 14px;
+  }
+
+  .overview-snapshot strong {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 420px) {
+  .overview-snapshot-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Add these rules to the end of src/pages/Dashboard.css */
+
+.overview-line-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.overview-line-meta > span {
+  min-width: 0;
+}
+
+.overview-line-meta strong {
+  margin-left: 4px;
+  color: #344054;
+  font-size: 12px;
+}
+
+.overview-line-design {
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== Compact overview layout ===== */
+.overview-dashboard {
+  padding-bottom: 14px;
+}
+
+.overview-hero {
+  gap: 14px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+}
+
+.overview-eyebrow {
+  margin-bottom: 2px;
+  font-size: 10px;
+}
+
+.overview-hero h2.ant-typography {
+  margin-bottom: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.overview-hero > div:first-child > .ant-typography-secondary {
+  font-size: 12px;
+}
+
+.overview-context {
+  gap: 8px;
+}
+
+.overview-context-item {
+  min-width: 132px;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 9px;
+}
+
+.overview-context-item > .anticon {
+  font-size: 15px;
+}
+
+.overview-context-item span {
+  font-size: 10px;
+}
+
+.overview-context-item strong {
+  font-size: 12px;
+}
+
+.overview-shift-dot {
+  width: 9px !important;
+  height: 9px;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, .12);
+}
+
+.overview-alert {
+  margin-bottom: 10px;
+}
+
+.overview-section-heading {
+  margin: 10px 2px 7px;
+}
+
+.overview-section-heading h4.ant-typography {
+  font-size: 16px;
+}
+
+.overview-section-heading .ant-typography-secondary {
+  font-size: 11px;
+}
+
+.overview-line-card {
+  border-radius: 11px;
+}
+
+.overview-line-card .ant-card-body {
+  padding: 11px 13px 10px;
+}
+
+.overview-line-accent {
+  width: 3px;
+}
+
+.overview-line-top {
+  gap: 8px;
+}
+
+.overview-line-label {
+  font-size: 9px;
+}
+
+.overview-line-top h4.ant-typography {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.overview-line-status {
+  font-size: 11px;
+}
+
+.overview-line-status .ant-badge-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.overview-production-value {
+  margin-top: 6px;
+  font-size: 23px;
+}
+
+.overview-production-value span {
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+.overview-line-meta {
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 10px;
+}
+
+.overview-line-meta strong {
+  margin-left: 3px;
+  font-size: 10px;
+}
+
+.overview-line-footer {
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  font-size: 10px;
+}
+
+.overview-energy-row,
+.overview-chart-row {
+  margin-top: 10px;
+}
+
+.overview-energy-card {
+  border-radius: 11px;
+}
+
+.overview-energy-card .ant-card-body {
+  gap: 11px;
+  padding: 10px 14px;
+}
+
+.overview-energy-icon {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+  border-radius: 9px;
+  font-size: 16px;
+}
+
+.overview-energy-card .ant-typography-secondary {
+  font-size: 11px;
+}
+
+.overview-energy-card .ant-statistic-content {
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.overview-energy-card .ant-statistic-content-suffix {
+  font-size: 11px;
+}
+
+.overview-chart-card {
+  border-radius: 11px;
+}
+
+.overview-chart-card .ant-card-head {
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.overview-chart-card .ant-card-head-title {
+  padding: 9px 0;
+  font-size: 13px;
+}
+
+.overview-chart-card .ant-card-extra {
+  padding: 9px 0;
+  font-size: 11px;
+}
+
+.overview-chart-card .ant-card-body {
+  padding: 10px 12px 12px;
+}
+
+.overview-empty {
+  height: 260px;
+}
+
+.overview-snapshot-grid {
+  min-height: 260px;
+  gap: 8px;
+}
+
+.overview-snapshot {
+  min-height: 88px;
+  padding: 11px 13px;
+  border-radius: 9px;
+}
+
+.overview-snapshot span {
+  font-size: 10px;
+}
+
+.overview-snapshot strong {
+  margin: 2px 0 0;
+  font-size: 19px;
+}
+
+.overview-snapshot small {
+  font-size: 10px;
+}
+
+@media (max-width: 767px) {
+  .overview-hero {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .overview-context-item {
+    padding: 6px 8px;
+  }
+
+  .overview-line-card .ant-card-body {
+    padding: 10px 12px 9px;
+  }
+
+  .overview-production-value {
+    font-size: 21px;
+  }
+
+  .overview-energy-card .ant-card-body {
+    padding: 9px 12px;
+  }
+
+  .overview-chart-card .ant-card-body {
+    padding: 8px 8px 10px;
+  }
+
+  .overview-snapshot {
+    min-height: 82px;
+    padding: 10px;
+  }
+
+  .overview-snapshot strong {
+    font-size: 17px;
+  }
+}
+

@@ -100,3 +100,48 @@ export const getDashboardStats = async (line, shift, fromTime, toTime) => {
   });
   return res.data;
 };
+
+export const getOverviewLiveSummary = async (line) => {
+  const res = await api.get("/api/production/live-summary", {
+    params: { line },
+  });
+  return res.data;
+};
+
+export const getOverviewMonthlySummary = async (line, month) => {
+  const res = await api.get("/api/production/monthly-summary", {
+    params: { line, month },
+  });
+  return res.data;
+};
+
+export const getOverviewEnergyUsage = async ({
+  panel = "ATS1",
+  deviceIds = [1, 3],
+  fromTime,
+  toTime,
+  interval,
+}) => {
+  const res = await api.get("/api/getHistoricalEnergyUsage", {
+    params: {
+      panel,
+      device_ids: deviceIds.join(","),
+      from_time: fromTime,
+      to_time: toTime,
+      interval,
+    },
+  });
+  return res.data;
+};
+
+export const getOverviewDailyLineSummary = async ({ line, date }) => {
+  console.log(line, date);
+  const res = await api.get("/api/production/daily-line-summary", {
+    params: {
+      line,
+      date,
+    },
+  });
+
+  return res.data;
+};
