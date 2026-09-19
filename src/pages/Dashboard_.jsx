@@ -342,7 +342,7 @@ export default function Dashboard() {
         {
           name: "Green Tile Production",
           type: "bar",
-          barMaxWidth: 25,
+          barMaxWidth: 52,
           itemStyle: { borderRadius: [7, 7, 0, 0] },
           data: GREEN_LINES.map((line) =>
             Number(monthlyFor(data, line)?.totalProduction || 0),
@@ -385,7 +385,7 @@ export default function Dashboard() {
         {
           name: "Sorted Tile Production",
           type: "bar",
-          barMaxWidth: 25,
+          barMaxWidth: 52,
           itemStyle: { borderRadius: [7, 7, 0, 0] },
           data: SORTED_LINES.map((line) => ({
             value: Number(monthlyFor(data, line)?.totalProduction || 0),
@@ -545,9 +545,21 @@ export default function Dashboard() {
           return (
             <Col xs={24} sm={12} lg={8} xl={8} key={line}>
               <Card
-                className={`overview-line-card ${LINE_ROUTES[line] ? "overview-clickable-card" : ""}`}
+                className={`overview-line-card ${LINE_ROUTES[line] ? "overview-line-card-clickable" : ""}`}
                 onClick={() => {
-                  if (LINE_ROUTES[line]) navigate(LINE_ROUTES[line]);
+                  const route = LINE_ROUTES[line];
+                  if (route) navigate(route);
+                }}
+                role={LINE_ROUTES[line] ? "link" : undefined}
+                tabIndex={LINE_ROUTES[line] ? 0 : undefined}
+                onKeyDown={(event) => {
+                  if (
+                    LINE_ROUTES[line] &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                    navigate(LINE_ROUTES[line]);
+                  }
                 }}
               >
                 <div
@@ -597,43 +609,49 @@ export default function Dashboard() {
         })}
       </Row>
 
-      <Row gutter={[10, 10]} className="overview-top-insights-row">
-        <Col xs={24} md={24} xl={8}>
-          <Card
-            className="overview-energy-summary overview-clickable-card"
-            onClick={() => navigate("/energyoverview")}
-          >
-            <div className="overview-energy-summary-head">
-              <div className="overview-energy-icon">
-                <ThunderboltOutlined />
-              </div>
-              <div>
-                <Text strong>Energy Consumption</Text>
-                <Text type="secondary">Factory electricity overview</Text>
-              </div>
+      <Row gutter={[10, 10]} className="overview-energy-row">
+        <Col xs={24} md={12}>
+          <Card className="overview-energy-card">
+            <div className="overview-energy-icon">
+              <ThunderboltOutlined />
             </div>
-
-            <div className="overview-energy-metrics">
-              <div className="overview-energy-metric">
-                <span>Today</span>
-                <strong>{number(data?.energy?.todayKwh, 1)} kWh</strong>
-              </div>
-              <div className="overview-energy-divider" />
-              <div className="overview-energy-metric">
-                <span>{dayjs().format("MMMM")}</span>
-                <strong>{number(data?.energy?.monthKwh, 1)} kWh</strong>
-              </div>
+            <div>
+              <Text type="secondary">Energy Consumption Today</Text>
+              <Statistic
+                value={Number(data?.energy?.todayKwh || 0)}
+                precision={1}
+                suffix="kWh"
+              />
             </div>
           </Card>
         </Col>
+        <Col xs={24} md={12}>
+          <Card className="overview-energy-card">
+            <div className="overview-energy-icon">
+              <ThunderboltOutlined />
+            </div>
+            <div>
+              <Text type="secondary">
+                Energy Consumption — {dayjs().format("MMMM")}
+              </Text>
+              <Statistic
+                value={Number(data?.energy?.monthKwh || 0)}
+                precision={1}
+                suffix="kWh"
+              />
+            </div>
+          </Card>
+        </Col>
+      </Row>
 
+      <Row gutter={[10, 10]} className="overview-chart-row">
         <Col xs={24} xl={12}>
           <Card
             className="overview-chart-card"
             title="Monthly Green Tile Production"
             extra={<Text strong>{number(greenTotal, 0)} m²</Text>}
           >
-            <ReactECharts option={greenChart} style={{ height: 195 }} />
+            <ReactECharts option={greenChart} style={{ height: 255 }} />
           </Card>
         </Col>
         <Col xs={24} xl={12}>
@@ -642,42 +660,38 @@ export default function Dashboard() {
             title="Monthly Sorted Tile Production"
             extra={<Text strong>{number(sortedTotal, 0)} m²</Text>}
           >
-            <ReactECharts option={sortedChart} style={{ height: 195 }} />
+            <ReactECharts option={sortedChart} style={{ height: 255 }} />
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[10, 10]} className="overview-bottom-row">
-        <Col xs={24} lg={12}>
+      <Row gutter={[10, 10]} className="overview-chart-row">
+        <Col xs={24} xl={10}>
           <Card
             className="overview-chart-card"
             title="Sorted Production by Tile Size"
             extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
           >
             {sortedSizeTotals.length ? (
-              <ReactECharts option={sizePie} style={{ height: 220 }} />
+              <ReactECharts option={sizePie} style={{ height: 260 }} />
             ) : (
               <div className="overview-empty">No size-wise production data</div>
             )}
           </Card>
         </Col>
 
-        <Col xs={24} lg={12}>
-          <Card
-            className="overview-chart-card"
-            title="Month-to-Date Snapshot"
-            extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
-          >
+        <Col xs={24} xl={14}>
+          <Card className="overview-chart-card" title="Month-to-Date Snapshot">
             <div className="overview-snapshot-grid">
               <div className="overview-snapshot">
-                <span>Green Production</span>
+                <span>Green Tile Production</span>
                 <strong>{number(greenTotal, 0)} m²</strong>
-                <small>All glaze lines</small>
+                <small>Glaze Lines 1–3</small>
               </div>
               <div className="overview-snapshot">
-                <span>Sorted Production</span>
+                <span>Sorted Tile Production</span>
                 <strong>{number(sortedTotal, 0)} m²</strong>
-                <small>All Keda lines</small>
+                <small>Keda Lines 1–3</small>
               </div>
               <div className="overview-snapshot">
                 <span>Lines Running</span>
@@ -697,9 +711,9 @@ export default function Dashboard() {
                 <small>Current status</small>
               </div>
               <div className="overview-snapshot">
-                <span>Tile Sizes</span>
+                <span>Tile Sizes Produced</span>
                 <strong>{sortedSizeTotals.length}</strong>
-                <small>Sorted this month</small>
+                <small>Sorted production this month</small>
               </div>
             </div>
           </Card>

@@ -16,15 +16,21 @@ import {
 } from "antd";
 import {
   AppstoreAddOutlined,
+  DeleteOutlined,
+  EditOutlined,
   PlusOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
 
 import {
+  deleteDesignCode,
+  deleteMachine,
   getDesignCodes,
   getMachines,
   saveDesignCode,
   saveMachine,
+  updateDesignCode,
+  updateMachine,
 } from "../api/settingsApi";
 import {
   PRODUCTION_LINE_OPTIONS,
@@ -69,6 +75,8 @@ export default function ProductionMasterData() {
 
   const [machineModalOpen, setMachineModalOpen] = useState(false);
   const [designModalOpen, setDesignModalOpen] = useState(false);
+  const [editingMachine, setEditingMachine] = useState(null);
+  const [editingDesign, setEditingDesign] = useState(null);
 
   const loadMachines = useCallback(async () => {
     if (!machineLine) return;
@@ -78,7 +86,9 @@ export default function ProductionMasterData() {
       const result = await getMachines({ line: machineLine });
       setMachines(Array.isArray(result?.machines) ? result.machines : []);
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Unable to load machines.";
+      const text =
+        err?.response?.data?.error ||
+        (err instanceof Error ? err.message : "Unable to load machines.");
       setError(text);
       message.error(text);
     } finally {
@@ -97,7 +107,8 @@ export default function ProductionMasterData() {
       );
     } catch (err) {
       const text =
-        err instanceof Error ? err.message : "Unable to load design codes.";
+        err?.response?.data?.error ||
+        (err instanceof Error ? err.message : "Unable to load design codes.");
       setError(text);
       message.error(text);
     } finally {
@@ -114,6 +125,7 @@ export default function ProductionMasterData() {
   }, [loadDesignCodes]);
 
   const openMachineModal = () => {
+    setEditingMachine(null);
     machineForm.setFieldsValue({
       ...DEFAULT_MACHINE,
       line: machineLine || DEFAULT_MACHINE.line,
@@ -121,10 +133,33 @@ export default function ProductionMasterData() {
     setMachineModalOpen(true);
   };
 
+  const openEditMachine = (row) => {
+    setEditingMachine(row);
+    machineForm.setFieldsValue({
+      line: row.line || machineLine,
+      machineCode: row.machineCode || "",
+      machineName: row.machineName || "",
+      active: row.active !== false,
+    });
+    setMachineModalOpen(true);
+  };
+
   const openDesignModal = () => {
+    setEditingDesign(null);
     designForm.setFieldsValue({
       ...DEFAULT_DESIGN,
       tileSize: designTileSize || DEFAULT_DESIGN.tileSize,
+    });
+    setDesignModalOpen(true);
+  };
+
+  const openEditDesign = (row) => {
+    setEditingDesign(row);
+    designForm.setFieldsValue({
+      tileSize: row.tileSize || designTileSize,
+      designCode: row.designCode || "",
+      description: row.description || "",
+      active: row.active !== false,
     });
     setDesignModalOpen(true);
   };
@@ -134,31 +169,71 @@ export default function ProductionMasterData() {
       const values = await machineForm.validateFields();
       setSaving(true);
 
-      const result = await saveMachine({
+      const payload = {
         line: values.line,
         machineCode: String(values.machineCode || "").trim(),
         machineName: String(values.machineName || "").trim(),
         active: true,
-      });
+      };
+
+      const result = editingMachine
+        ? await updateMachine({
+            ...payload,
+            oldLine: editingMachine.line,
+            oldMachineName: editingMachine.machineName,
+          })
+        : await saveMachine(payload);
 
       if (result?.success === false) {
         throw new Error(result.error || "Unable to save machine.");
       }
 
-      message.success("Machine saved");
+      message.success(editingMachine ? "Machine updated" : "Machine saved");
       setMachineModalOpen(false);
+      setEditingMachine(null);
       setMachineLine(values.line);
       machineForm.resetFields();
 
-      if (values.line === machineLine) {
-        await loadMachines();
-      }
+      if (values.line === machineLine) await loadMachines();
     } catch (err) {
       if (err?.errorFields) return;
-      message.error(err instanceof Error ? err.message : "Unable to save machine.");
+      message.error(
+        err?.response?.data?.error ||
+          (err instanceof Error ? err.message : "Unable to save machine."),
+      );
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteMachine = (row) => {
+    Modal.confirm({
+      title: "Delete machine?",
+      content: `${row.machineCode ? `${row.machineCode} — ` : ""}${row.machineName}`,
+      okText: "Delete",
+      okType: "danger",
+      cancelText: "Cancel",
+      async onOk() {
+        try {
+          const result = await deleteMachine({
+            line: row.line,
+            machineName: row.machineName,
+          });
+          if (result?.success === false) {
+            throw new Error(result.error || "Unable to delete machine.");
+          }
+          message.success("Machine deleted");
+          await loadMachines();
+        } catch (err) {
+          message.error(
+            err?.response?.data?.error ||
+              err?.message ||
+              "Unable to delete machine.",
+          );
+          throw err;
+        }
+      },
+    });
   };
 
   const handleSaveDesign = async () => {
@@ -166,33 +241,71 @@ export default function ProductionMasterData() {
       const values = await designForm.validateFields();
       setSaving(true);
 
-      const result = await saveDesignCode({
+      const payload = {
         tileSize: values.tileSize,
         designCode: String(values.designCode || "").trim(),
         description: String(values.description || "").trim(),
         active: true,
-      });
+      };
+
+      const result = editingDesign
+        ? await updateDesignCode({
+            ...payload,
+            oldTileSize: editingDesign.tileSize,
+            oldDesignCode: editingDesign.designCode,
+          })
+        : await saveDesignCode(payload);
 
       if (result?.success === false) {
         throw new Error(result.error || "Unable to save design code.");
       }
 
-      message.success("Design code saved");
+      message.success(editingDesign ? "Design code updated" : "Design code saved");
       setDesignModalOpen(false);
+      setEditingDesign(null);
       setDesignTileSize(values.tileSize);
       designForm.resetFields();
 
-      if (values.tileSize === designTileSize) {
-        await loadDesignCodes();
-      }
+      if (values.tileSize === designTileSize) await loadDesignCodes();
     } catch (err) {
       if (err?.errorFields) return;
       message.error(
-        err instanceof Error ? err.message : "Unable to save design code.",
+        err?.response?.data?.error ||
+          (err instanceof Error ? err.message : "Unable to save design code."),
       );
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteDesign = (row) => {
+    Modal.confirm({
+      title: "Delete design code?",
+      content: `${row.designCode} (${row.tileSize})`,
+      okText: "Delete",
+      okType: "danger",
+      cancelText: "Cancel",
+      async onOk() {
+        try {
+          const result = await deleteDesignCode({
+            tileSize: row.tileSize,
+            designCode: row.designCode,
+          });
+          if (result?.success === false) {
+            throw new Error(result.error || "Unable to delete design code.");
+          }
+          message.success("Design code deleted");
+          await loadDesignCodes();
+        } catch (err) {
+          message.error(
+            err?.response?.data?.error ||
+              err?.message ||
+              "Unable to delete design code.",
+          );
+          throw err;
+        }
+      },
+    });
   };
 
   const machineColumns = useMemo(
@@ -201,7 +314,7 @@ export default function ProductionMasterData() {
         title: "Machine Code",
         dataIndex: "machineCode",
         key: "machineCode",
-        width: 180,
+        width: 160,
         render: (value) => value || "—",
       },
       {
@@ -213,21 +326,46 @@ export default function ProductionMasterData() {
         title: "Line",
         dataIndex: "line",
         key: "line",
-        width: 180,
+        width: 170,
       },
       {
         title: "Status",
         dataIndex: "active",
         key: "active",
-        width: 110,
+        width: 100,
         render: (active) => (
           <Tag color={active === false ? "default" : "green"}>
             {active === false ? "Inactive" : "Active"}
           </Tag>
         ),
       },
+      {
+        title: "Actions",
+        key: "actions",
+        width: 110,
+        fixed: "right",
+        render: (_, row) => (
+          <Space size={4}>
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              title="Edit machine"
+              onClick={() => openEditMachine(row)}
+            />
+            <Button
+              type="text"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              title="Delete machine"
+              onClick={() => handleDeleteMachine(row)}
+            />
+          </Space>
+        ),
+      },
     ],
-    [],
+    [loadMachines],
   );
 
   const designColumns = useMemo(
@@ -236,13 +374,13 @@ export default function ProductionMasterData() {
         title: "Design Code",
         dataIndex: "designCode",
         key: "designCode",
-        width: 220,
+        width: 190,
       },
       {
         title: "Tile Size",
         dataIndex: "tileSize",
         key: "tileSize",
-        width: 150,
+        width: 130,
       },
       {
         title: "Description",
@@ -254,15 +392,40 @@ export default function ProductionMasterData() {
         title: "Status",
         dataIndex: "active",
         key: "active",
-        width: 110,
+        width: 100,
         render: (active) => (
           <Tag color={active === false ? "default" : "green"}>
             {active === false ? "Inactive" : "Active"}
           </Tag>
         ),
       },
+      {
+        title: "Actions",
+        key: "actions",
+        width: 110,
+        fixed: "right",
+        render: (_, row) => (
+          <Space size={4}>
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              title="Edit design code"
+              onClick={() => openEditDesign(row)}
+            />
+            <Button
+              type="text"
+              danger
+              size="small"
+              icon={<DeleteOutlined />}
+              title="Delete design code"
+              onClick={() => handleDeleteDesign(row)}
+            />
+          </Space>
+        ),
+      },
     ],
-    [],
+    [loadDesignCodes],
   );
 
   const items = [
@@ -303,7 +466,7 @@ export default function ProductionMasterData() {
             dataSource={machines}
             loading={machineLoading}
             pagination={{ pageSize: 10, showSizeChanger: true }}
-            scroll={{ x: 700 }}
+            scroll={{ x: 780 }}
             locale={{ emptyText: "No machines registered for this line" }}
           />
         </>
@@ -348,7 +511,7 @@ export default function ProductionMasterData() {
             dataSource={designCodes}
             loading={designLoading}
             pagination={{ pageSize: 10, showSizeChanger: true }}
-            scroll={{ x: 720 }}
+            scroll={{ x: 780 }}
             locale={{ emptyText: "No design codes registered for this tile size" }}
           />
         </>
@@ -385,12 +548,15 @@ export default function ProductionMasterData() {
       </Card>
 
       <Modal
-        title="Add Machine"
+        title={editingMachine ? "Edit Machine" : "Add Machine"}
         open={machineModalOpen}
         onOk={handleSaveMachine}
-        onCancel={() => setMachineModalOpen(false)}
+        onCancel={() => {
+          setMachineModalOpen(false);
+          setEditingMachine(null);
+        }}
         confirmLoading={saving}
-        okText="Save Machine"
+        okText={editingMachine ? "Update Machine" : "Save Machine"}
         destroyOnHidden
       >
         <Form form={machineForm} layout="vertical">
@@ -424,12 +590,15 @@ export default function ProductionMasterData() {
       </Modal>
 
       <Modal
-        title="Add Design Code"
+        title={editingDesign ? "Edit Design Code" : "Add Design Code"}
         open={designModalOpen}
         onOk={handleSaveDesign}
-        onCancel={() => setDesignModalOpen(false)}
+        onCancel={() => {
+          setDesignModalOpen(false);
+          setEditingDesign(null);
+        }}
         confirmLoading={saving}
-        okText="Save Design Code"
+        okText={editingDesign ? "Update Design Code" : "Save Design Code"}
         destroyOnHidden
       >
         <Form form={designForm} layout="vertical">
