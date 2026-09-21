@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import Keda1 from "./pages/Keda1";
 import GlazeLine1 from "./pages/GlazeLine1";
+import GlazeLine3 from "./pages/GlazeLine3";
 import HistoricalReport from "./pages/HistoricalReport";
 import EnergyDashboard from "./pages/EnergyDashboard";
 import EnergyOverview from "./pages/EnergyOverview";
@@ -33,6 +34,7 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="keda1" element={<Keda1 />} />
           <Route path="gl1" element={<GlazeLine1 />} />
+          <Route path="gl3" element={<GlazeLine3 />} />
           <Route path="historical_data" element={<HistoricalReport />} />
           <Route
             path="settings"

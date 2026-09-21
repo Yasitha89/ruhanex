@@ -15,8 +15,11 @@ export const TILE_SIZE_OPTIONS = [
   { value: "40x40", label: "40 × 40 cm" },
   { value: "60x30", label: "60 × 30 cm" },
   { value: "60x60", label: "60 × 60 cm" },
+  { value: "90x45", label: "90 × 45 cm" },
   { value: "80x80", label: "80 × 80 cm" },
   { value: "120x60", label: "120 × 60 cm" },
+  { value: "120x80", label: "120 × 80 cm" },
+  { value: "100x100", label: "100 × 100 cm" },
 ];
 
 export const PRODUCTION_LINE_OPTIONS = PRODUCTION_LINES.map((line) => ({

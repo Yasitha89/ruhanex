@@ -37,6 +37,7 @@ const GREEN_LINES = ["Glaze Line 1", "Glaze Line 2", "Glaze Line 3"];
 const LINE_ROUTES = {
   "Keda 1": "/keda1",
   "Glaze Line 1": "/gl1",
+  "Glaze Line 3": "/gl3",
 };
 
 const LINE_ACCENTS = {

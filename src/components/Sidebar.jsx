@@ -20,6 +20,8 @@ export default function Sidebar() {
         return "keda1";
       case "/gl1":
         return "gl1";
+      case "/gl3":
+        return "gl3";
       case "/energyoverview":
         return "energy_overview";
       case "/energydashboard":
@@ -113,6 +115,11 @@ export default function Sidebar() {
               key: "gl1",
               label: "Glaze Line 1",
               onClick: () => navigate("/gl1"),
+            },
+            {
+              key: "gl3",
+              label: "Glaze Line 3",
+              onClick: () => navigate("/gl3"),
             },
             // Future production lines
             // {

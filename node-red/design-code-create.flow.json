@@ -1,0 +1,136 @@
+[
+  {
+    "id": "ruhanex_design_create_tab",
+    "type": "tab",
+    "label": "Design code creation API",
+    "disabled": false,
+    "info": "POST /api/design-codes. Reuses existing mongodb4-client 8120871193b8f276 (RCLH)."
+  },
+  {
+    "id": "design_create_http",
+    "type": "http in",
+    "z": "ruhanex_design_create_tab",
+    "name": "POST /api/design-codes",
+    "url": "/api/design-codes",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 170,
+    "y": 120,
+    "wires": [
+      [
+        "design_create_validate"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_validate",
+    "type": "function",
+    "z": "ruhanex_design_create_tab",
+    "name": "Validate and prepare design",
+    "func": "const body = msg.payload;\nfunction invalid(error) {\n    msg.statusCode = 400;\n    msg.headers = {\"Content-Type\": \"application/json\"};\n    msg.payload = {success: false, error};\n    return [null, msg];\n}\nif (!body || typeof body !== \"object\" || Array.isArray(body)) return invalid(\"A JSON object is required.\");\nif (typeof body.tileSize !== \"string\" || !body.tileSize.trim()) return invalid(\"tileSize is required.\");\nif (typeof body.designCode !== \"string\" || !body.designCode.trim()) return invalid(\"designCode is required.\");\nif (body.designCode.trim().length > 100) return invalid(\"designCode must be at most 100 characters.\");\nif (body.description !== undefined && typeof body.description !== \"string\") return invalid(\"description must be a string.\");\nif (body.active !== undefined && typeof body.active !== \"boolean\") return invalid(\"active must be a boolean.\");\nconst now = new Date();\nconst design = {\n    tileSize: body.tileSize.trim(),\n    designCode: body.designCode.trim(),\n    description: (body.description || \"\").trim(),\n    active: body.active === undefined ? true : body.active,\n    createdAt: now,\n    updatedAt: now\n};\nmsg.createdDesign = design;\nmsg.payload = [\n    {tileSize: design.tileSize, designCode: design.designCode},\n    {$setOnInsert: design},\n    {upsert: true}\n];\nreturn [msg, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 440,
+    "y": 120,
+    "wires": [
+      [
+        "design_create_mongo"
+      ],
+      [
+        "design_create_response"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_mongo",
+    "type": "mongodb4",
+    "z": "ruhanex_design_create_tab",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "design_codes",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Create design if absent",
+    "x": 720,
+    "y": 120,
+    "wires": [
+      [
+        "design_create_result"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_result",
+    "type": "function",
+    "z": "ruhanex_design_create_tab",
+    "name": "Creation response",
+    "func": "const result = msg.payload;\nmsg.headers = {\"Content-Type\": \"application/json\"};\nif (!result || result.acknowledged !== true) {\n    msg.statusCode = 500;\n    msg.payload = {success: false, error: \"Database did not acknowledge the write.\"};\n} else if (result.upsertedCount === 1) {\n    msg.statusCode = 201;\n    msg.payload = {success: true, designCode: {...msg.createdDesign, _id: result.upsertedId}};\n} else {\n    msg.statusCode = 409;\n    msg.payload = {success: false, error: \"This design code already exists for the selected tile size.\"};\n}\ndelete msg.createdDesign;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 970,
+    "y": 120,
+    "wires": [
+      [
+        "design_create_response"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_catch",
+    "type": "catch",
+    "z": "ruhanex_design_create_tab",
+    "name": "Catch creation errors",
+    "scope": [
+      "design_create_validate",
+      "design_create_mongo",
+      "design_create_result"
+    ],
+    "uncaught": false,
+    "x": 440,
+    "y": 240,
+    "wires": [
+      [
+        "design_create_error"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_error",
+    "type": "function",
+    "z": "ruhanex_design_create_tab",
+    "name": "Database error response",
+    "func": "const duplicate = /E11000|duplicate key/i.test(String(msg.error?.message || \"\"));\nmsg.statusCode = duplicate ? 409 : 500;\nmsg.headers = {\"Content-Type\": \"application/json\"};\nmsg.payload = {\n    success: false,\n    error: duplicate ? \"This design code already exists for the selected tile size.\" : \"Unable to save design code. Check the Node-RED server logs.\"\n};\ndelete msg.createdDesign;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 730,
+    "y": 240,
+    "wires": [
+      [
+        "design_create_response"
+      ]
+    ]
+  },
+  {
+    "id": "design_create_response",
+    "type": "http response",
+    "z": "ruhanex_design_create_tab",
+    "name": "JSON response",
+    "statusCode": "",
+    "headers": {},
+    "x": 1210,
+    "y": 180,
+    "wires": []
+  }
+]
