@@ -189,13 +189,13 @@ export default function Sidebar() {
             },
             {
               key: "production_master_data",
-              label: "Production Master Data",
+              label: "Master Data",
               onClick: () => navigate("/production_master_data"),
             },
             {
               key: "settings",
               // icon: <SettingOutlined />,
-              label: "Settings",
+              label: "Line Settings",
               onClick: () => navigate("/settings"),
             },
           ],

@@ -59,13 +59,8 @@ export const DOWNTIME_CODES = [
     plannedCategory: "additional",
   },
   {
-    value: "BREAKDOWN",
-    label: "BREAKDOWN - Equipment Breakdown",
-    type: "unplanned",
-  },
-  {
     value: "ELECTRICAL",
-    label: "ELECTRICAL - Electrical Fault",
+    label: "ELECTRICAL - Electrical / Automation Fault",
     type: "unplanned",
   },
   {
@@ -73,14 +68,31 @@ export const DOWNTIME_CODES = [
     label: "MECHANICAL - Mechanical Fault",
     type: "unplanned",
   },
-  { value: "PROCESS", label: "PROCESS - Process Issue", type: "unplanned" },
-  { value: "QUALITY", label: "QUALITY - Quality Issue", type: "unplanned" },
+  {
+    value: "PROCESS",
+    label: "PROCESS - Process Issue",
+    type: "unplanned",
+  },
+  {
+    value: "QUALITY",
+    label: "QUALITY - Quality Issue",
+    type: "unplanned",
+  },
   {
     value: "MATERIAL",
     label: "MATERIAL - Material / Upstream Issue",
     type: "unplanned",
   },
-  { value: "OTHER", label: "OTHER - Other", type: "unplanned" },
+  {
+    value: "UTILITY",
+    label: "UTILITY - Power / Air / Water / Gas",
+    type: "unplanned",
+  },
+  {
+    value: "OTHER",
+    label: "OTHER - Other",
+    type: "unplanned",
+  },
 ];
 
 export function getDowntimeCodes(type, plannedCategory) {

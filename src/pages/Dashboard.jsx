@@ -320,13 +320,21 @@ export default function Dashboard() {
     () => ({
       animationDuration: 500,
       color: ["#059669", "#0d9488", "#0891b2"],
-      grid: { left: 20, right: 18, top: 42, bottom: 28, containLabel: true },
+      // Reserve separate rows for the legend and the Y-axis title.
+      grid: { left: 20, right: 18, top: 72, bottom: 28, containLabel: true },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
         valueFormatter: (v) => `${number(v, 1)} m²`,
       },
-      legend: { top: 4, itemWidth: 10, itemHeight: 10 },
+      legend: {
+        type: "scroll",
+        top: 4,
+        left: 8,
+        right: 8,
+        itemWidth: 10,
+        itemHeight: 10,
+      },
       xAxis: {
         type: "category",
         data: GREEN_LINES.map((line) => line.replace("Glaze ", "")),
@@ -364,7 +372,15 @@ export default function Dashboard() {
     () => ({
       animationDuration: 500,
       color: ["#2563eb", "#4f46e5", "#7c3aed"],
-      grid: { left: 20, right: 18, top: 42, bottom: 28, containLabel: true },
+      grid: { left: 20, right: 18, top: 72, bottom: 28, containLabel: true },
+      legend: {
+        type: "scroll",
+        top: 4,
+        left: 8,
+        right: 8,
+        itemWidth: 10,
+        itemHeight: 10,
+      },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
@@ -634,7 +650,7 @@ export default function Dashboard() {
             title="Monthly Green Tile Production"
             extra={<Text strong>{number(greenTotal, 0)} m²</Text>}
           >
-            <ReactECharts option={greenChart} style={{ height: 195 }} />
+            <ReactECharts option={greenChart} style={{ height: 225 }} />
           </Card>
         </Col>
         <Col xs={24} xl={12}>
@@ -643,7 +659,7 @@ export default function Dashboard() {
             title="Monthly Sorted Tile Production"
             extra={<Text strong>{number(sortedTotal, 0)} m²</Text>}
           >
-            <ReactECharts option={sortedChart} style={{ height: 195 }} />
+            <ReactECharts option={sortedChart} style={{ height: 225 }} />
           </Card>
         </Col>
       </Row>

@@ -19,6 +19,7 @@ import { SearchOutlined, DownloadOutlined } from "@ant-design/icons";
 import { getHistoricalData } from "../api/reportApi";
 import HistoricalTable from "../components/HistoricalTable";
 import HistoricalChart from "../components/HistoricalChart";
+import { PRODUCTION_LINES } from "../utils/constants";
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
@@ -62,10 +63,16 @@ const chartMetricOptions = [
   },
 ];
 
-const lineMap = {
-  keda1: "KEDA 1",
-  keda2: "KEDA 2",
-};
+const reportLines = PRODUCTION_LINES.map((line) => ({
+  key: line.toLowerCase().replaceAll(" ", ""),
+  label: line,
+  // Preserve the historical API's existing KEDA naming convention.
+  lineName: line.startsWith("Keda ") ? line.toUpperCase() : line,
+}));
+
+const lineMap = Object.fromEntries(
+  reportLines.map(({ key, lineName }) => [key, lineName]),
+);
 
 export default function HistoricalReport() {
   const [activeTab, setActiveTab] = useState("keda1");
@@ -405,18 +412,11 @@ export default function HistoricalReport() {
     </div>
   );
 
-  const items = [
-    {
-      key: "keda1",
-      label: "Keda 1",
-      children: reportContent,
-    },
-    {
-      key: "keda2",
-      label: "Keda 2",
-      children: reportContent,
-    },
-  ];
+  const items = reportLines.map(({ key, label }) => ({
+    key,
+    label,
+    children: reportContent,
+  }));
 
   return (
     <Tabs

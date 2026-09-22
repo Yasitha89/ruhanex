@@ -131,8 +131,17 @@ export default function ProductionMonthlyPanel({
   const stackedOption = useMemo(
     () => ({
       animation: false,
-      grid: { left: 48, right: 20, top: 42, bottom: 42, containLabel: true },
-      legend: { top: 2, data: SHIFT_ORDER },
+      // Keep the legend above the axis title, even in narrow mobile cards.
+      grid: { left: 48, right: 20, top: 72, bottom: 42, containLabel: true },
+      legend: {
+        type: "scroll",
+        top: 2,
+        left: 0,
+        right: 0,
+        itemWidth: 14,
+        itemHeight: 10,
+        data: SHIFT_ORDER,
+      },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
@@ -236,7 +245,7 @@ export default function ProductionMonthlyPanel({
                 option={stackedOption}
                 notMerge
                 lazyUpdate
-                style={{ height: 260, width: "100%" }}
+                style={{ height: 290, width: "100%" }}
               />
             ) : (
               <div className="production-chart-empty">
