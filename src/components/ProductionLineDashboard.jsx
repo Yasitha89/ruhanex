@@ -903,8 +903,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
         <div className="production-live-warning">{liveError}</div>
       ) : null}
 
-      <Row gutter={[12, 12]}>
-        <Col xs={12} lg={6}>
+      <Row gutter={[12, 12]} className="production-kpi-row">
+        <Col xs={12}>
           <KpiCard
             icon={<BarChartOutlined />}
             label="Shift Production"
@@ -932,7 +932,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </div>
           </KpiCard>
         </Col>
-        <Col xs={12} lg={6}>
+        <Col xs={12}>
           <KpiCard
             icon={<RiseOutlined />}
             label="Availability"
@@ -950,7 +950,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </span>
           </KpiCard>
         </Col>
-        <Col xs={12} lg={6}>
+        <Col xs={12}>
           <KpiCard
             icon={<ClockCircleOutlined />}
             label="Downtime"
@@ -976,7 +976,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </span>
           </KpiCard>
         </Col>
-        <Col xs={12} lg={6}>
+        <Col xs={12}>
           <KpiCard
             icon={<DashboardOutlined />}
             label="Performance"
@@ -1002,7 +1002,6 @@ export default function ProductionLineDashboard({ line, title = line }) {
             <Space size={8} wrap>
               <Button
                 type="default"
-                shape="circle"
                 icon={<DownloadOutlined />}
                 disabled={!monthly}
                 aria-label="Download Excel"
@@ -1010,7 +1009,9 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 onClick={() =>
                   exportProductionWorkbook({ line, month, data: monthly })
                 }
-              />
+              >
+                Excel
+              </Button>
               <span className="analysis-filter-label">Month</span>
               <DatePicker
                 picker="month"
@@ -1019,6 +1020,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 onChange={(value) => value && setMonth(value.startOf("month"))}
                 format="MMMM YYYY"
               />
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={loadMonthly}
+                loading={monthlyLoading}
+              >
+                Refresh
+              </Button>
             </Space>
           </div>
         }

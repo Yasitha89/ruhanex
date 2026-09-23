@@ -134,6 +134,20 @@
   box-shadow: 0 2px 10px rgba(13, 43, 82, 0.035);
 }
 
+@media (min-width: 1500px) {
+  .production-kpi-row > .ant-col {
+    flex: 0 0 25%;
+    max-width: 25%;
+  }
+}
+
+@media (max-width: 767px) {
+  .production-kpi-row > .ant-col {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+}
+
 .production-kpi-card .ant-card-body {
   height: 100%;
   padding: 16px;

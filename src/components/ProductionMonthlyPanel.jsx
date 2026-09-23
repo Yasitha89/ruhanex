@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, Col, Empty, Row } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
+import DesignProductionModal from "./DesignProductionModal";
 
 const SHIFT_ORDER = ["06-14", "14-22", "22-06"];
 const SHIFT_COLORS = {
@@ -126,6 +127,8 @@ export default function ProductionMonthlyPanel({
   loading = false,
 }) {
   const days = data?.days || [];
+  const [designSelection, setDesignSelection] = useState(null);
+  const monthKey = dayjs(month).format("YYYY-MM");
   const sizes = useMemo(() => cleanSizes(data?.sizeTotals || []), [data]);
 
   const stackedOption = useMemo(
@@ -270,6 +273,11 @@ export default function ProductionMonthlyPanel({
             {sizes.length ? (
               <ReactECharts
                 option={sizeOption}
+                onEvents={{ click: (params) => {
+                  if (params.componentType === "series" && params.data?.raw?.size) {
+                    setDesignSelection({ size: params.data.raw.size, line, month: monthKey });
+                  }
+                } }}
                 notMerge
                 lazyUpdate
                 style={{ height: 260, width: "100%" }}
@@ -288,6 +296,15 @@ export default function ProductionMonthlyPanel({
           </Card>
         </Col>
       </Row>
+      {designSelection && designSelection.line === line && designSelection.month === monthKey && (
+        <DesignProductionModal
+          tileSize={designSelection.size}
+          line={line}
+          month={month}
+          data={data}
+          onClose={() => setDesignSelection(null)}
+        />
+      )}
     </section>
   );
 }
