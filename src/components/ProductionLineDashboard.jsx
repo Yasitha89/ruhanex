@@ -81,6 +81,7 @@ function getCurrentShiftSelection() {
 }
 
 function mergePoints(previous, incoming) {
+  // Keep the last sample for each timestamp on initial loads and live updates.
   const map = new Map();
   for (const row of previous || []) map.set(row.time, row);
   for (const row of incoming || []) map.set(row.time, row);
@@ -326,7 +327,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         selectionRef.current.shift !== requestShift
       )
         return;
-      setTileSeries(response?.points || []);
+      setTileSeries(mergePoints([], response?.points || []));
       setTileCursor(response?.cursor || null);
     } catch (error) {
       console.error(`${line}: production series failed`, error);
