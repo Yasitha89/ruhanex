@@ -125,8 +125,11 @@ export default function ProductionLineDashboard({ line, title = line }) {
   });
 
   const [month, setMonth] = useState(dayjs().startOf("month"));
-  const [monthly, setMonthly] = useState(null);
+  const [monthlyResult, setMonthlyResult] = useState(null);
   const [monthlyLoading, setMonthlyLoading] = useState(true);
+  const monthlyKey = `${line}:${month.format("YYYY-MM")}`;
+  const monthly = monthlyResult?.key === monthlyKey ? monthlyResult.data : null;
+  const monthlyRequestRef = useRef(0);
 
   const initialShiftSelection = useMemo(() => getCurrentShiftSelection(), []);
   const [selectedDate, setSelectedDate] = useState(initialShiftSelection.date);
@@ -240,20 +243,22 @@ export default function ProductionLineDashboard({ line, title = line }) {
   }, [line, live?.shiftDate, live?.currentShift]);
 
   const loadMonthly = useCallback(async () => {
+    const requestId = ++monthlyRequestRef.current;
     setMonthlyLoading(true);
     try {
       const response = await getProductionMonthlySummary(
         line,
         month.format("YYYY-MM"),
       );
-      setMonthly(response);
+      if (requestId !== monthlyRequestRef.current) return;
+      setMonthlyResult({ key: monthlyKey, data: response });
     } catch (error) {
       console.error(`${line}: monthly summary failed`, error);
-      setMonthly(null);
+      // Retain the displayed month if a background refresh fails.
     } finally {
-      setMonthlyLoading(false);
+      if (requestId === monthlyRequestRef.current) setMonthlyLoading(false);
     }
-  }, [line, month]);
+  }, [line, month, monthlyKey]);
 
   const loadSelectedStoppages = useCallback(async () => {
     if (isSelectedCurrentShift) {
@@ -1050,7 +1055,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
           line={line}
           month={month}
           data={monthly}
-          loading={monthlyLoading}
+          loading={monthlyLoading && !monthly}
         />
       </Card>
 
