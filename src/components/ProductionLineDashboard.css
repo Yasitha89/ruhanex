@@ -489,18 +489,27 @@
 }
 
 /* Chrome / Edge / Safari */
+.production-design-chart-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #9fb8d2 #f4f7fb;
+}
+
+.production-design-chart-scroll::-webkit-scrollbar,
 .production-stoppage-card > .ant-card-body::-webkit-scrollbar,
 .production-shift-details-card > .ant-card-body::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
+.production-design-chart-scroll::-webkit-scrollbar-track,
 .production-stoppage-card > .ant-card-body::-webkit-scrollbar-track,
 .production-shift-details-card > .ant-card-body::-webkit-scrollbar-track {
   background: #f4f7fb;
   border-radius: 8px;
 }
 
+.production-design-chart-scroll::-webkit-scrollbar-thumb,
 .production-stoppage-card > .ant-card-body::-webkit-scrollbar-thumb,
 .production-shift-details-card > .ant-card-body::-webkit-scrollbar-thumb {
   background: #9fb8d2;
@@ -508,6 +517,7 @@
   border: 2px solid #f4f7fb;
 }
 
+.production-design-chart-scroll::-webkit-scrollbar-thumb:hover,
 .production-stoppage-card > .ant-card-body::-webkit-scrollbar-thumb:hover,
 .production-shift-details-card > .ant-card-body::-webkit-scrollbar-thumb:hover {
   background: #7897b8;
@@ -822,4 +832,60 @@
 .production-design-code-button:hover strong,
 .production-design-code-button:hover .anticon {
   color: #1d4ed8;
+}
+.production-shift-code-details {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #dbe7f3;
+}
+
+.production-shift-code-entry {
+  padding: 6px 0;
+}
+
+.production-shift-code-entry + .production-shift-code-entry {
+  border-top: 1px solid #e5e7eb;
+}
+
+.production-shift-code-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.production-shift-total {
+  padding: 14px 16px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  background: #f4f8fc;
+}
+
+.production-shift-total-value {
+  margin-top: 2px;
+  color: #1d4ed8;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.production-shift-total-value span {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.production-shift-section-title {
+  margin: 16px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #edf0f4;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.production-shift-details .ant-descriptions-item-label {
+  white-space: normal;
+  color: #64748b;
+  font-size: 12px;
 }

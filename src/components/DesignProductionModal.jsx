@@ -2,11 +2,16 @@ import { useMemo, useState } from "react";
 import { Button, Empty, Modal, Typography, message } from "antd";
 import { DownloadOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
+import { format as echartsFormat } from "echarts";
 import { saveAs } from "file-saver";
 import dayjs from "dayjs";
 import { getDesignProduction } from "../utils/designProduction";
+import { formatColomboApiTime } from "../utils/energyTime";
 
 const format = (value) => value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+const formatProducedAt = (value) => value && dayjs(value).isValid()
+  ? formatColomboApiTime(value, "YYYY-MM-DD HH:mm")
+  : "Unavailable";
 
 export default function DesignProductionModal({ tileSize, line, month, data, onClose }) {
   const [exporting, setExporting] = useState(false);
@@ -15,7 +20,19 @@ export default function DesignProductionModal({ tileSize, line, month, data, onC
   const option = {
     animation: false,
     grid: { left: 20, right: 20, top: 55, bottom: 55, containLabel: true },
-    tooltip: { trigger: "axis", confine: true, valueFormatter: (value) => `${format(value)} m²` },
+    tooltip: {
+      trigger: "axis", confine: true, renderMode: "html",
+      formatter: (params) => {
+        const row = rows[params[0]?.dataIndex];
+        if (!row) return "";
+        return [
+          `<strong>${echartsFormat.encodeHTML(row.designCode)}</strong>`,
+          `Total production: <strong>${format(row.total)} m²</strong>`,
+          `Production started: <strong>${formatProducedAt(row.firstProducedAt)}</strong>`,
+          `Last produced: <strong>${formatProducedAt(row.lastProducedAt)}</strong>`,
+        ].join("<br/>");
+      },
+    },
     xAxis: {
       type: "category", data: rows.map((row) => row.designCode),
       name: "Design Code", nameLocation: "middle", nameGap: 40,
@@ -23,7 +40,7 @@ export default function DesignProductionModal({ tileSize, line, month, data, onC
     },
     yAxis: { type: "value", name: "Production (m²)", nameGap: 22, nameTextStyle: { align: "left" } },
     series: [{
-      name: "Total Production", type: "bar", barMaxWidth: 28,
+      name: "Total Production", type: "bar", barMaxWidth: 20,
       itemStyle: { color: "#22c55e", borderRadius: [5, 5, 0, 0] },
       data: rows.map((row) => row.total),
       label: { show: true, position: "top", formatter: ({ value }) => format(value), fontSize: 12 },
@@ -62,7 +79,7 @@ export default function DesignProductionModal({ tileSize, line, month, data, onC
       ]}>
       <Typography.Paragraph>{line} · {dayjs(month).format("MMMM YYYY")}</Typography.Paragraph>
       {rows.length ? <>
-        <div style={{ overflowX: "auto" }}>
+        <div className="production-design-chart-scroll">
           <ReactECharts option={option} notMerge style={{ height: 340, width: "100%", minWidth: rows.length * 110 + 90 }} />
         </div>
         <Typography.Paragraph strong>Total: {format(total)} m²</Typography.Paragraph>

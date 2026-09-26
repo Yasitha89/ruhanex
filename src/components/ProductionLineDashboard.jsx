@@ -575,6 +575,20 @@ export default function ProductionLineDashboard({ line, title = line }) {
     return {};
   }, [isSelectedCurrentShift, live, selectedShiftStats]);
 
+  const selectedCodeProduction = useMemo(() => {
+    const rows = selectedShiftStats?.codeWiseProduction;
+    return Array.isArray(rows)
+      ? rows
+          .filter(Boolean)
+          .slice()
+          .sort(
+            (a, b) =>
+              (Number(a.sequence) || Infinity) -
+              (Number(b.sequence) || Infinity),
+          )
+      : [];
+  }, [selectedShiftStats]);
+
   const searchMachines = useCallback(
     async (searchText = "") => {
       const targetLine = String(selectedDowntime?.line || line || "").trim();
@@ -1136,10 +1150,45 @@ export default function ProductionLineDashboard({ line, title = line }) {
               className="production-dashboard-card production-bottom-card production-shift-details-card"
               title={`Shift Production Details (${selectedShift}, ${selectedDate.format("DD MMM YYYY")})`}
             >
+              <div className="production-shift-total">
+                <Text type="secondary">Total Production</Text>
+                <div className="production-shift-total-value">
+                  {fmt(selectedDetails.production, 2)} <span>m&sup2;</span>
+                </div>
+                <section
+                  className="production-shift-code-details"
+                  aria-label="Code-wise production"
+                >
+                  <Text strong>Code-wise Production</Text>
+                  {selectedCodeProduction.length ? (
+                    selectedCodeProduction.map((row, index) => (
+                      <div
+                        className="production-shift-code-entry"
+                        key={`${row.sequence}-${row.designCode}-${row.tileSize}-${index}`}
+                      >
+                        <div className="production-shift-code-heading">
+                          <Text strong>{row.designCode || "Unknown"}</Text>
+                          <Text strong>{fmt(row.production, 2)} m²</Text>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div>
+                      <Text type="secondary">
+                        No code-wise production available for this shift.
+                      </Text>
+                    </div>
+                  )}
+                </section>
+              </div>
+              <div className="production-shift-section-title">
+                Shift Overview
+              </div>
               <Descriptions
                 className="production-shift-details"
-                layout="horizontal"
-                column={{ xs: 1, sm: 1, md: 2, lg: 2, xl: 2, xxl: 2 }}
+                layout="vertical"
+                column={2}
+                colon={false}
                 size="small"
                 bordered={false}
               >
@@ -1149,9 +1198,17 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 <Descriptions.Item label="Tile Count">
                   {fmt(selectedDetails.tileCount, 0)} tiles
                 </Descriptions.Item>
-                <Descriptions.Item label="Production">
-                  {fmt(selectedDetails.production, 1)} m²
-                </Descriptions.Item>
+              </Descriptions>
+              <div className="production-shift-section-title">
+                Time &amp; Downtime
+              </div>
+              <Descriptions
+                className="production-shift-details"
+                layout="vertical"
+                column={2}
+                size="small"
+                colon={false}
+              >
                 <Descriptions.Item label="Operating Time">
                   {fmt(selectedDetails.actualOperatingMinutes, 0)} min
                 </Descriptions.Item>
@@ -1176,6 +1233,15 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 <Descriptions.Item label="Total Stops">
                   {Number(selectedDetails.completedStops || 0)}
                 </Descriptions.Item>
+              </Descriptions>
+              <div className="production-shift-section-title">Efficiency</div>
+              <Descriptions
+                className="production-shift-details"
+                layout="vertical"
+                column={2}
+                size="small"
+                colon={false}
+              >
                 <Descriptions.Item label="Availability">
                   {fmt(selectedDetails.availability, 1)} %
                 </Descriptions.Item>
