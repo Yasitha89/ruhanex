@@ -9,7 +9,6 @@ import {
   Skeleton,
   Space,
   Statistic,
-  Tag,
   Typography,
 } from "antd";
 import {
@@ -117,7 +116,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const shiftInfo = getCurrentShiftTimeRange();
@@ -132,7 +130,6 @@ export default function Dashboard() {
   const loadLiveData = useCallback(
     async (initial = false) => {
       if (initial) setLoading(true);
-      else setRefreshing(true);
 
       const lines = [...SORTED_LINES, ...GREEN_LINES];
 
@@ -203,7 +200,6 @@ export default function Dashboard() {
       }
 
       setLoading(false);
-      setRefreshing(false);
     },
     [shiftDate],
   );
@@ -527,7 +523,6 @@ export default function Dashboard() {
               <strong>{currentShift}</strong>
             </div>
           </div>
-          {refreshing ? <Tag color="processing">Refreshing</Tag> : null}
         </div>
       </div>
 
