@@ -48,7 +48,7 @@ const ENERGY_SOURCES = {
   ceb: {
     key: "ceb",
     label: "",
-    deviceIds: [1, 3],
+    deviceIds: [1, 3, 5], // Includes ATS KEDA2.
     description: "Power and energy supplied by CEB",
   },
   generator: {

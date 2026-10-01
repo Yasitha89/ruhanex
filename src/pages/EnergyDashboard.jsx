@@ -31,6 +31,12 @@ const ENERGY_METERS = [
     panel: "ATS1",
     deviceId: 4,
   },
+  {
+    key: "keda2-ats-panel",
+    title: "KEDA 2 ATS Panel",
+    panel: "ATS1",
+    deviceId: 5,
+  },
 ];
 
 function createInitialMeterState() {

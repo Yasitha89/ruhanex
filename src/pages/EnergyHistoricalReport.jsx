@@ -63,6 +63,10 @@ const energyDeviceOptions = [
     label: "MSB GEN",
     value: 4,
   },
+  {
+    label: "ATS KEDA 2",
+    value: 5,
+  },
 ];
 
 const electricityMetricOptions = [
