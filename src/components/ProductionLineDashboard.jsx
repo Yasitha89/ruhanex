@@ -1105,6 +1105,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 </span>
               </div>
               <ShiftDowntimeBarChart
+                key={`stops-${line}-${selectedDateString}-${selectedShift}`}
                 data={selectedStops}
                 onBarClick={openDowntimeModal}
               />
@@ -1120,6 +1121,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 </span>
               </div>
               <ShiftTileCountChart
+                key={`tiles-${line}-${selectedDateString}-${selectedShift}`}
                 data={tileSeries}
                 loading={analysisLoading}
               />

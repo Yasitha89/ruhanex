@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Empty } from "antd";
-import ReactECharts from "echarts-for-react";
+import ZoomableShiftChart from "./ZoomableShiftChart";
 import dayjs from "dayjs";
 
 function formatMinutes(value) {
@@ -100,15 +100,15 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
   }
 
   return (
-    <ReactECharts
+    <ZoomableShiftChart
       option={option}
-      notMerge
       lazyUpdate
-      style={{ width: "100%", height: 245 }}
+      style={{ width: "100%", height: 277 }}
       onEvents={{
         click: (params) => {
           if (
             typeof onBarClick === "function" &&
+            params.componentType === "series" &&
             Number.isInteger(params?.dataIndex)
           ) {
             onBarClick(rows[params.dataIndex]);
