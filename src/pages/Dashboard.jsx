@@ -13,6 +13,7 @@ import {
 } from "antd";
 import {
   CalendarOutlined,
+  BarChartOutlined,
   DashboardOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
@@ -509,6 +510,13 @@ export default function Dashboard() {
         </div>
 
         <div className="overview-context">
+          <div className="overview-context-item overview-production-snapshot">
+            <BarChartOutlined />
+            <div>
+              <span>Montly Production</span>
+              <strong>{number(sortedTotal, 0)} m&sup2;</strong>
+            </div>
+          </div>
           <div className="overview-context-item">
             <CalendarOutlined />
             <div>
@@ -526,7 +534,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {error ? (
+      {/* {error ? (
         <Alert
           type="warning"
           showIcon
@@ -534,7 +542,7 @@ export default function Dashboard() {
           description={error}
           className="overview-alert"
         />
-      ) : null}
+      ) : null} */}
 
       <div className="overview-section-heading">
         <div>

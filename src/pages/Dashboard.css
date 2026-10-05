@@ -680,6 +680,7 @@
 }
 
 .overview-energy-summary-head {
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -885,7 +886,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 16px;
 }
 

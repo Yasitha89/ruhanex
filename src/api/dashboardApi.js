@@ -117,7 +117,7 @@ export const getOverviewMonthlySummary = async (line, month) => {
 
 export const getOverviewEnergyUsage = async ({
   panel = "ATS1",
-  deviceIds = [1, 3],
+  deviceIds = [1, 3, 5],
   fromTime,
   toTime,
   interval,
