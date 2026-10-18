@@ -33,8 +33,10 @@ const { Title, Text } = Typography;
 
 const SORTED_LINES = ["Keda 1", "Keda 2", "Keda 3"];
 const GREEN_LINES = ["Glaze Line 1", "Glaze Line 2", "Glaze Line 3"];
+const OVERVIEW_LINES = [...SORTED_LINES, ...GREEN_LINES, "Kiln 2"];
 
 const LINE_ROUTES = {
+  "Kiln 2": "/kiln2",
   "Keda 1": "/keda1",
   "Keda 2": "/keda2",
   "Keda 3": "/keda3",
@@ -133,7 +135,7 @@ export default function Dashboard() {
     async (initial = false) => {
       if (initial) setLoading(true);
 
-      const lines = [...SORTED_LINES, ...GREEN_LINES];
+      const lines = OVERVIEW_LINES;
 
       console.log("[Overview] Loading daily line summaries", {
         date: shiftDate,
@@ -183,7 +185,7 @@ export default function Dashboard() {
         };
 
         results.forEach((result, index) => {
-          const line = [...SORTED_LINES, ...GREEN_LINES][index];
+          const line = lines[index];
           if (result.status === "fulfilled") {
             next.live[line] = result.value;
           }
@@ -556,7 +558,7 @@ export default function Dashboard() {
 
       <Row gutter={[10, 10]}>
         {PRODUCTION_LINES.filter((line) =>
-          [...SORTED_LINES, ...GREEN_LINES].includes(line),
+          OVERVIEW_LINES.includes(line),
         ).map((line) => {
           const live = liveFor(data, line);
           const status = normalizeStatus(
@@ -705,7 +707,7 @@ export default function Dashboard() {
                 <span>Lines Running</span>
                 <strong>
                   {
-                    [...SORTED_LINES, ...GREEN_LINES].filter(
+                    OVERVIEW_LINES.filter(
                       (line) =>
                         normalizeStatus(
                           liveFor(data, line)?.shiftStatus ||
@@ -714,7 +716,7 @@ export default function Dashboard() {
                         ) === "Running",
                     ).length
                   }
-                  /6
+                  /{OVERVIEW_LINES.length}
                 </strong>
                 <small>Current status</small>
               </div>
