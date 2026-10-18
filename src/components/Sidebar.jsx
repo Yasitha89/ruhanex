@@ -18,6 +18,8 @@ export default function Sidebar() {
     switch (location.pathname) {
       case "/keda1":
         return "keda1";
+      case "/keda2":
+        return "keda2";
       case "/keda3":
         return "keda3";
       case "/gl1":
@@ -114,6 +116,11 @@ export default function Sidebar() {
               onClick: () => navigate("/keda1"),
             },
             {
+              key: "keda2",
+              label: "Keda 2",
+              onClick: () => navigate("/keda2"),
+            },
+            {
               key: "keda3",
               label: "Keda 3",
               onClick: () => navigate("/keda3"),
@@ -128,12 +135,6 @@ export default function Sidebar() {
               label: "Glaze Line 3",
               onClick: () => navigate("/gl3"),
             },
-            // Future production lines
-            // {
-            //   key: "keda2",
-            //   label: "Keda 2",
-            //   onClick: () => navigate("/keda2"),
-            // },
           ],
         },
 
