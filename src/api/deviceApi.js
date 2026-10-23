@@ -1,7 +1,8 @@
 import axios from "axios";
+import { API_BASE_URL } from "./constants";
 
 const api = axios.create({
-  baseURL: "https://ruhanex.chikirisoft.com/api",
+  baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
   timeout: 10000,
 });

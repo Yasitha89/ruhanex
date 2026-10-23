@@ -13,4 +13,13 @@ export default defineConfig({
       },
     },
   },
+  server: {
+    proxy: {
+      "/api": {
+        target: "https://www.ruhanex.com",
+        changeOrigin: true,
+        secure: true,
+      },
+    },
+  },
 });

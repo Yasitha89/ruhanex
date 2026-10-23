@@ -1,10 +1,11 @@
 import axios from "axios";
+import { API_BASE_URL } from "./constants";
 
 // const api = axios.create({
 //   baseURL: "http://34.235.63.22:1880",
 // });
 const api = axios.create({
-  baseURL: "https://ruhanex.chikirisoft.com/api",
+  baseURL: API_BASE_URL,
 });
 
 // export const getHistoricalData = async (line, fromDate, toDate) => {
