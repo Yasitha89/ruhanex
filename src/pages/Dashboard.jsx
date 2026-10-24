@@ -29,6 +29,7 @@ import { PRODUCTION_LINES } from "../utils/constants";
 import { getCurrentShiftTimeRange } from "../utils/shiftUtils";
 import "./Dashboard.css";
 import FloorStockChart from "../components/FloorStockChart";
+import CodeProductionChart from "../components/CodeProductionChart";
 
 const { Title, Text } = Typography;
 
@@ -646,8 +647,8 @@ export default function Dashboard() {
         <Col xs={24} md={24} xl={8}>
           <Card
             className="overview-chart-card"
-            title="Sorted Production by Tile Size"
-            extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
+            title="Monthly Sorted Production by Tile Size"
+            extra={<Text strong>{number(sortedTotal, 0)} m&sup2;</Text>}
           >
             {sortedSizeTotals.length ? (
               <ReactECharts option={sizeBarChart} notMerge style={{ height: 220 }} />
@@ -674,6 +675,27 @@ export default function Dashboard() {
           >
             <ReactECharts option={sortedChart} style={{ height: 225 }} />
           </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[10, 10]} className="overview-code-production-row">
+        <Col xs={24} xl={12}>
+          <CodeProductionChart
+            title="Sorted Production by Design Code"
+            monthly={data?.monthly}
+            lines={SORTED_LINES}
+            colors={["#be185d", "#db2777", "#ec4899"]}
+            monthLabel={dayjs(month).format("MMMM YYYY")}
+          />
+        </Col>
+        <Col xs={24} xl={12}>
+          <CodeProductionChart
+            title="Green Tile Production by Design Code"
+            monthly={data?.monthly}
+            lines={GREEN_LINES}
+            colors={["#0e7490", "#0891b2", "#06b6d4"]}
+            monthLabel={dayjs(month).format("MMMM YYYY")}
+          />
         </Col>
       </Row>
 
