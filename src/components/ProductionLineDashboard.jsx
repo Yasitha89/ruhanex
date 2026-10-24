@@ -44,7 +44,12 @@ import {
   getProductionMachines,
   updateProductionDowntimeReason,
 } from "../api/productionDashboardApi";
-import { getDesignCodes, updateLineDesignCode } from "../api/settingsApi";
+import {
+  getDesignCodes,
+  updateLineTileSize,
+  updateLineDesignCode,
+} from "../api/settingsApi";
+import { TILE_SIZE_OPTIONS } from "../utils/constants";
 import { calculateTileSqm } from "../utils/shiftUtils";
 import {
   DOWNTIME_TYPES,
@@ -109,6 +114,9 @@ function KpiCard({ icon, label, value, suffix, children, tone = "blue" }) {
 }
 
 export default function ProductionLineDashboard({ line, title = line }) {
+  const [sizeModalOpen, setSizeModalOpen] = useState(false);
+  const [selectedTileSize, setSelectedTileSize] = useState("");
+  const [sizeSaving, setSizeSaving] = useState(false);
   const [designModalOpen, setDesignModalOpen] = useState(false);
   const [designOptions, setDesignOptions] = useState([]);
   const [selectedDesignCode, setSelectedDesignCode] = useState("");
@@ -700,6 +708,41 @@ export default function ProductionLineDashboard({ line, title = line }) {
     }
   };
 
+  const openSizeModal = () => {
+    setSelectedTileSize(String(live?.tileSize || "").trim());
+    setSizeModalOpen(true);
+  };
+
+  const saveProductionSize = async () => {
+    if (!TILE_SIZE_OPTIONS.some((option) => option.value === selectedTileSize)) {
+      message.warning("Please select a tile size.");
+      return;
+    }
+
+    setSizeSaving(true);
+    try {
+      const response = await updateLineTileSize({
+        line,
+        tileSize: selectedTileSize,
+      });
+      if (response?.success === false) {
+        throw new Error(response.error || "Unable to update tile size.");
+      }
+
+      setSizeModalOpen(false);
+      message.success(`Tile size changed to ${selectedTileSize}`);
+      await loadLive();
+    } catch (error) {
+      message.error(
+        error?.response?.data?.error ||
+          error?.message ||
+          "Unable to update tile size.",
+      );
+    } finally {
+      setSizeSaving(false);
+    }
+  };
+
   const loadDesignOptions = useCallback(
     async (search = "") => {
       const tileSize = String(live?.tileSize || "").trim();
@@ -935,9 +978,16 @@ export default function ProductionLineDashboard({ line, title = line }) {
             <span>{fmt(live?.shiftCount, 0)} tiles</span>
 
             <div className="production-size-design-row">
-              <span>
-                Size: <strong>{live?.tileSize || "-"}</strong>
-              </span>
+              <button
+                type="button"
+                className="production-design-code-button"
+                onClick={openSizeModal}
+                title="Change production tile size"
+              >
+                <span>Size:</span>
+                <strong>{live?.tileSize || "-"}</strong>
+                <EditOutlined />
+              </button>
 
               <button
                 type="button"
@@ -1269,6 +1319,39 @@ export default function ProductionLineDashboard({ line, title = line }) {
           </Col>
         </Row>
       </Card>
+
+      <Modal
+        title="Change Production Tile Size"
+        open={sizeModalOpen}
+        onCancel={() => { if (!sizeSaving) setSizeModalOpen(false); }}
+        onOk={saveProductionSize}
+        okText="Update Size"
+        confirmLoading={sizeSaving}
+        cancelButtonProps={{ disabled: sizeSaving }}
+        okButtonProps={{ disabled: !selectedTileSize || selectedTileSize === live?.tileSize }}
+        closable={!sizeSaving}
+        maskClosable={!sizeSaving}
+        keyboard={!sizeSaving}
+        destroyOnHidden
+      >
+        <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+          <Descriptions.Item label="Production Line">{title || line}</Descriptions.Item>
+          <Descriptions.Item label="Current Tile Size">{live?.tileSize || "-"}</Descriptions.Item>
+        </Descriptions>
+        <div style={{ marginBottom: 6, fontWeight: 600 }}>Tile Size</div>
+        <Select
+          aria-label="Tile size"
+          value={selectedTileSize || undefined}
+          onChange={setSelectedTileSize}
+          options={TILE_SIZE_OPTIONS}
+          disabled={sizeSaving}
+          placeholder="Select tile size"
+          style={{ width: "100%" }}
+        />
+        <Text type="secondary" style={{ display: "block", marginTop: 8, fontSize: 12 }}>
+          Updates only the tile size for this production line.
+        </Text>
+      </Modal>
 
       <Modal
         title="Change Production Design"

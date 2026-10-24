@@ -763,7 +763,7 @@
 .production-size-design-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   width: 100%;
   min-width: 0;
 }
@@ -771,7 +771,7 @@
 .production-design-code-button {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
   padding: 0;
   border: 0;
@@ -780,7 +780,7 @@
   font: inherit;
   cursor: pointer;
   min-width: 0;
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .production-design-code-button strong {
@@ -794,7 +794,9 @@
 .production-size-design-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  text-align: left;
   width: 100%;
   min-width: 0;
   gap: 12px;
@@ -803,9 +805,9 @@
 .production-design-code-button {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
-  margin-left: auto;
+  margin-left: 0;
   min-width: 0;
   padding: 0;
   border: 0;

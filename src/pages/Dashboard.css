@@ -867,7 +867,7 @@
   display: flex;
 }
 
-.overview-top-insights-row .overview-energy-summary,
+.overview-bottom-row .overview-energy-summary,
 .overview-top-insights-row .overview-chart-card,
 .overview-bottom-row .overview-chart-card {
   width: 100%;
@@ -875,11 +875,11 @@
 }
 
 /* Energy is now a compact card alongside the two monthly graphs */
-.overview-top-insights-row .overview-energy-summary {
+.overview-bottom-row .overview-energy-summary {
   margin-top: 0;
 }
 
-.overview-top-insights-row .overview-energy-summary .ant-card-body {
+.overview-bottom-row .overview-energy-summary .ant-card-body {
   height: 100%;
   min-height: 270px;
   padding: 14px;
@@ -890,17 +890,17 @@
   gap: 16px;
 }
 
-.overview-top-insights-row .overview-energy-metrics {
+.overview-bottom-row .overview-energy-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
-.overview-top-insights-row .overview-energy-divider {
+.overview-bottom-row .overview-energy-divider {
   display: none;
 }
 
-.overview-top-insights-row .overview-energy-metric {
+.overview-bottom-row .overview-energy-metric {
   min-width: 0;
   padding: 10px;
   border: 1px solid #edf1f5;
@@ -932,17 +932,17 @@
 }
 
 @media (max-width: 1199px) {
-  .overview-top-insights-row .overview-energy-summary .ant-card-body {
+  .overview-bottom-row .overview-energy-summary .ant-card-body {
     min-height: auto;
   }
 }
 
 @media (max-width: 767px) {
-  .overview-top-insights-row .overview-energy-summary .ant-card-body {
+  .overview-bottom-row .overview-energy-summary .ant-card-body {
     gap: 10px;
   }
 
-  .overview-top-insights-row .overview-energy-metrics {
+  .overview-bottom-row .overview-energy-metrics {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -965,7 +965,7 @@
 }
 
 /* Energy: Today and This Month stacked vertically */
-.overview-top-insights-row .overview-energy-metrics {
+.overview-bottom-row .overview-energy-metrics {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -973,13 +973,13 @@
   width: 100%;
 }
 
-.overview-top-insights-row .overview-energy-metric {
+.overview-bottom-row .overview-energy-metric {
   width: 100%;
   min-width: 0;
   padding: 8px 10px;
 }
 
-.overview-top-insights-row .overview-energy-metric strong {
+.overview-bottom-row .overview-energy-metric strong {
   font-size: 17px;
 }
 
@@ -989,7 +989,7 @@
 }
 
 /* Keep all three cards compact and equal-height */
-.overview-top-insights-row .overview-energy-summary .ant-card-body {
+.overview-bottom-row .overview-energy-summary .ant-card-body {
   min-height: 245px;
   padding: 11px 12px;
   gap: 9px;
@@ -1032,7 +1032,7 @@
     max-width: 100% !important;
   }
 
-  .overview-top-insights-row .overview-energy-summary .ant-card-body {
+  .overview-bottom-row .overview-energy-summary .ant-card-body {
     min-height: auto;
   }
 }

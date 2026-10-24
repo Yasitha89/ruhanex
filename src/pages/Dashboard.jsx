@@ -28,6 +28,7 @@ import {
 import { PRODUCTION_LINES } from "../utils/constants";
 import { getCurrentShiftTimeRange } from "../utils/shiftUtils";
 import "./Dashboard.css";
+import FloorStockChart from "../components/FloorStockChart";
 
 const { Title, Text } = Typography;
 
@@ -51,6 +52,7 @@ const LINE_ACCENTS = {
   "Glaze Line 1": "#059669",
   "Glaze Line 2": "#0d9488",
   "Glaze Line 3": "#0891b2",
+  "Kiln 2": "#ea580c",
 };
 
 function number(value, digits = 1) {
@@ -438,44 +440,52 @@ export default function Dashboard() {
       .sort((a, b) => b.value - a.value);
   }, [data]);
 
-  const sizePie = useMemo(
+  const sizeBarChart = useMemo(
     () => ({
       animationDuration: 500,
+      color: ["#2563eb", "#4f46e5", "#7c3aed"],
+      grid: { left: 20, right: 18, top: 72, bottom: 28, containLabel: true },
       tooltip: {
-        trigger: "item",
-        formatter: (p) =>
-          `${p.name}<br/><strong>${number(p.value, 1)} m²</strong> (${number(p.percent, 1)}%)`,
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        valueFormatter: (value) => `${number(value, 1)} m²`,
       },
       legend: {
         type: "scroll",
-        orient: "vertical",
-        right: 4,
-        top: "middle",
+        top: 4,
+        left: 8,
+        right: 8,
         itemWidth: 10,
         itemHeight: 10,
+      },
+      xAxis: {
+        type: "category",
+        data: sortedSizeTotals.map((row) => row.name),
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: "#dbe3ee" } },
+      },
+      yAxis: {
+        type: "value",
+        name: "Production (m²)",
+        nameGap: 18,
+        splitLine: { lineStyle: { color: "#edf2f7" } },
       },
       series: [
         {
           name: "Production by Size",
-          type: "pie",
-          radius: ["48%", "72%"],
-          center: ["38%", "52%"],
-          avoidLabelOverlap: true,
-          itemStyle: {
-            borderRadius: 5,
-            borderColor: "#fff",
-            borderWidth: 2,
+          type: "bar",
+          barMaxWidth: 25,
+          itemStyle: { borderRadius: [7, 7, 0, 0] },
+          label: {
+            show: true,
+            position: "top",
+            formatter: (point) => number(point.value, 0),
+            fontSize: 11,
           },
-          label: { show: false },
-          emphasis: {
-            label: {
-              show: true,
-              fontSize: 13,
-              fontWeight: 700,
-              formatter: "{b}\n{d}%",
-            },
-          },
-          data: sortedSizeTotals,
+          data: sortedSizeTotals.map((row, index) => ({
+            value: row.value,
+            itemStyle: { color: ["#2563eb", "#4f46e5", "#7c3aed"][index % 3] },
+          })),
         },
       ],
     }),
@@ -490,6 +500,10 @@ export default function Dashboard() {
     (sum, line) => sum + Number(monthlyFor(data, line)?.totalProduction || 0),
     0,
   );
+  const runningLineCount = OVERVIEW_LINES.filter((line) => {
+    const live = liveFor(data, line);
+    return normalizeStatus(live?.shiftStatus || live?.lineStatus || live?.status) === "Running";
+  }).length;
 
   if (loading) {
     return (
@@ -516,8 +530,15 @@ export default function Dashboard() {
           <div className="overview-context-item overview-production-snapshot">
             <BarChartOutlined />
             <div>
-              <span>Montly Production</span>
+              <span>Monthly Production</span>
               <strong>{number(sortedTotal, 0)} m&sup2;</strong>
+            </div>
+          </div>
+          <div className="overview-context-item">
+            <DashboardOutlined />
+            <div>
+              <span>Lines Running</span>
+              <strong>{runningLineCount}/{OVERVIEW_LINES.length}</strong>
             </div>
           </div>
           <div className="overview-context-item">
@@ -624,6 +645,41 @@ export default function Dashboard() {
       <Row gutter={[10, 10]} className="overview-top-insights-row">
         <Col xs={24} md={24} xl={8}>
           <Card
+            className="overview-chart-card"
+            title="Sorted Production by Tile Size"
+            extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
+          >
+            {sortedSizeTotals.length ? (
+              <ReactECharts option={sizeBarChart} notMerge style={{ height: 220 }} />
+            ) : (
+              <div className="overview-empty">No size-wise production data</div>
+            )}
+          </Card>
+        </Col>
+
+        <Col xs={24} xl={12}>
+          <Card
+            className="overview-chart-card"
+            title="Monthly Green Tile Production"
+            extra={<Text strong>{number(greenTotal, 0)} m²</Text>}
+          >
+            <ReactECharts option={greenChart} style={{ height: 225 }} />
+          </Card>
+        </Col>
+        <Col xs={24} xl={12}>
+          <Card
+            className="overview-chart-card"
+            title="Monthly Sorted Tile Production"
+            extra={<Text strong>{number(sortedTotal, 0)} m²</Text>}
+          >
+            <ReactECharts option={sortedChart} style={{ height: 225 }} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[10, 10]} className="overview-bottom-row">
+        <Col xs={24} xl={8}>
+          <Card
             className="overview-energy-summary overview-clickable-card"
             onClick={() => navigate("/energyoverview")}
           >
@@ -651,42 +707,11 @@ export default function Dashboard() {
           </Card>
         </Col>
 
-        <Col xs={24} xl={12}>
-          <Card
-            className="overview-chart-card"
-            title="Monthly Green Tile Production"
-            extra={<Text strong>{number(greenTotal, 0)} m²</Text>}
-          >
-            <ReactECharts option={greenChart} style={{ height: 225 }} />
-          </Card>
-        </Col>
-        <Col xs={24} xl={12}>
-          <Card
-            className="overview-chart-card"
-            title="Monthly Sorted Tile Production"
-            extra={<Text strong>{number(sortedTotal, 0)} m²</Text>}
-          >
-            <ReactECharts option={sortedChart} style={{ height: 225 }} />
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={[10, 10]} className="overview-bottom-row">
-        <Col xs={24} lg={12}>
-          <Card
-            className="overview-chart-card"
-            title="Sorted Production by Tile Size"
-            extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
-          >
-            {sortedSizeTotals.length ? (
-              <ReactECharts option={sizePie} style={{ height: 220 }} />
-            ) : (
-              <div className="overview-empty">No size-wise production data</div>
-            )}
-          </Card>
+        <Col xs={24} xl={8}>
+          <FloorStockChart />
         </Col>
 
-        <Col xs={24} lg={12}>
+        <Col xs={24} xl={8}>
           <Card
             className="overview-chart-card"
             title="Month-to-Date Snapshot"
@@ -706,16 +731,7 @@ export default function Dashboard() {
               <div className="overview-snapshot">
                 <span>Lines Running</span>
                 <strong>
-                  {
-                    OVERVIEW_LINES.filter(
-                      (line) =>
-                        normalizeStatus(
-                          liveFor(data, line)?.shiftStatus ||
-                            liveFor(data, line)?.lineStatus ||
-                            liveFor(data, line)?.status,
-                        ) === "Running",
-                    ).length
-                  }
+                  {runningLineCount}
                   /{OVERVIEW_LINES.length}
                 </strong>
                 <small>Current status</small>

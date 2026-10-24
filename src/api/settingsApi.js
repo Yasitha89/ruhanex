@@ -88,6 +88,14 @@ export const updateLineDesignCode = async ({ line, tileSize, designCode }) => {
   return response.data;
 };
 
+export const updateLineTileSize = async ({ line, tileSize }) => {
+  const response = await api.post("/api/line-tile-size", {
+    line,
+    tileSize,
+  });
+  return response.data;
+};
+
 export const updateDesignCode = async ({
   oldTileSize,
   oldDesignCode,

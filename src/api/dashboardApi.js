@@ -1,6 +1,11 @@
 import axios from "axios";
 import { API_BASE_URL } from "./constants";
 
+export const getFloorStock = async () => {
+  const response = await api.get("/api/production/floor-stock");
+  return response.data;
+};
+
 // const api = axios.create({
 //   baseURL: "http://34.235.63.22:1880"
 // });
