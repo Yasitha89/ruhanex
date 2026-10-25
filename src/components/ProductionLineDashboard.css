@@ -835,6 +835,12 @@
 .production-design-code-button:hover .anticon {
   color: #1d4ed8;
 }
+.production-size-design-row .production-design-code-right {
+  margin-left: auto;
+  justify-content: flex-end;
+  text-align: right;
+}
+
 .production-shift-code-details {
   margin-top: 12px;
   padding-top: 10px;

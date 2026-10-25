@@ -991,7 +991,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
 
               <button
                 type="button"
-                className="production-design-code-button"
+                className="production-design-code-button production-design-code-right"
                 onClick={openDesignModal}
                 title="Change production design"
               >
