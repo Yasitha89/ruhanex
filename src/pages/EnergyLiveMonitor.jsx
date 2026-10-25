@@ -88,11 +88,21 @@ const RANGE_MS = {
 };
 
 const FALLBACK_METERS = [
-  { key: "ATS1::1", panel: "ATS1", deviceId: "1", label: "ATS Panel" },
+  { key: "ATS1::1", panel: "ATS1", deviceId: "1", label: "ATS CEB" },
   { key: "ATS1::2", panel: "ATS1", deviceId: "2", label: "ATS Generator" },
-  { key: "ATS1::3", panel: "ATS1", deviceId: "3", label: "MSB Panel" },
+  { key: "ATS1::3", panel: "ATS1", deviceId: "3", label: "MSB CEB" },
   { key: "ATS1::4", panel: "ATS1", deviceId: "4", label: "MSB Generator" },
+  { key: "ATS1::5", panel: "ATS1", deviceId: "5", label: "ATS KEDA 2" },
 ];
+
+const DEFAULT_METER_KEYS = ["ATS1::1", "ATS1::3", "ATS1::5"];
+
+function getDefaultMeterKeys(meters) {
+  const keys = DEFAULT_METER_KEYS.filter((key) =>
+    meters.some((meter) => meter.key === key),
+  );
+  return keys.length ? keys : meters.slice(0, 1).map((meter) => meter.key);
+}
 
 const STALE_AFTER_MS = 15000;
 
@@ -229,7 +239,7 @@ export default function EnergyLiveMonitor() {
             finalMeters.some((meter) => meter.key === key),
           );
 
-          return valid.length > 0 ? valid : [finalMeters[0].key];
+          return valid.length > 0 ? valid : getDefaultMeterKeys(finalMeters);
         });
       } catch (err) {
         console.warn(
@@ -240,7 +250,7 @@ export default function EnergyLiveMonitor() {
         if (!active) return;
 
         setAvailableMeters(FALLBACK_METERS);
-        setSelectedMeterKeys([FALLBACK_METERS[0].key]);
+        setSelectedMeterKeys(getDefaultMeterKeys(FALLBACK_METERS));
       } finally {
         if (active) {
           setMetersLoading(false);
