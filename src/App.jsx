@@ -9,6 +9,7 @@ import Settings from "./pages/Settings";
 import Keda1 from "./pages/Keda1";
 import Keda2 from "./pages/Keda2";
 import Kiln2 from "./pages/Kiln2";
+import Kiln1 from "./pages/Kiln1";
 import Keda3 from "./pages/Keda3";
 import GlazeLine1 from "./pages/GlazeLine1";
 import GlazeLine3 from "./pages/GlazeLine3";
@@ -38,6 +39,7 @@ function App() {
           <Route path="keda1" element={<Keda1 />} />
           <Route path="keda2" element={<Keda2 />} />
           <Route path="kiln2" element={<Kiln2 />} />
+          <Route path="kiln1" element={<Kiln1 />} />
           <Route path="keda3" element={<Keda3 />} />
           <Route path="gl1" element={<GlazeLine1 />} />
           <Route path="gl3" element={<GlazeLine3 />} />

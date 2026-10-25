@@ -35,9 +35,10 @@ const { Title, Text } = Typography;
 
 const SORTED_LINES = ["Keda 1", "Keda 2", "Keda 3"];
 const GREEN_LINES = ["Glaze Line 1", "Glaze Line 2", "Glaze Line 3"];
-const OVERVIEW_LINES = [...SORTED_LINES, ...GREEN_LINES, "Kiln 2"];
+const OVERVIEW_LINES = [...SORTED_LINES, ...GREEN_LINES, "Kiln 1", "Kiln 2", "Kiln 3"];
 
 const LINE_ROUTES = {
+  "Kiln 1": "/kiln1",
   "Kiln 2": "/kiln2",
   "Keda 1": "/keda1",
   "Keda 2": "/keda2",
@@ -47,6 +48,7 @@ const LINE_ROUTES = {
 };
 
 const LINE_ACCENTS = {
+  "Kiln 1": "#d97706",
   "Keda 1": "#2563eb",
   "Keda 2": "#4f46e5",
   "Keda 3": "#7c3aed",
@@ -54,6 +56,7 @@ const LINE_ACCENTS = {
   "Glaze Line 2": "#0d9488",
   "Glaze Line 3": "#0891b2",
   "Kiln 2": "#ea580c",
+  "Kiln 3": "#b45309",
 };
 
 function number(value, digits = 1) {

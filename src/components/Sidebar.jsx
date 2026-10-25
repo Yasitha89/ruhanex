@@ -22,6 +22,8 @@ export default function Sidebar() {
         return "keda2";
       case "/kiln2":
         return "kiln2";
+      case "/kiln1":
+        return "kiln1";
       case "/keda3":
         return "keda3";
       case "/gl1":
@@ -136,6 +138,11 @@ export default function Sidebar() {
               key: "gl3",
               label: "Glaze Line 3",
               onClick: () => navigate("/gl3"),
+            },
+            {
+              key: "kiln1",
+              label: "Kiln 1",
+              onClick: () => navigate("/kiln1"),
             },
             {
               key: "kiln2",
