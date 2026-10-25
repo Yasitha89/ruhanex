@@ -6,6 +6,11 @@ export const getFloorStock = async () => {
   return response.data;
 };
 
+export const getCarStock = async () => {
+  const response = await api.get("/api/production/car-stock");
+  return response.data;
+};
+
 // const api = axios.create({
 //   baseURL: "http://34.235.63.22:1880"
 // });

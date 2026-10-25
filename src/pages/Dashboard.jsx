@@ -29,6 +29,7 @@ import { PRODUCTION_LINES } from "../utils/constants";
 import { getCurrentShiftTimeRange } from "../utils/shiftUtils";
 import "./Dashboard.css";
 import FloorStockChart from "../components/FloorStockChart";
+import CarStockChart from "../components/CarStockChart";
 import CodeProductionChart from "../components/CodeProductionChart";
 
 const { Title, Text } = Typography;
@@ -737,37 +738,7 @@ export default function Dashboard() {
         </Col>
 
         <Col xs={24} xl={8}>
-          <Card
-            className="overview-chart-card"
-            title="Month-to-Date Snapshot"
-            extra={<Text type="secondary">{dayjs().format("MMMM YYYY")}</Text>}
-          >
-            <div className="overview-snapshot-grid">
-              <div className="overview-snapshot">
-                <span>Green Production</span>
-                <strong>{number(greenTotal, 0)} m²</strong>
-                <small>All glaze lines</small>
-              </div>
-              <div className="overview-snapshot">
-                <span>Sorted Production</span>
-                <strong>{number(sortedTotal, 0)} m²</strong>
-                <small>All Keda lines</small>
-              </div>
-              <div className="overview-snapshot">
-                <span>Lines Running</span>
-                <strong>
-                  {runningLineCount}
-                  /{OVERVIEW_LINES.length}
-                </strong>
-                <small>Current status</small>
-              </div>
-              <div className="overview-snapshot">
-                <span>Tile Sizes</span>
-                <strong>{sortedSizeTotals.length}</strong>
-                <small>Sorted this month</small>
-              </div>
-            </div>
-          </Card>
+          <CarStockChart />
         </Col>
       </Row>
     </div>
