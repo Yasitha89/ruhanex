@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import useTouchInput from "../hooks/useTouchInput";
 import { Empty } from "antd";
 import ZoomableShiftChart from "./ZoomableShiftChart";
 import dayjs from "dayjs";
@@ -9,6 +10,7 @@ function formatMinutes(value) {
 }
 
 export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
+  const touchDevice = useTouchInput();
   const rows = useMemo(
     () =>
       [...data]
@@ -22,6 +24,8 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
       animation: false,
       grid: { left: 55, right: 18, top: 48, bottom: 48, containLabel: true },
       tooltip: {
+        show: !touchDevice,
+        triggerOn: touchDevice ? "none" : "mousemove",
         trigger: "item",
         confine: true,
         formatter: (params) => {
@@ -85,7 +89,7 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
         },
       ],
     }),
-    [rows],
+    [rows, touchDevice],
   );
 
   if (!rows.length) {
@@ -105,12 +109,13 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
       lazyUpdate
       style={{ width: "100%", height: 277 }}
       onEvents={{
-        click: (params) => {
+        click: (params, chart) => {
           if (
             typeof onBarClick === "function" &&
             params.componentType === "series" &&
             Number.isInteger(params?.dataIndex)
           ) {
+            chart?.dispatchAction({ type: "hideTip" });
             onBarClick(rows[params.dataIndex]);
           }
         },

@@ -4,6 +4,7 @@ import { MenuOutlined } from "@ant-design/icons";
 import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import HeaderBar from "../components/HeaderBar";
+import AskAiDrawer from "../components/AskAiDrawer";
 import "./MainLayout.css";
 
 const { Header, Sider, Content } = Layout;
@@ -69,6 +70,8 @@ export default function MainLayout() {
           </div>
         </Content>
       </Layout>
+
+      <AskAiDrawer />
 
       <Drawer
         title="Navigation"

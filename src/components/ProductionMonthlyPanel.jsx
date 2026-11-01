@@ -3,6 +3,7 @@ import { Card, Col, Empty, Row } from "antd";
 import ReactECharts from "echarts-for-react";
 import dayjs from "dayjs";
 import DesignProductionModal from "./DesignProductionModal";
+import useTouchInput from "../hooks/useTouchInput";
 
 const SHIFT_ORDER = ["06-14", "14-22", "22-06"];
 const SHIFT_COLORS = {
@@ -128,6 +129,7 @@ export default function ProductionMonthlyPanel({
 }) {
   const days = data?.days || [];
   const [designSelection, setDesignSelection] = useState(null);
+  const touchDevice = useTouchInput();
   const monthKey = dayjs(month).format("YYYY-MM");
   const sizes = useMemo(() => cleanSizes(data?.sizeTotals || []), [data]);
 
@@ -195,6 +197,8 @@ export default function ProductionMonthlyPanel({
       animation: false,
       grid: { left: 68, right: 150, top: 18, bottom: 25, containLabel: true },
       tooltip: {
+        show: !touchDevice,
+        triggerOn: touchDevice ? "none" : "mousemove",
         trigger: "item",
         confine: true,
         formatter: (params) => {
@@ -231,7 +235,7 @@ export default function ProductionMonthlyPanel({
         },
       ],
     }),
-    [sizes],
+    [sizes, touchDevice],
   );
 
   return (
@@ -273,8 +277,9 @@ export default function ProductionMonthlyPanel({
             {sizes.length ? (
               <ReactECharts
                 option={sizeOption}
-                onEvents={{ click: (params) => {
+                onEvents={{ click: (params, chart) => {
                   if (params.componentType === "series" && params.data?.raw?.size) {
+                    chart?.dispatchAction({ type: "hideTip" });
                     setDesignSelection({ size: params.data.raw.size, line, month: monthKey });
                   }
                 } }}
