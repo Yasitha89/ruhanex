@@ -114,8 +114,8 @@ export default function AskAiDrawer() {
     "Compare energy consumption over the last three months",
   ] : [
     `Compare ${line || "factory"} production this month with last month`,
-    `What caused the most downtime on ${line || "the production lines"} last week?`,
-    `Show historical production trends for ${line || "all lines"}`,
+    "What is the highest downtime of the Kiln 2 last month?",
+    "Show historical production trends for all lines in the last month",
   ];
 
   return (
