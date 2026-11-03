@@ -5,12 +5,14 @@ import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import HeaderBar from "../components/HeaderBar";
 import AskAiDrawer from "../components/AskAiDrawer";
+import { useAuth } from "../services/authContext";
 import "./MainLayout.css";
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
 
 export default function MainLayout() {
+  const { user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const screens = useBreakpoint();
@@ -71,7 +73,7 @@ export default function MainLayout() {
         </Content>
       </Layout>
 
-      <AskAiDrawer />
+      {!user.mustChangePassword && <AskAiDrawer />}
 
       <Drawer
         title="Navigation"

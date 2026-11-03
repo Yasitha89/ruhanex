@@ -54,8 +54,8 @@ import { calculateTileSqm } from "../utils/shiftUtils";
 import {
   DOWNTIME_TYPES,
   PLANNED_CATEGORIES,
-  getDowntimeCodes,
 } from "../utils/downtimeCodes";
+import useDowntimeCodes from "../hooks/useDowntimeCodes";
 import "./ProductionLineDashboard.css";
 
 const { Text } = Typography;
@@ -166,6 +166,12 @@ export default function ProductionLineDashboard({ line, title = line }) {
     "plannedCategory",
     downtimeForm,
   );
+  const downtimeCodes = useDowntimeCodes({
+    open: downtimeModalOpen,
+    line: selectedDowntime?.line || line,
+    type: selectedDowntimeType,
+    plannedCategory: selectedPlannedCategory,
+  });
 
   const initializedSelection = useRef(true);
   const countRequestBusy = useRef(false);
@@ -680,7 +686,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         id: selectedDowntime._id,
         date: selectedDowntime.date,
         shift: selectedDowntime.shift,
-        line: selectedDowntime.line,
+        line: selectedDowntime.line || line,
         stopStart_ts: selectedDowntime.stopStart_ts,
         reason: values.reason.trim(),
         machine: values.machine?.trim() || "",
@@ -1483,15 +1489,21 @@ export default function ProductionLineDashboard({ line, title = line }) {
               <Form.Item
                 label="Downtime Code"
                 name="downtimeCode"
-                rules={[{ required: true, message: "Select a downtime code" }]}
+                extra={downtimeCodes.error ? <span>{downtimeCodes.error} <Button type="link" size="small" onClick={downtimeCodes.retry}>Retry</Button></span> : undefined}
+                rules={[
+                  { required: true, message: "Select a downtime code" },
+                  { validator: (_, value) => !value || (!downtimeCodes.loading && !downtimeCodes.error && downtimeCodes.options.some((item) => item.value === value))
+                    ? Promise.resolve() : Promise.reject(new Error("Select a code assigned to this line and downtime category.")) },
+                ]}
               >
                 <Select
                   showSearch
                   optionFilterProp="label"
-                  options={getDowntimeCodes(
-                    selectedDowntimeType,
-                    selectedPlannedCategory,
-                  ).map(({ value, label }) => ({ value, label }))}
+                  options={downtimeCodes.options}
+                  loading={downtimeCodes.loading}
+                  disabled={downtimeCodes.loading || Boolean(downtimeCodes.error)}
+                  placeholder="Select a registered downtime code"
+                  notFoundContent={downtimeCodes.loading ? "Loading..." : "No downtime codes assigned for this line and category"}
                 />
               </Form.Item>
               <Form.Item

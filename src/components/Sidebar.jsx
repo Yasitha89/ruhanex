@@ -1,18 +1,22 @@
 import { Menu } from "antd";
 import {
-  SettingOutlined,
   DashboardOutlined,
   AppstoreOutlined,
   ThunderboltOutlined,
   BarChartOutlined,
-  ControlOutlined,
-  LineChartOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../services/authContext";
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const filterMenu = (items) => items.filter((item) => {
+    if (user.role === "JE") return ["dashboard", "production", "keda1", "keda2", "keda3", "kiln1", "kiln2", "gl1", "gl3"].includes(item.key);
+    return user.role === "Admin" || !["administration", "users"].includes(item.key);
+  }).map((item) => ({ ...item, ...(item.children ? { children: filterMenu(item.children) } : {}) }));
 
   const selectedKey = (() => {
     switch (location.pathname) {
@@ -44,8 +48,12 @@ export default function Sidebar() {
         return "settings";
       case "/device_administration":
         return "device_administration";
+      case "/line_administration":
+        return "line_administration";
       case "/production_master_data":
         return "production_master_data";
+      case "/users":
+        return "users";
       case "/dashboard":
       default:
         return "dashboard";
@@ -53,55 +61,12 @@ export default function Sidebar() {
   })();
 
   return (
-    // <Menu
-    //   theme="dark"
-    //   mode="inline"
-    //   defaultSelectedKeys={["dashboard"]}
-    //   items={[
-    //     {
-    //       key: "dashboard",
-    //       icon: <DashboardOutlined />,
-    //       label: "Dashboard",
-    //       onClick: () => navigate("/dashboard"),
-    //     },
-    //     {
-    //       key: "keda1",
-    //       icon: <DashboardOutlined />,
-    //       label: "Keda 1",
-    //       onClick: () => navigate("/keda1"),
-    //     },
-    //     {
-    //       key: "energy_dashboard",
-    //       icon: <DashboardOutlined />,
-    //       label: "Energy",
-    //       onClick: () => navigate("/energydashboard"),
-    //     },
-    //     {
-    //       key: "historical_data",
-    //       icon: <LineChartOutlined />,
-    //       label: "Historical Data",
-    //       onClick: () => navigate("/historical_data"),
-    //     },
-    //     {
-    //       key: "settings",
-    //       icon: <SettingOutlined />,
-    //       label: "Settings",
-    //       onClick: () => navigate("/settings"),
-    //     },
-    //     {
-    //       key: "historical_data_energy",
-    //       icon: <LineChartOutlined />,
-    //       label: "Historical Energy Data",
-    //       onClick: () => navigate("/historical_data_energy"),
-    //     },
-    //   ]}
-    // />
     <Menu
       theme="dark"
       mode="inline"
       selectedKeys={[selectedKey]}
-      defaultOpenKeys={["production", "energy", "reports", "administration"]}
-      items={[
+      defaultOpenKeys={["production", "energy", "reports", "settings_group", "administration"]}
+      items={filterMenu([
         {
           key: "dashboard",
           icon: <DashboardOutlined />,
@@ -195,29 +160,40 @@ export default function Sidebar() {
         },
 
         {
-          key: "administration",
-          icon: <ControlOutlined />,
-          label: "Administration",
+          key: "settings_group",
+          icon: <SettingOutlined />,
+          label: "Settings",
           children: [
             {
-              key: "device_administration",
-              label: "Device Administration",
-              onClick: () => navigate("/device_administration"),
-            },
-            {
-              key: "production_master_data",
-              label: "Master Data",
-              onClick: () => navigate("/production_master_data"),
+              key: "administration",
+              label: "Admin",
+              children: [
+                {
+                  key: "device_administration",
+                  label: "Device Administration",
+                  onClick: () => navigate("/device_administration"),
+                },
+                {
+                  key: "line_administration",
+                  label: "Line Settings",
+                  onClick: () => navigate("/line_administration"),
+                },
+                {
+                  key: "production_master_data",
+                  label: "Master Data",
+                  onClick: () => navigate("/production_master_data"),
+                },
+                { key: "users", label: "Users", onClick: () => navigate("/users") },
+              ],
             },
             {
               key: "settings",
-              // icon: <SettingOutlined />,
               label: "Line Settings",
               onClick: () => navigate("/settings"),
             },
           ],
         },
-      ]}
+      ])}
     />
   );
 }

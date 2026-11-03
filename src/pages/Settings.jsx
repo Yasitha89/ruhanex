@@ -7,7 +7,6 @@ import {
   Card,
   Divider,
   Form,
-  Input,
   InputNumber,
   Select,
   Spin,
@@ -22,6 +21,8 @@ import {
   getLineSettings,
   saveLineSettings,
 } from "../api/settingsApi";
+import { buildLineSettingsPayload } from "../utils/lineSettings";
+import DowntimeCodesAdmin from "../components/DowntimeCodesAdmin";
 import "./Settings.css";
 
 const { Title, Text } = Typography;
@@ -38,9 +39,10 @@ const DEFAULT_SETTINGS = {
   requiredRunTimeMs: 60000,
 };
 
-function LineSettingsForm({ line }) {
+function LineSettingsForm({ line, administration }) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -49,6 +51,7 @@ function LineSettingsForm({ line }) {
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
+    setLoaded(false);
     setError("");
 
     try {
@@ -57,9 +60,13 @@ function LineSettingsForm({ line }) {
         throw new Error(result.error || `Unable to retrieve ${line} settings.`);
       }
 
-      const settings = result?.settings || result?.data || DEFAULT_SETTINGS;
+      const settings = result?.settings || result?.data;
+      if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+        throw new Error("Unable to load current line settings.");
+      }
       form.setFieldsValue({ ...DEFAULT_SETTINGS, ...settings });
       setUpdatedAt(settings.updatedAt || result?.updatedAt || null);
+      setLoaded(true);
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Unable to load settings.";
@@ -133,16 +140,15 @@ function LineSettingsForm({ line }) {
     setError("");
 
     try {
-      const payload = {
-        line,
-        tileSize: values.tileSize,
-        designCode: String(values.designCode || "").trim(),
-        lineSpeed: Number(values.lineSpeed),
-        plannedDowntime: Number(values.plannedDowntime),
-        stopDelayMs: Number(values.stopDelayMs),
-        maxPulseGapMs: Number(values.maxPulseGapMs),
-        requiredRunTimeMs: Number(values.requiredRunTimeMs),
-      };
+      const latest = await getLineSettings(line);
+      if (latest?.success === false) {
+        throw new Error(latest.error || 'Unable to retrieve current line settings.');
+      }
+      const current = latest?.settings || latest?.data;
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        throw new Error('Unable to preserve the current line settings. Reload and try again.');
+      }
+      const payload = buildLineSettingsPayload(line, current, values, administration);
 
       const result = await saveLineSettings(payload);
       if (result?.success === false) {
@@ -173,6 +179,7 @@ function LineSettingsForm({ line }) {
           message={error}
           showIcon
           closable
+          action={<Button size="small" onClick={loadSettings} disabled={loading || saving}>Reload</Button>}
           style={{ marginBottom: 16 }}
           onClose={() => setError("")}
         />
@@ -188,7 +195,9 @@ function LineSettingsForm({ line }) {
         wrapperCol={{ xs: { span: 24 }, sm: { span: 16 }, md: { span: 12 } }}
         initialValues={DEFAULT_SETTINGS}
         onFinish={handleSave}
+        disabled={saving || loading || !loaded}
       >
+        {!administration && <>
         <Form.Item
           label="Tile Size"
           name="tileSize"
@@ -270,6 +279,9 @@ function LineSettingsForm({ line }) {
           />
         </Form.Item>
 
+        </>}
+
+        {administration && <>
         <Divider orientation="left">Downtime Detection</Divider>
 
         <Form.Item
@@ -320,6 +332,8 @@ function LineSettingsForm({ line }) {
           />
         </Form.Item>
 
+        </>}
+
         <Divider style={{ margin: "28px 0 20px" }} />
 
         <Form.Item wrapperCol={{ span: 24 }} style={{ marginBottom: 0 }}>
@@ -334,6 +348,7 @@ function LineSettingsForm({ line }) {
               htmlType="submit"
               icon={<SaveOutlined />}
               loading={saving}
+              disabled={loading || !loaded}
             >
               Save {line}
             </Button>
@@ -344,15 +359,17 @@ function LineSettingsForm({ line }) {
   );
 }
 
-export default function Settings() {
+export default function Settings({ administration = false }) {
   return (
     <div style={{ width: "100%" }}>
       <div style={{ marginBottom: 20 }}>
         <Title level={3} style={{ marginBottom: 4 }}>
-          Settings
+          {administration ? "Line Settings — Administration" : "Line Settings"}
         </Title>
         <Text type="secondary">
-          Configure production-line operating and downtime-detection parameters.
+          {administration
+            ? "Configure downtime detection and manage downtime codes assigned to production lines."
+            : "Configure production size, design, rated speed and planned downtime."}
         </Text>
       </div>
 
@@ -361,11 +378,11 @@ export default function Settings() {
           defaultActiveKey="Keda 1"
           type="card"
           destroyInactiveTabPane={false}
-          items={LINE_NAMES.map((line) => ({
+          items={[...LINE_NAMES.map((line) => ({
             key: line,
             label: line,
-            children: <LineSettingsForm line={line} />,
-          }))}
+            children: <LineSettingsForm key={`${administration ? "admin" : "production"}-${line}`} line={line} administration={administration} />,
+          })), ...(administration ? [{ key: "downtime_codes", label: "Downtime Codes", children: <DowntimeCodesAdmin /> }] : [])]}
         />
       </Card>
     </div>

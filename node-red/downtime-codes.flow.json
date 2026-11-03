@@ -1,0 +1,530 @@
+[
+  {
+    "id": "rx_downtime_codes_tab",
+    "type": "tab",
+    "label": "Downtime Codes API",
+    "disabled": false,
+    "info": "GET/POST/PUT downtime codes in MongoDB downtime_codes. Uses existing RCLH mongodb4 client. Protect write endpoints with administrator authentication. See downtime-codes.README.md. Optional manual seed does not overwrite existing codes."
+  },
+  {
+    "id": "rx_dc_read_http",
+    "z": "rx_downtime_codes_tab",
+    "type": "http in",
+    "name": "GET downtime codes",
+    "method": "get",
+    "url": "/api/downtime-codes",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 140,
+    "y": 140,
+    "wires": [
+      [
+        "rx_dc_read_validate"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_read_validate",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "Validate read",
+    "func": "return (function codeApi(msg, operation, lines) {\n  const fail = (status, error) => { msg.statusCode = status; msg.payload = { success: false, error }; return [null, msg]; };\n  const types = ['planned', 'unplanned'];\n  const categories = ['standard', 'additional'];\n  if (operation === 'read') {\n    const query = msg.req?.query || {};\n    if (Object.keys(query).some((key) => !['line', 'type', 'plannedCategory'].includes(key))) return fail(400, 'Unsupported filter.');\n    const filter = {};\n    if (query.line !== undefined) {\n      if (!lines.includes(query.line)) return fail(400, 'Invalid line.');\n      filter.lines = query.line;\n    }\n    if (query.type !== undefined) {\n      if (!types.includes(query.type)) return fail(400, 'Invalid downtime type.');\n      filter.type = query.type;\n    }\n    if (query.plannedCategory !== undefined) {\n      if (query.type !== 'planned' || !categories.includes(query.plannedCategory)) return fail(400, 'plannedCategory requires planned type and a valid category.');\n      filter.plannedCategory = query.plannedCategory;\n    }\n    msg.payload = [filter, { sort: { value: 1 }, projection: { _id: 0 } }];\n    return [msg, null];\n  }\n  const body = msg.payload;\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'A JSON object is required.');\n  if (typeof body.value !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(body.value)) return fail(400, 'Code must start with a letter and use uppercase letters, numbers or underscores, at most 80 characters.');\n  if (typeof body.label !== 'string' || !body.label.trim() || body.label.trim().length > 200) return fail(400, 'Label is required, at most 200 characters.');\n  if (!types.includes(body.type)) return fail(400, 'Invalid downtime type.');\n  if (body.type === 'planned' && !categories.includes(body.plannedCategory)) return fail(400, 'Select standard or additional planned category.');\n  if (body.type === 'unplanned' && body.plannedCategory != null && body.plannedCategory !== '') return fail(400, 'Unplanned downtime cannot have a planned category.');\n  if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > lines.length || body.lines.some((line) => !lines.includes(line))) return fail(400, 'Assign the code to one or more valid production lines.');\n  const record = {\n    value: body.value, label: body.label.trim(), type: body.type,\n    plannedCategory: body.type === 'planned' ? body.plannedCategory : null,\n    lines: [...new Set(body.lines)], updatedAt: new Date().toISOString(),\n  };\n  msg.codeOperation = operation;\n  msg.codeRecord = record;\n  if (operation === 'create') {\n    record.createdAt = record.updatedAt;\n    msg.payload = [{ _id: record.value, ...record }];\n  } else {\n    if (msg.req?.params?.value !== record.value) return fail(400, 'The code identifier cannot be renamed.');\n    msg.payload = [{ _id: record.value }, { $set: record }, { upsert: false }];\n  }\n  return [msg, null];\n})(msg, \"read\", [\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 140,
+    "wires": [
+      [
+        "rx_dc_read_mongo"
+      ],
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_read_mongo",
+    "z": "rx_downtime_codes_tab",
+    "type": "mongodb4",
+    "name": "read downtime_codes",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "downtime_codes",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 640,
+    "y": 140,
+    "wires": [
+      [
+        "rx_dc_read_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_read_result",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "read response",
+    "func": "return (function readResult(msg) {\n  if (!Array.isArray(msg.payload)) throw new Error('Database did not return an array.');\n  msg.statusCode = 200;\n  msg.payload = { success: true, downtimeCodes: msg.payload.map(({ value, label, type, plannedCategory, lines, createdAt, updatedAt }) => ({ value, label, type, plannedCategory: plannedCategory ?? null, lines: Array.isArray(lines) ? lines : [], createdAt, updatedAt })) };\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 890,
+    "y": 140,
+    "wires": [
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_create_http",
+    "z": "rx_downtime_codes_tab",
+    "type": "http in",
+    "name": "POST downtime codes",
+    "method": "post",
+    "url": "/api/downtime-codes",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 140,
+    "y": 260,
+    "wires": [
+      [
+        "rx_dc_create_validate"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_create_validate",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "Validate create",
+    "func": "return (function codeApi(msg, operation, lines) {\n  const fail = (status, error) => { msg.statusCode = status; msg.payload = { success: false, error }; return [null, msg]; };\n  const types = ['planned', 'unplanned'];\n  const categories = ['standard', 'additional'];\n  if (operation === 'read') {\n    const query = msg.req?.query || {};\n    if (Object.keys(query).some((key) => !['line', 'type', 'plannedCategory'].includes(key))) return fail(400, 'Unsupported filter.');\n    const filter = {};\n    if (query.line !== undefined) {\n      if (!lines.includes(query.line)) return fail(400, 'Invalid line.');\n      filter.lines = query.line;\n    }\n    if (query.type !== undefined) {\n      if (!types.includes(query.type)) return fail(400, 'Invalid downtime type.');\n      filter.type = query.type;\n    }\n    if (query.plannedCategory !== undefined) {\n      if (query.type !== 'planned' || !categories.includes(query.plannedCategory)) return fail(400, 'plannedCategory requires planned type and a valid category.');\n      filter.plannedCategory = query.plannedCategory;\n    }\n    msg.payload = [filter, { sort: { value: 1 }, projection: { _id: 0 } }];\n    return [msg, null];\n  }\n  const body = msg.payload;\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'A JSON object is required.');\n  if (typeof body.value !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(body.value)) return fail(400, 'Code must start with a letter and use uppercase letters, numbers or underscores, at most 80 characters.');\n  if (typeof body.label !== 'string' || !body.label.trim() || body.label.trim().length > 200) return fail(400, 'Label is required, at most 200 characters.');\n  if (!types.includes(body.type)) return fail(400, 'Invalid downtime type.');\n  if (body.type === 'planned' && !categories.includes(body.plannedCategory)) return fail(400, 'Select standard or additional planned category.');\n  if (body.type === 'unplanned' && body.plannedCategory != null && body.plannedCategory !== '') return fail(400, 'Unplanned downtime cannot have a planned category.');\n  if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > lines.length || body.lines.some((line) => !lines.includes(line))) return fail(400, 'Assign the code to one or more valid production lines.');\n  const record = {\n    value: body.value, label: body.label.trim(), type: body.type,\n    plannedCategory: body.type === 'planned' ? body.plannedCategory : null,\n    lines: [...new Set(body.lines)], updatedAt: new Date().toISOString(),\n  };\n  msg.codeOperation = operation;\n  msg.codeRecord = record;\n  if (operation === 'create') {\n    record.createdAt = record.updatedAt;\n    msg.payload = [{ _id: record.value, ...record }];\n  } else {\n    if (msg.req?.params?.value !== record.value) return fail(400, 'The code identifier cannot be renamed.');\n    msg.payload = [{ _id: record.value }, { $set: record }, { upsert: false }];\n  }\n  return [msg, null];\n})(msg, \"create\", [\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 260,
+    "wires": [
+      [
+        "rx_dc_create_mongo"
+      ],
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_create_mongo",
+    "z": "rx_downtime_codes_tab",
+    "type": "mongodb4",
+    "name": "create downtime_codes",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "downtime_codes",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 640,
+    "y": 260,
+    "wires": [
+      [
+        "rx_dc_create_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_create_result",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "create response",
+    "func": "return (function writeResult(msg) {\n  const result = msg.payload;\n  if (result?.acknowledged !== true) throw new Error('Unacknowledged database write.');\n  if (msg.codeOperation === 'update' && result.matchedCount !== 1) {\n    msg.statusCode = 404;\n    msg.payload = { success: false, error: 'Downtime code not found. Refresh the list.' };\n  } else {\n    msg.statusCode = msg.codeOperation === 'create' ? 201 : 200;\n    msg.payload = { success: true, downtimeCode: msg.codeRecord };\n  }\n  delete msg.codeRecord;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 890,
+    "y": 260,
+    "wires": [
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_update_http",
+    "z": "rx_downtime_codes_tab",
+    "type": "http in",
+    "name": "PUT downtime codes",
+    "method": "put",
+    "url": "/api/downtime-codes/:value",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 140,
+    "y": 380,
+    "wires": [
+      [
+        "rx_dc_update_validate"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_update_validate",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "Validate update",
+    "func": "return (function codeApi(msg, operation, lines) {\n  const fail = (status, error) => { msg.statusCode = status; msg.payload = { success: false, error }; return [null, msg]; };\n  const types = ['planned', 'unplanned'];\n  const categories = ['standard', 'additional'];\n  if (operation === 'read') {\n    const query = msg.req?.query || {};\n    if (Object.keys(query).some((key) => !['line', 'type', 'plannedCategory'].includes(key))) return fail(400, 'Unsupported filter.');\n    const filter = {};\n    if (query.line !== undefined) {\n      if (!lines.includes(query.line)) return fail(400, 'Invalid line.');\n      filter.lines = query.line;\n    }\n    if (query.type !== undefined) {\n      if (!types.includes(query.type)) return fail(400, 'Invalid downtime type.');\n      filter.type = query.type;\n    }\n    if (query.plannedCategory !== undefined) {\n      if (query.type !== 'planned' || !categories.includes(query.plannedCategory)) return fail(400, 'plannedCategory requires planned type and a valid category.');\n      filter.plannedCategory = query.plannedCategory;\n    }\n    msg.payload = [filter, { sort: { value: 1 }, projection: { _id: 0 } }];\n    return [msg, null];\n  }\n  const body = msg.payload;\n  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'A JSON object is required.');\n  if (typeof body.value !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(body.value)) return fail(400, 'Code must start with a letter and use uppercase letters, numbers or underscores, at most 80 characters.');\n  if (typeof body.label !== 'string' || !body.label.trim() || body.label.trim().length > 200) return fail(400, 'Label is required, at most 200 characters.');\n  if (!types.includes(body.type)) return fail(400, 'Invalid downtime type.');\n  if (body.type === 'planned' && !categories.includes(body.plannedCategory)) return fail(400, 'Select standard or additional planned category.');\n  if (body.type === 'unplanned' && body.plannedCategory != null && body.plannedCategory !== '') return fail(400, 'Unplanned downtime cannot have a planned category.');\n  if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > lines.length || body.lines.some((line) => !lines.includes(line))) return fail(400, 'Assign the code to one or more valid production lines.');\n  const record = {\n    value: body.value, label: body.label.trim(), type: body.type,\n    plannedCategory: body.type === 'planned' ? body.plannedCategory : null,\n    lines: [...new Set(body.lines)], updatedAt: new Date().toISOString(),\n  };\n  msg.codeOperation = operation;\n  msg.codeRecord = record;\n  if (operation === 'create') {\n    record.createdAt = record.updatedAt;\n    msg.payload = [{ _id: record.value, ...record }];\n  } else {\n    if (msg.req?.params?.value !== record.value) return fail(400, 'The code identifier cannot be renamed.');\n    msg.payload = [{ _id: record.value }, { $set: record }, { upsert: false }];\n  }\n  return [msg, null];\n})(msg, \"update\", [\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 380,
+    "wires": [
+      [
+        "rx_dc_update_mongo"
+      ],
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_update_mongo",
+    "z": "rx_downtime_codes_tab",
+    "type": "mongodb4",
+    "name": "update downtime_codes",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "downtime_codes",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 640,
+    "y": 380,
+    "wires": [
+      [
+        "rx_dc_update_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_update_result",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "update response",
+    "func": "return (function writeResult(msg) {\n  const result = msg.payload;\n  if (result?.acknowledged !== true) throw new Error('Unacknowledged database write.');\n  if (msg.codeOperation === 'update' && result.matchedCount !== 1) {\n    msg.statusCode = 404;\n    msg.payload = { success: false, error: 'Downtime code not found. Refresh the list.' };\n  } else {\n    msg.statusCode = msg.codeOperation === 'create' ? 201 : 200;\n    msg.payload = { success: true, downtimeCode: msg.codeRecord };\n  }\n  delete msg.codeRecord;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 890,
+    "y": 380,
+    "wires": [
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_response",
+    "z": "rx_downtime_codes_tab",
+    "type": "http response",
+    "name": "JSON response",
+    "statusCode": "",
+    "headers": {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store"
+    },
+    "x": 1150,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "rx_dc_catch",
+    "z": "rx_downtime_codes_tab",
+    "type": "catch",
+    "name": "Catalogue API errors",
+    "scope": [
+      "rx_dc_read_validate",
+      "rx_dc_read_mongo",
+      "rx_dc_read_result",
+      "rx_dc_create_validate",
+      "rx_dc_create_mongo",
+      "rx_dc_create_result",
+      "rx_dc_update_validate",
+      "rx_dc_update_mongo",
+      "rx_dc_update_result"
+    ],
+    "uncaught": false,
+    "x": 150,
+    "y": 490,
+    "wires": [
+      [
+        "rx_dc_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_error",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "Safe API error",
+    "func": "return (function apiError(msg) {\n  const duplicate = /E11000|duplicate key/i.test(String(msg.error?.message || ''));\n  msg.statusCode = duplicate ? 409 : 500;\n  msg.payload = { success: false, error: duplicate ? 'This downtime code already exists. Edit the existing code.' : 'Unable to process downtime codes. Check the Node-RED server logs.' };\n  delete msg.error;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 410,
+    "y": 490,
+    "wires": [
+      [
+        "rx_dc_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_seed_inject",
+    "z": "rx_downtime_codes_tab",
+    "type": "inject",
+    "name": "OPTIONAL: seed legacy codes ONCE",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 210,
+    "y": 620,
+    "wires": [
+      [
+        "rx_dc_seed_prepare"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_seed_prepare",
+    "z": "rx_downtime_codes_tab",
+    "type": "function",
+    "name": "Seed missing codes only",
+    "func": "return (function seedQuery(msg, seed) {\n  const now = new Date().toISOString();\n  msg.payload = [seed.map((code) => ({ updateOne: { filter: { _id: code.value }, update: { $setOnInsert: { ...code, createdAt: now, updatedAt: now } }, upsert: true } })), { ordered: false, maxTimeMS: 15000 }];\n  return msg;\n})(msg, [{\"value\":\"TEA_BREAK\",\"label\":\"TEA_BREAK - Tea Break\",\"type\":\"planned\",\"plannedCategory\":\"standard\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"SHIFT_START\",\"label\":\"SHIFT_START - Shift Start / Handover\",\"type\":\"planned\",\"plannedCategory\":\"standard\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"SHIFT_END\",\"label\":\"SHIFT_END - Shift End / Handover\",\"type\":\"planned\",\"plannedCategory\":\"standard\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"CODE_CHANGE\",\"label\":\"CODE_CHANGE - Design code changes\",\"type\":\"planned\",\"plannedCategory\":\"standard\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"PM\",\"label\":\"PM - Planned Maintenance\",\"type\":\"planned\",\"plannedCategory\":\"additional\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"CHANGEOVER\",\"label\":\"CHANGEOVER - Product / Size Change\",\"type\":\"planned\",\"plannedCategory\":\"additional\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"CLEANING\",\"label\":\"CLEANING - Planned Cleaning\",\"type\":\"planned\",\"plannedCategory\":\"additional\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"OTHER_PLANNED\",\"label\":\"OTHER_PLANNED - Other Planned Activity\",\"type\":\"planned\",\"plannedCategory\":\"additional\",\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"ELECTRICAL\",\"label\":\"ELECTRICAL - Electrical / Automation Fault\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"MECHANICAL\",\"label\":\"MECHANICAL - Mechanical Fault\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"PROCESS\",\"label\":\"PROCESS - Process Issue\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"QUALITY\",\"label\":\"QUALITY - Quality Issue\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"MATERIAL\",\"label\":\"MATERIAL - Material / Upstream Issue\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"UTILITY\",\"label\":\"UTILITY - Power / Air / Water / Gas\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]},{\"value\":\"OTHER\",\"label\":\"OTHER - Other\",\"type\":\"unplanned\",\"plannedCategory\":null,\"lines\":[\"Keda 1\",\"Keda 2\",\"Keda 3\",\"Glaze Line 1\",\"Glaze Line 2\",\"Glaze Line 3\",\"Kiln 1\",\"Kiln 2\",\"Kiln 3\"]}]);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 520,
+    "y": 620,
+    "wires": [
+      [
+        "rx_dc_seed_mongo"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_seed_mongo",
+    "z": "rx_downtime_codes_tab",
+    "type": "mongodb4",
+    "name": "Seed downtime_codes",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "downtime_codes",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 790,
+    "y": 620,
+    "wires": [
+      [
+        "rx_dc_seed_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_seed_debug",
+    "z": "rx_downtime_codes_tab",
+    "type": "debug",
+    "name": "Seed write result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1060,
+    "y": 620,
+    "wires": []
+  },
+  {
+    "id": "rx_dc_guard_subflow",
+    "type": "subflow",
+    "name": "Validate downtime code assignment",
+    "info": "Insert after Validate Downtime + Machine, before its machines MongoDB lookup. Output 1: original machine query; output 2: HTTP error response. Requires msg.downtimeUpdate.",
+    "category": "Ruhanex",
+    "color": "#D8BFD8",
+    "in": [
+      {
+        "x": 40,
+        "y": 100,
+        "wires": [
+          {
+            "id": "rx_dc_guard_prepare"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "x": 720,
+        "y": 80,
+        "wires": [
+          {
+            "id": "rx_dc_guard_check",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "x": 720,
+        "y": 190,
+        "wires": [
+          {
+            "id": "rx_dc_guard_prepare",
+            "port": 1
+          },
+          {
+            "id": "rx_dc_guard_check",
+            "port": 1
+          },
+          {
+            "id": "rx_dc_guard_error",
+            "port": 0
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {},
+    "status": {
+      "x": 720,
+      "y": 260,
+      "wires": []
+    }
+  },
+  {
+    "id": "rx_dc_guard_prepare",
+    "z": "rx_dc_guard_subflow",
+    "type": "function",
+    "name": "Prepare assigned code lookup",
+    "func": "return (function prepareGuard(msg) {\n  const record = msg.downtimeUpdate;\n  if (!record || typeof record.downtimeCode !== 'string' || !/^[A-Z][A-Z0-9_]{0,79}$/.test(record.downtimeCode) || !['planned', 'unplanned'].includes(record.downtimeType) || !record.line) {\n    msg.statusCode = 400;\n    msg.payload = { success: false, error: 'Select a valid registered downtime code.' };\n    return [null, msg];\n  }\n  msg.downtimeMachineQuery = msg.payload;\n  msg.payload = [{ _id: record.downtimeCode, value: record.downtimeCode, lines: record.line, type: record.downtimeType,\n    plannedCategory: record.downtimeType === 'planned' ? record.plannedCategory : null }];\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 210,
+    "y": 100,
+    "wires": [
+      [
+        "rx_dc_guard_mongo"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "rx_dc_guard_mongo",
+    "z": "rx_dc_guard_subflow",
+    "type": "mongodb4",
+    "name": "Find matching assigned code",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "downtime_codes",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 440,
+    "y": 100,
+    "wires": [
+      [
+        "rx_dc_guard_check"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_guard_check",
+    "z": "rx_dc_guard_subflow",
+    "type": "function",
+    "name": "Validate match + restore query",
+    "func": "return (function checkGuard(msg) {\n  if (!msg.payload || msg.payload.value !== msg.downtimeUpdate?.downtimeCode) {\n    msg.statusCode = 400;\n    msg.payload = { success: false, error: 'Downtime code is not assigned to this line, type and planned category. Reload the available codes.' };\n    delete msg.downtimeMachineQuery;\n    return [null, msg];\n  }\n  msg.payload = msg.downtimeMachineQuery;\n  delete msg.downtimeMachineQuery;\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 580,
+    "y": 100,
+    "wires": [
+      [],
+      []
+    ]
+  },
+  {
+    "id": "rx_dc_guard_catch",
+    "z": "rx_dc_guard_subflow",
+    "type": "catch",
+    "name": "Guard database error",
+    "scope": [
+      "rx_dc_guard_mongo",
+      "rx_dc_guard_prepare",
+      "rx_dc_guard_check"
+    ],
+    "uncaught": false,
+    "x": 180,
+    "y": 210,
+    "wires": [
+      [
+        "rx_dc_guard_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dc_guard_error",
+    "z": "rx_dc_guard_subflow",
+    "type": "function",
+    "name": "Fail closed",
+    "func": "return (function apiError(msg) {\n  const duplicate = /E11000|duplicate key/i.test(String(msg.error?.message || ''));\n  msg.statusCode = duplicate ? 409 : 500;\n  msg.payload = { success: false, error: duplicate ? 'This downtime code already exists. Edit the existing code.' : 'Unable to process downtime codes. Check the Node-RED server logs.' };\n  delete msg.error;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 450,
+    "y": 210,
+    "wires": [
+      []
+    ]
+  }
+]

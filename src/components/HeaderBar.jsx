@@ -1,36 +1,22 @@
-import React from "react";
-import { Button, Grid } from "antd";
-import { LogoutOutlined } from "@ant-design/icons";
+import { useState } from "react";
+import { Avatar, Button, Dropdown, message } from "antd";
+import { LogoutOutlined, UserOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-
-const { useBreakpoint } = Grid;
+import { useAuth } from "../services/authContext";
 
 export default function HeaderBar() {
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const screens = useBreakpoint();
-  const isMobile = !screens.sm;
-
-  const logout = () => {
-    localStorage.removeItem("token");
-    navigate("/");
+  const [busy, setBusy] = useState(false);
+  const signOut = async () => {
+    setBusy(true);
+    try { await logout(); navigate("/", { replace: true }); }
+    catch { message.error("Unable to sign out. Please try again."); }
+    finally { setBusy(false); }
   };
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "flex-end",
-        alignItems: "center",
-        height: "100%",
-      }}
-    >
-      <Button
-        icon={<LogoutOutlined />}
-        danger
-        onClick={logout}
-      >
-        {!isMobile && "Logout"}
-      </Button>
-    </div>
-  );
+  return <Dropdown trigger={["click"]} menu={{ items: [
+    { key: "identity", label: user.displayName + " · " + user.role, disabled: true },
+    { key: "profile", icon: <UserOutlined />, label: "My Profile / Change Password", onClick: () => navigate("/profile") },
+    { type: "divider" }, { key: "logout", icon: <LogoutOutlined />, label: "Logout", danger: true, onClick: signOut },
+  ] }}><Button type="text" aria-label="Open profile menu" disabled={busy} style={{ height: 44 }}><Avatar size={32} icon={<UserOutlined />} /></Button></Dropdown>;
 }

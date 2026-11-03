@@ -1,0 +1,729 @@
+[
+  {
+    "id": "rx_user_auth_tab",
+    "type": "tab",
+    "label": "Ruhanex Users and Sessions",
+    "disabled": false,
+    "info": "See user-auth.README.md. Configure crypto in functionGlobalContext, AUTH_APP_ORIGIN and secure cookies. Mongo client reused. Manual bootstrap only."
+  },
+  {
+    "id": "rx_auth_login_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "POST /api/auth/login",
+    "method": "post",
+    "url": "/api/auth/login",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 100,
+    "wires": [
+      [
+        "rx_auth_login_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_login_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "login",
+    "func": "msg.authAction = \"login\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 100,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_me_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "GET /api/auth/me",
+    "method": "get",
+    "url": "/api/auth/me",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 170,
+    "wires": [
+      [
+        "rx_auth_me_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_me_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "me",
+    "func": "msg.authAction = \"me\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 170,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_logout_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "POST /api/auth/logout",
+    "method": "post",
+    "url": "/api/auth/logout",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 240,
+    "wires": [
+      [
+        "rx_auth_logout_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_logout_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "logout",
+    "func": "msg.authAction = \"logout\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 240,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_password_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "POST /api/auth/password",
+    "method": "post",
+    "url": "/api/auth/password",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 310,
+    "wires": [
+      [
+        "rx_auth_password_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_password_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "password",
+    "func": "msg.authAction = \"password\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 310,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_list_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "GET /api/auth/users",
+    "method": "get",
+    "url": "/api/auth/users",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 380,
+    "wires": [
+      [
+        "rx_auth_list_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_list_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "list",
+    "func": "msg.authAction = \"list\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 380,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_create_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "POST /api/auth/users",
+    "method": "post",
+    "url": "/api/auth/users",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 450,
+    "wires": [
+      [
+        "rx_auth_create_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_create_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "create",
+    "func": "msg.authAction = \"create\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 450,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_authorize_http",
+    "z": "rx_user_auth_tab",
+    "type": "http in",
+    "name": "GET /api/auth/authorize",
+    "method": "get",
+    "url": "/api/auth/authorize",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 520,
+    "wires": [
+      [
+        "rx_auth_authorize_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_authorize_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "authorize",
+    "func": "msg.authAction = \"authorize\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 520,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_advance",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "Advance auth state",
+    "func": "(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1140,
+    "y": 420,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_switch",
+    "z": "rx_user_auth_tab",
+    "type": "switch",
+    "name": "Database operation",
+    "property": "authDb",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "users.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "users.find",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "users.insertOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "users.updateOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "sessions.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "sessions.insertOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "sessions.deleteOne",
+        "vt": "str"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 7,
+    "x": 740,
+    "y": 280,
+    "wires": [
+      [
+        "rx_auth_db_0"
+      ],
+      [
+        "rx_auth_db_1"
+      ],
+      [
+        "rx_auth_db_2"
+      ],
+      [
+        "rx_auth_db_3"
+      ],
+      [
+        "rx_auth_db_4"
+      ],
+      [
+        "rx_auth_db_5"
+      ],
+      [
+        "rx_auth_db_6"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_0",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "users.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 960,
+    "y": 100,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_1",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "users.find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 960,
+    "y": 150,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_2",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "users.insertOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 960,
+    "y": 200,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_3",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "users.updateOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 960,
+    "y": 250,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_4",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "sessions.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_sessions",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 960,
+    "y": 300,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_5",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "sessions.insertOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_sessions",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 960,
+    "y": 350,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_db_6",
+    "z": "rx_user_auth_tab",
+    "type": "mongodb4",
+    "name": "sessions.deleteOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_sessions",
+    "operation": "deleteOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 960,
+    "y": 400,
+    "wires": [
+      [
+        "rx_auth_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_result_switch",
+    "z": "rx_user_auth_tab",
+    "type": "switch",
+    "name": "HTTP or bootstrap result",
+    "property": "req",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nnull"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 2,
+    "x": 760,
+    "y": 600,
+    "wires": [
+      [
+        "rx_auth_http_response"
+      ],
+      [
+        "rx_auth_bootstrap_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_http_response",
+    "z": "rx_user_auth_tab",
+    "type": "http response",
+    "name": "Auth JSON response",
+    "statusCode": "",
+    "headers": {},
+    "x": 1090,
+    "y": 580,
+    "wires": []
+  },
+  {
+    "id": "rx_auth_bootstrap_inject",
+    "z": "rx_user_auth_tab",
+    "type": "inject",
+    "name": "MANUAL: bootstrap initial Admin",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "onceDelay": 0.1,
+    "x": 230,
+    "y": 670,
+    "wires": [
+      [
+        "rx_auth_bootstrap_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_bootstrap_start",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "Bootstrap from environment",
+    "func": "msg.authAction = \"bootstrap\";\n(async function authStep(msg, env, crypto, Buffer, flow) {\n  const roles = ['Admin', 'Manager', 'JE'];\n  const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';\n  const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;\n  const finish = (status, data, headers = {}) => {\n    msg.statusCode = status;\n    msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers };\n    msg.payload = data;\n    delete msg.auth; delete msg.authDb;\n    return [null, msg];\n  };\n  const fail = (status, error) => finish(status, { success: false, error }, status === 401 ? { 'Set-Cookie': cookie('', 0) } : {});\n  if (!crypto) return fail(503, 'Authentication crypto is not configured.');\n  const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');\n  const derive = (password, salt) => new Promise((resolve, reject) => crypto.scrypt(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, key) => error ? reject(error) : resolve(key)));\n  const passwordHash = async (password) => {\n    const salt = crypto.randomBytes(16).toString('hex');\n    return { salt, hash: (await derive(password, salt)).toString('hex') };\n  };\n  const verify = async (password, account) => {\n    const key = await derive(password, account?.passwordSalt || 'ruhanex-invalid-account-dummy-salt');\n    const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');\n    return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);\n  };\n  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });\n  const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;\n  const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };\n  if (!msg.auth) {\n    msg.auth = { action: msg.authAction, stage: 'start', body: { ...(msg.req?.body || msg.payload || {}) } };\n  }\n  const state = msg.auth;\n  const body = state.body;\n  if (state.stage === 'start') {\n    if (state.action === 'bootstrap') {\n      if (env.get('AUTH_BOOTSTRAP_ENABLED') !== 'true') return fail(403, 'Enable AUTH_BOOTSTRAP_ENABLED for a one-time manual bootstrap.');\n      body.username = String(env.get('BOOTSTRAP_ADMIN_USERNAME') || '').toLowerCase();\n      body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');\n      const p = await passwordHash(body.password);\n      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };\n      state.account = publicUser(account); delete body.password;\n      return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');\n    }\n    if (['login', 'logout', 'password', 'create'].includes(state.action)) {\n      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');\n      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');\n      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');\n    }\n    if (['login', 'password'].includes(state.action)) {\n      const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);\n      const attempts = flow.get('ruhanexAuthAttempts') || {};\n      for (const [ip, value] of Object.entries(attempts)) if (value.until < Date.now()) delete attempts[ip];\n      if (!attempts[key] && Object.keys(attempts).length >= 10000) return fail(429, 'Too many login requests. Try later.');\n      const entry = attempts[key] || { count: 0, until: Date.now() + 300000 };\n      if (++entry.count > 20) return fail(429, 'Too many login attempts. Try again in five minutes.');\n      attempts[key] = entry; flow.set('ruhanexAuthAttempts', attempts);\n    }\n    if (state.action === 'login') {\n      if (typeof body.username !== 'string' || typeof body.password !== 'string' || body.password.length > 128 || !body.password.length) return fail(400, 'Username and password are required.');\n      body.username = body.username.trim().toLowerCase();\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username)) return fail(401, 'Invalid username or password.');\n      return db('users.findOne', [{ _id: body.username }], 'loginUser');\n    }\n    const token = String(msg.req?.headers?.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith('ruhanex_session='))?.slice('ruhanex_session='.length);\n    if (!token || !/^[a-f0-9]{64}$/.test(token)) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Please sign in.');\n    state.sessionHash = hash(token);\n    return db('sessions.findOne', [{ _id: state.sessionHash, expiresAt: { $gt: new Date() } }], 'session');\n  }\n  if (state.stage === 'bootstrapped') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Bootstrap failed.');\n    return finish(200, { success: true, created: msg.payload.upsertedCount === 1, message: msg.payload.upsertedCount === 1 ? 'Initial Admin created. Change the initial password after login.' : 'Username already exists; no account was overwritten.' });\n  }\n  if (state.stage === 'loginUser') {\n    const account = msg.payload;\n    const correct = await verify(body.password, account);\n    delete body.password;\n    if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');\n    state.account = publicUser(account);\n    state.token = crypto.randomBytes(32).toString('hex');\n    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');\n  }\n  if (state.stage === 'loggedIn') {\n    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');\n    return finish(200, { success: true, user: state.account }, { 'Set-Cookie': cookie(state.token) });\n  }\n  if (state.stage === 'session') {\n    if (!msg.payload) return state.action === 'logout' ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(401, 'Session expired. Please sign in.');\n    state.session = msg.payload;\n    return db('users.findOne', [{ _id: state.session.username }], 'authenticated');\n  }\n  if (state.stage === 'authenticated') {\n    const account = msg.payload;\n    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');\n    state.user = account;\n    if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });\n    if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');\n    if (state.action === 'password') {\n      if (typeof body.currentPassword !== 'string' || body.currentPassword.length > 128 || !validPassword(body.newPassword) || body.currentPassword === body.newPassword) return fail(400, 'Use a different new password of 4–128 characters.');\n      if (!await verify(body.currentPassword, account)) return fail(400, 'Current password is incorrect.');\n      const p = await passwordHash(body.newPassword);\n      delete body.currentPassword; delete body.newPassword;\n      return db('users.updateOne', [{ _id: account._id, authVersion: account.authVersion }, { $set: { passwordHash: p.hash, passwordSalt: p.salt, mustChangePassword: false, updatedAt: new Date().toISOString() }, $inc: { authVersion: 1 } }], 'passwordChanged');\n    }\n    if (account.mustChangePassword) return fail(403, 'Change your initial password before accessing this feature.');\n    if (state.action === 'authorize') {\n      const raw = String(msg.req.headers['x-original-uri'] || '').split('?')[0];\n      const path = raw.replace(/^\\/api\\/api\\//, '/api/');\n      const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();\n      const origin = msg.req.headers['x-original-origin'];\n      if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');\n      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');\n      const read = ['GET', 'HEAD'].includes(method);\n      const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);\n      const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));\n      const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);\n      let allowed = account.role === 'Admin';\n      if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));\n      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');\n      if (!allowed) return fail(403, 'Your account level does not permit this operation.');\n      return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });\n    }\n    if (account.role !== 'Admin') return fail(403, 'Administrator access required.');\n    if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');\n    if (state.action === 'create') {\n      const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';\n      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');\n      const p = await passwordHash(body.password); delete body.password;\n      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };\n      state.createdUser = publicUser(user);\n      return db('users.insertOne', [user], 'created');\n    }\n    return fail(404, 'Unknown authentication operation.');\n  }\n  if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });\n  if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');\n  if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');\n  if (state.stage === 'passwordChanged') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return fail(409, 'Account changed while saving. Sign in again.');\n    return finish(200, { success: true, message: 'Password changed; all previous sessions are invalid.' }, { 'Set-Cookie': cookie('', 0) });\n  }\n  return fail(500, 'Invalid authentication state.');\n})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 500,
+    "y": 670,
+    "wires": [
+      [
+        "rx_auth_db_switch"
+      ],
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_bootstrap_debug",
+    "z": "rx_user_auth_tab",
+    "type": "debug",
+    "name": "Bootstrap result only",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1090,
+    "y": 650,
+    "wires": []
+  },
+  {
+    "id": "rx_auth_catch",
+    "z": "rx_user_auth_tab",
+    "type": "catch",
+    "name": "Auth errors",
+    "scope": [
+      "rx_auth_login_start",
+      "rx_auth_me_start",
+      "rx_auth_logout_start",
+      "rx_auth_password_start",
+      "rx_auth_list_start",
+      "rx_auth_create_start",
+      "rx_auth_authorize_start",
+      "rx_auth_advance",
+      "rx_auth_db_0",
+      "rx_auth_db_1",
+      "rx_auth_db_2",
+      "rx_auth_db_3",
+      "rx_auth_db_4",
+      "rx_auth_db_5",
+      "rx_auth_db_6",
+      "rx_auth_bootstrap_start"
+    ],
+    "uncaught": false,
+    "x": 200,
+    "y": 760,
+    "wires": [
+      [
+        "rx_auth_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_error",
+    "z": "rx_user_auth_tab",
+    "type": "function",
+    "name": "Safe auth error",
+    "func": "const duplicate = /E11000|duplicate key/i.test(String(msg.error?.message || '')); msg.statusCode = duplicate ? 409 : 500; msg.payload = {success:false,error:duplicate?'Username already exists.':'Authentication service failed. Check server configuration.'}; msg.headers={'Content-Type':'application/json','Cache-Control':'no-store'}; delete msg.auth; delete msg.authDb; delete msg.error; return msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 490,
+    "y": 760,
+    "wires": [
+      [
+        "rx_auth_result_switch"
+      ]
+    ]
+  },
+  {
+    "id": "rx_auth_settings_guard",
+    "type": "subflow",
+    "name": "Protect line detection settings",
+    "info": "Insert after POST /api/line-setting HTTP In, before validation. Trust X-Ruhanex-Role only from the included authenticated Nginx gateway. Output 1 proceeds; output 2 connects to HTTP error response.",
+    "in": [
+      {
+        "x": 40,
+        "y": 80,
+        "wires": [
+          {
+            "id": "rx_auth_settings_guard_fn"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "x": 500,
+        "y": 60,
+        "wires": [
+          {
+            "id": "rx_auth_settings_guard_fn",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "x": 500,
+        "y": 120,
+        "wires": [
+          {
+            "id": "rx_auth_settings_guard_fn",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "color": "#D8BFD8",
+    "meta": {}
+  },
+  {
+    "id": "rx_auth_settings_guard_fn",
+    "z": "rx_auth_settings_guard",
+    "type": "function",
+    "name": "Admin-only detection changes",
+    "func": "return (function checkSettingsPermission(msg, global) {\n  const role = msg.req?.headers?.['x-ruhanex-role'];\n  if (role === 'Admin') return [msg, null];\n  const fail = (status, error) => { msg.statusCode = status; msg.headers = { 'Content-Type': 'application/json' }; msg.payload = { success: false, error }; return [null, msg]; };\n  if (role !== 'Manager') return fail(403, 'Manager or Admin access required.');\n  const body = msg.payload || {};\n  const settings = global.get('lineSettings') || {};\n  const current = settings[body.line] || settings[String(body.line || '').toLowerCase()];\n  if (!current) return fail(503, 'Current line settings are not loaded.');\n  for (const key of ['stopDelayMs', 'maxPulseGapMs', 'requiredRunTimeMs']) {\n    if (current[key] == null || body[key] == null || !Number.isFinite(Number(current[key])) || Number(body[key]) !== Number(current[key])) return fail(403, 'Only Admin can change downtime detection settings.');\n  }\n  return [msg, null];\n})(msg, global);",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 270,
+    "y": 80,
+    "wires": [
+      [],
+      []
+    ]
+  }
+]

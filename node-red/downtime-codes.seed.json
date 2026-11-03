@@ -1,0 +1,257 @@
+[
+  {
+    "value": "TEA_BREAK",
+    "label": "TEA_BREAK - Tea Break",
+    "type": "planned",
+    "plannedCategory": "standard",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "SHIFT_START",
+    "label": "SHIFT_START - Shift Start / Handover",
+    "type": "planned",
+    "plannedCategory": "standard",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "SHIFT_END",
+    "label": "SHIFT_END - Shift End / Handover",
+    "type": "planned",
+    "plannedCategory": "standard",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "CODE_CHANGE",
+    "label": "CODE_CHANGE - Design code changes",
+    "type": "planned",
+    "plannedCategory": "standard",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "PM",
+    "label": "PM - Planned Maintenance",
+    "type": "planned",
+    "plannedCategory": "additional",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "CHANGEOVER",
+    "label": "CHANGEOVER - Product / Size Change",
+    "type": "planned",
+    "plannedCategory": "additional",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "CLEANING",
+    "label": "CLEANING - Planned Cleaning",
+    "type": "planned",
+    "plannedCategory": "additional",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "OTHER_PLANNED",
+    "label": "OTHER_PLANNED - Other Planned Activity",
+    "type": "planned",
+    "plannedCategory": "additional",
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "ELECTRICAL",
+    "label": "ELECTRICAL - Electrical / Automation Fault",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "MECHANICAL",
+    "label": "MECHANICAL - Mechanical Fault",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "PROCESS",
+    "label": "PROCESS - Process Issue",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "QUALITY",
+    "label": "QUALITY - Quality Issue",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "MATERIAL",
+    "label": "MATERIAL - Material / Upstream Issue",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "UTILITY",
+    "label": "UTILITY - Power / Air / Water / Gas",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  },
+  {
+    "value": "OTHER",
+    "label": "OTHER - Other",
+    "type": "unplanned",
+    "plannedCategory": null,
+    "lines": [
+      "Keda 1",
+      "Keda 2",
+      "Keda 3",
+      "Glaze Line 1",
+      "Glaze Line 2",
+      "Glaze Line 3",
+      "Kiln 1",
+      "Kiln 2",
+      "Kiln 3"
+    ]
+  }
+]

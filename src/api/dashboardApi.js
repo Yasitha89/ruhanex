@@ -15,6 +15,7 @@ export const getCarStock = async () => {
 //   baseURL: "http://34.235.63.22:1880"
 // });
 const api = axios.create({
+  withCredentials: true,
   baseURL: API_BASE_URL,
 });
 

@@ -1,15 +1,5 @@
-export const login = (username, password) => {
-  if (username === "admin" && password === "admin") {
-    localStorage.setItem("token", "demo-token");
-    return true;
-  }
-  return false;
-};
-
-export const logout = () => {
-  localStorage.removeItem("token");
-};
-
-export const isAuthenticated = () => {
-  return !!localStorage.getItem("token");
-};
+export { loginUser as login, logoutUser as logout } from "../api/authApi";
+import { getSession } from "../api/authApi";
+export async function isAuthenticated() {
+  try { const session = await getSession(); return Boolean(session.user); } catch { return false; }
+}

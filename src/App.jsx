@@ -1,7 +1,9 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import ProtectedRoute from "./components/ProtectedRoute";
-import AuthorityGate from "./components/AuthorityGate";
+import AuthProvider from "./components/AuthProvider";
+import Profile from "./pages/Profile";
+import Users from "./pages/Users";
 import Login from "./pages/login";
 import MainLayout from "./layouts/MainLayout";
 import Dashboard from "./pages/Dashboard";
@@ -24,6 +26,7 @@ import ProductionMasterData from "./pages/ProductionMasterData";
 function App() {
   return (
     <BrowserRouter>
+      <AuthProvider>
       <Routes>
         <Route path="/" element={<Login />} />
 
@@ -36,6 +39,8 @@ function App() {
           }
         >
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="profile" element={<Profile />} />
+          <Route path="users" element={<Users />} />
           <Route path="keda1" element={<Keda1 />} />
           <Route path="keda2" element={<Keda2 />} />
           <Route path="kiln2" element={<Kiln2 />} />
@@ -47,34 +52,25 @@ function App() {
           <Route
             path="settings"
             element={
-              <AuthorityGate
-                authorityLevel="production_manager"
-                title="Production Manager Access Required"
-              >
                 <Settings />
-              </AuthorityGate>
+            }
+          />
+          <Route
+            path="line_administration"
+            element={
+                <Settings administration />
             }
           />
           <Route
             path="device_administration"
             element={
-              <AuthorityGate
-                authorityLevel="administrator"
-                title="Administrator Access Required"
-              >
                 <DeviceAdministration />
-              </AuthorityGate>
             }
           />
           <Route
             path="production_master_data"
             element={
-              <AuthorityGate
-                authorityLevel="administrator"
-                title="Administrator Access Required"
-              >
                 <ProductionMasterData />
-              </AuthorityGate>
             }
           />
           <Route path="energyoverview" element={<EnergyOverview />} />
@@ -86,6 +82,7 @@ function App() {
           />
         </Route>
       </Routes>
+    </AuthProvider>
     </BrowserRouter>
   );
 }

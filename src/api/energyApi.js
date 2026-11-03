@@ -5,6 +5,7 @@ import { API_BASE_URL } from "./constants";
 //   baseURL: "http://34.235.63.22:1880"
 // });
 const api = axios.create({
+  withCredentials: true,
   baseURL: API_BASE_URL,
 });
 
