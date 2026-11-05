@@ -1,0 +1,134 @@
+[
+  {
+    "id": "rx_audit_log_subflow",
+    "type": "subflow",
+    "name": "Write Ruhanex Audit Log",
+    "category": "Ruhanex",
+    "color": "#C0DEED",
+    "info": "Insert only after checking a business write succeeded. Supply msg.audit={action,target,changes,success:true}. Trusted identity comes from authenticated Nginx headers. Output 1: logged, original payload restored. Output 2: audit failure, original response preserved with msg.auditError; connect to a safe alert/response path. See audit-log.README.md.",
+    "in": [
+      {
+        "x": 40,
+        "y": 80,
+        "wires": [
+          {
+            "id": "rx_audit_prepare"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "x": 780,
+        "y": 60,
+        "wires": [
+          {
+            "id": "rx_audit_restore",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "x": 780,
+        "y": 180,
+        "wires": [
+          {
+            "id": "rx_audit_prepare",
+            "port": 1
+          },
+          {
+            "id": "rx_audit_restore",
+            "port": 1
+          },
+          {
+            "id": "rx_audit_failure",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {}
+  },
+  {
+    "id": "rx_audit_prepare",
+    "type": "function",
+    "z": "rx_audit_log_subflow",
+    "name": "Validate and prepare audit",
+    "func": "return (function prepareAudit(msg) {\n  const fail = reason => { msg.auditError = { message: reason }; return [null, msg]; };\n  const audit = msg.audit;\n  if (!audit || audit.success !== true || typeof audit.action !== 'string' || !/^[a-z][a-z0-9_.-]{0,99}$/i.test(audit.action)) return fail('Supply msg.audit.action and success:true after confirming the business write succeeded.');\n  const headers = msg.req?.headers || {};\n  const username = headers['x-ruhanex-user'];\n  const role = headers['x-ruhanex-role'] === 'JE' ? 'Line Supervisor' : headers['x-ruhanex-role'];\n  if (typeof username !== 'string' || !username || !['Admin', 'Manager', 'Line Supervisor'].includes(role)) return fail('Verified user headers are missing. Use the authenticated Nginx gateway.');\n  // Only explicitly supplied metadata is stored; never serialize req or payload.\n  const clean = (value, depth = 0) => {\n    if (depth > 5) return '[depth limit]';\n    if (value == null || typeof value === 'boolean') return value;\n    if (typeof value === 'number') return Number.isFinite(value) ? value : null;\n    if (typeof value === 'string') return value.slice(0, 1000);\n    if (Array.isArray(value)) return value.slice(0, 50).map(item => clean(item, depth + 1));\n    if (typeof value !== 'object') return null;\n    const result = {};\n    for (const [key, item] of Object.entries(value).slice(0, 50)) {\n      if (/password|passwd|secret|token|cookie|authorization|api.?key|credential|salt|hash/i.test(key) || ['__proto__', 'constructor', 'prototype'].includes(key)) continue;\n      result[key.slice(0, 100)] = clean(item, depth + 1);\n    }\n    return result;\n  };\n  const record = {\n    timestamp: new Date(), username: username.slice(0, 100), role,\n    action: audit.action, target: clean(audit.target || {}),\n    changes: clean(audit.changes || {}), success: true,\n    requestId: String(msg._msgid || '').slice(0, 100),\n  };\n  if (Buffer.byteLength(JSON.stringify(record), 'utf8') > 32768) return fail('Audit metadata exceeds 32 KB. Supply fewer changed fields.');\n  msg._ruhanexAuditState = { payload: msg.payload, headers: msg.headers, statusCode: msg.statusCode };\n  delete msg.auditError;\n  msg.payload = [record];\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "x": 220,
+    "y": 80,
+    "wires": [
+      [
+        "rx_audit_mongo"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "rx_audit_mongo",
+    "type": "mongodb4",
+    "z": "rx_audit_log_subflow",
+    "name": "Insert ruhanex_audit_logs",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_audit_logs",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 470,
+    "y": 80,
+    "wires": [
+      [
+        "rx_audit_restore"
+      ]
+    ]
+  },
+  {
+    "id": "rx_audit_restore",
+    "type": "function",
+    "z": "rx_audit_log_subflow",
+    "name": "Restore API response",
+    "func": "return (function restoreAudit(msg, failed = false) {\n  const acknowledged = msg.payload?.acknowledged === true;\n  const saved = msg._ruhanexAuditState;\n  if (saved) {\n    msg.payload = saved.payload; msg.headers = saved.headers; msg.statusCode = saved.statusCode;\n  }\n  delete msg._ruhanexAuditState; delete msg.error;\n  if (failed || !acknowledged) {\n    msg.auditError = { message: 'Audit record could not be confirmed. The business write has already succeeded.' };\n    return [null, msg];\n  }\n  delete msg.audit;\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "x": 690,
+    "y": 80,
+    "wires": [
+      [],
+      []
+    ]
+  },
+  {
+    "id": "rx_audit_catch",
+    "type": "catch",
+    "z": "rx_audit_log_subflow",
+    "name": "Audit database failure",
+    "scope": [
+      "rx_audit_mongo"
+    ],
+    "uncaught": false,
+    "x": 230,
+    "y": 220,
+    "wires": [
+      [
+        "rx_audit_failure"
+      ]
+    ]
+  },
+  {
+    "id": "rx_audit_failure",
+    "type": "function",
+    "z": "rx_audit_log_subflow",
+    "name": "Restore after audit failure",
+    "func": "return (function restoreAudit(msg, failed = false) {\n  const acknowledged = msg.payload?.acknowledged === true;\n  const saved = msg._ruhanexAuditState;\n  if (saved) {\n    msg.payload = saved.payload; msg.headers = saved.headers; msg.statusCode = saved.statusCode;\n  }\n  delete msg._ruhanexAuditState; delete msg.error;\n  if (failed || !acknowledged) {\n    msg.auditError = { message: 'Audit record could not be confirmed. The business write has already succeeded.' };\n    return [null, msg];\n  }\n  delete msg.audit;\n  return [msg, null];\n})(msg, true);",
+    "outputs": 2,
+    "x": 520,
+    "y": 220,
+    "wires": [
+      [],
+      []
+    ]
+  }
+]

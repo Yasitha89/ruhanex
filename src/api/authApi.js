@@ -13,3 +13,4 @@ export const logoutUser = () => request("post", "/logout");
 export const changePassword = (currentPassword, newPassword) => request("post", "/password", { currentPassword, newPassword });
 export const getUsers = () => request("get", "/users");
 export const createUser = (values) => request("post", "/users", values);
+export const deleteUser = (username) => request("delete", `/users/${encodeURIComponent(username)}`);

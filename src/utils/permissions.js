@@ -1,4 +1,4 @@
-export const ROLE_LABELS = { Admin: "Admin", Manager: "Manager", JE: "JE" };
+export const ROLE_LABELS = { Admin: "Admin", Manager: "Manager", "Line Supervisor": "Line Supervisor", JE: "Line Supervisor" };
 const productionPaths = ["/dashboard", "/keda1", "/keda2", "/keda3", "/kiln1", "/kiln2", "/gl1", "/gl3"];
 const managerPaths = ["/settings", "/historical_data", "/historical_data_energy", "/energyoverview", "/energydashboard", "/energy_live"];
 const adminPaths = ["/device_administration", "/line_administration", "/production_master_data", "/users"];

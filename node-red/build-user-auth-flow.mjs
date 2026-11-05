@@ -2,7 +2,9 @@ import fs from 'node:fs';
 
 // Self-contained runtime embedded in the exported Function nodes.
 export async function authStep(msg, env, crypto, Buffer, flow) {
-  const roles = ['Admin', 'Manager', 'JE'];
+  const roles = ['Admin', 'Manager', 'Line Supervisor'];
+  const normaliseRole = role => role === 'JE' ? 'Line Supervisor' : role;
+  const allowedOrigins = String(env.get('AUTH_APP_ORIGINS') || env.get('AUTH_APP_ORIGIN') || '').split(',').map(value => value.trim()).filter(Boolean);
   const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';
   const cookie = (token, age = 28800) => `ruhanex_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
   const finish = (status, data, headers = {}) => {
@@ -25,7 +27,7 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
     const expected = Buffer.from(account?.passwordHash || '00'.repeat(64), 'hex');
     return expected.length === key.length && crypto.timingSafeEqual(expected, key) && Boolean(account);
   };
-  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: u.role, mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });
+  const publicUser = (u) => ({ username: u._id, displayName: u.displayName, role: normaliseRole(u.role), mustChangePassword: u.mustChangePassword === true, enabled: u.enabled === true, createdAt: u.createdAt });
   const validPassword = (p) => typeof p === 'string' && p.length >= 4 && p.length <= 128;
   const db = (kind, payload, next) => { msg.authDb = kind; msg.payload = payload; msg.auth.stage = next; return [msg, null]; };
   if (!msg.auth) {
@@ -40,14 +42,13 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
       body.password = env.get('BOOTSTRAP_ADMIN_PASSWORD'); body.displayName = 'Administrator'; body.role = 'Admin';
       if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(body.username) || !validPassword(body.password)) return fail(400, 'Configure a valid bootstrap username and a 4–128 character password.');
       const p = await passwordHash(body.password);
-      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };
+      const account = { _id: body.username, username: body.username, displayName: body.displayName, role: 'Admin', enabled: true, accountGeneration: crypto.randomBytes(16).toString('hex'), authVersion: 1, mustChangePassword: true, passwordHash: p.hash, passwordSalt: p.salt, createdAt: new Date().toISOString() };
       state.account = publicUser(account); delete body.password;
       return db('users.updateOne', [{ _id: account._id }, { $setOnInsert: account }, { upsert: true }], 'bootstrapped');
     }
-    if (['login', 'logout', 'password', 'create'].includes(state.action)) {
-      const allowedOrigin = String(env.get('AUTH_APP_ORIGIN') || '');
-      if (!allowedOrigin) return fail(503, 'Configure AUTH_APP_ORIGIN.');
-      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && msg.req.headers.origin !== allowedOrigin)) return fail(403, 'Invalid request origin.');
+    if (['login', 'logout', 'password', 'create', 'delete'].includes(state.action)) {
+      if (!allowedOrigins.length) return fail(503, 'Configure AUTH_APP_ORIGINS or AUTH_APP_ORIGIN.');
+      if (msg.req?.headers?.['x-ruhanex-request'] !== '1' || (msg.req?.headers?.origin && !allowedOrigins.includes(msg.req.headers.origin))) return fail(403, 'Invalid request origin.');
     }
     if (['login', 'password'].includes(state.action)) {
       const key = String(msg.req?.headers?.['x-real-ip'] || msg.req?.ip || 'unknown').slice(0, 100);
@@ -75,12 +76,13 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
   }
   if (state.stage === 'loginUser') {
     const account = msg.payload;
+    if (account) account.role = normaliseRole(account.role);
     const correct = await verify(body.password, account);
     delete body.password;
     if (!correct || account.enabled !== true || !roles.includes(account.role)) return fail(401, 'Invalid username or password.');
     state.account = publicUser(account);
     state.token = crypto.randomBytes(32).toString('hex');
-    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');
+    return db('sessions.insertOne', [{ _id: hash(state.token), username: account._id, accountGeneration: account.accountGeneration ?? null, authVersion: account.authVersion, createdAt: new Date(), expiresAt: new Date(Date.now() + 28800000) }], 'loggedIn');
   }
   if (state.stage === 'loggedIn') {
     if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to create session.');
@@ -93,7 +95,8 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
   }
   if (state.stage === 'authenticated') {
     const account = msg.payload;
-    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion) return fail(401, 'Session is no longer valid. Please sign in.');
+    if (account) account.role = normaliseRole(account.role);
+    if (!account || account.enabled !== true || !roles.includes(account.role) || account.authVersion !== state.session.authVersion || (account.accountGeneration ?? null) !== (state.session.accountGeneration ?? null)) return fail(401, 'Session is no longer valid. Please sign in.');
     state.user = account;
     if (state.action === 'me') return finish(200, { success: true, user: publicUser(account) });
     if (state.action === 'logout') return db('sessions.deleteOne', [{ _id: state.sessionHash }], 'loggedOut');
@@ -111,29 +114,42 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
       const method = String(msg.req.headers['x-original-method'] || '').toUpperCase();
       const origin = msg.req.headers['x-original-origin'];
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path.startsWith('/api/')) return fail(403, 'Invalid protected route.');
-      if (!['GET', 'HEAD'].includes(method) && origin !== env.get('AUTH_APP_ORIGIN')) return fail(403, 'Invalid request origin.');
+      if (!['GET', 'HEAD'].includes(method) && !allowedOrigins.includes(origin)) return fail(403, 'Invalid request origin.');
       const read = ['GET', 'HEAD'].includes(method);
       const production = path.startsWith('/api/production/') || ['/api/getShiftsStats', '/api/getDashboardStats', '/api/shift-count', '/api/shift-downtime', '/api/shift-downtime-new', '/api/shift-last', '/api/line_speed', '/api/line-live-summary', '/api/design-codes', '/api/downtime-codes', '/api/line-setting'].includes(path);
       const adminWrite = ['/api/devices', '/api/design-codes', '/api/machines', '/api/production/machines', '/api/downtime-codes', '/api/authority/verify', '/api/authority/password'].some((value) => path === value || path.startsWith(value + '/'));
       const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);
       let allowed = account.role === 'Admin';
       if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));
-      if (account.role === 'JE') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');
+      if (account.role === 'Line Supervisor') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');
       if (!allowed) return fail(403, 'Your account level does not permit this operation.');
       return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });
     }
     if (account.role !== 'Admin') return fail(403, 'Administrator access required.');
+    if (state.action === 'delete') {
+      const username = String(msg.req?.params?.username || '');
+      if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username)) return fail(400, 'Invalid username.');
+      if (username === account._id) return fail(403, 'You cannot delete your own account.');
+      state.deletedUsername = username;
+      return db('users.deleteOne', [{ _id: username }], 'userDeleted');
+    }
     if (state.action === 'list') return db('users.find', [{}, { sort: { displayName: 1 }, projection: { _id: 1, displayName: 1, role: 1, enabled: 1, mustChangePassword: 1, createdAt: 1 } }], 'listed');
     if (state.action === 'create') {
       const username = typeof body.username === 'string' ? body.username.trim().toLowerCase() : '';
       if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 100 || !roles.includes(body.role) || !validPassword(body.password)) return fail(400, 'Supply a valid username, name, level and 4–128 character initial password.');
       const p = await passwordHash(body.password); delete body.password;
-      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };
+      const user = { _id: username, username, displayName: body.displayName.trim(), role: body.role, enabled: true, mustChangePassword: true, accountGeneration: crypto.randomBytes(16).toString('hex'), authVersion: 1, passwordSalt: p.salt, passwordHash: p.hash, createdAt: new Date().toISOString() };
       state.createdUser = publicUser(user);
       return db('users.insertOne', [user], 'created');
     }
     return fail(404, 'Unknown authentication operation.');
   }
+  if (state.stage === 'userDeleted') {
+    if (msg.payload?.acknowledged !== true) return fail(500, 'Unable to delete user.');
+    if (msg.payload.deletedCount !== 1) return fail(404, 'User was not found.');
+    return db('sessions.deleteMany', [{ username: state.deletedUsername }], 'deletedSessions');
+  }
+  if (state.stage === 'deletedSessions') return msg.payload?.acknowledged === true ? finish(200, { success: true }) : fail(500, 'User removed, but session cleanup failed.');
   if (state.stage === 'listed') return finish(200, { success: true, users: (Array.isArray(msg.payload) ? msg.payload : []).map(publicUser) });
   if (state.stage === 'created') return msg.payload?.acknowledged === true ? finish(201, { success: true, user: state.createdUser }) : fail(500, 'Unable to create user.');
   if (state.stage === 'loggedOut') return msg.payload?.acknowledged === true ? finish(200, { success: true }, { 'Set-Cookie': cookie('', 0) }) : fail(500, 'Unable to end session.');
@@ -148,13 +164,13 @@ const tab = 'rx_user_auth_tab';
 const nodes = [{ id: tab, type: 'tab', label: 'Ruhanex Users and Sessions', disabled: false, info: 'See user-auth.README.md. Configure crypto in functionGlobalContext, AUTH_APP_ORIGIN and secure cookies. Mongo client reused. Manual bootstrap only.' }];
 const functionNode = (id, name, action, x, y) => nodes.push({ id, z: tab, type: 'function', name,
   func: `${action ? `msg.authAction = ${JSON.stringify(action)};\n` : ''}(${authStep.toString()})(msg, env, global.get('crypto'), Buffer, flow).then(result => { node.send(result); node.done(); }).catch(error => { node.error(error, msg); node.done(); });\nreturn;`, outputs: 2, noerr: 0, initialize: '', finalize: '', libs: [], x, y, wires: [['rx_auth_db_switch'], ['rx_auth_result_switch']] });
-const routes = [['login', 'post', '/api/auth/login'], ['me', 'get', '/api/auth/me'], ['logout', 'post', '/api/auth/logout'], ['password', 'post', '/api/auth/password'], ['list', 'get', '/api/auth/users'], ['create', 'post', '/api/auth/users'], ['authorize', 'get', '/api/auth/authorize']];
+const routes = [['login', 'post', '/api/auth/login'], ['me', 'get', '/api/auth/me'], ['logout', 'post', '/api/auth/logout'], ['password', 'post', '/api/auth/password'], ['list', 'get', '/api/auth/users'], ['create', 'post', '/api/auth/users'], ['authorize', 'get', '/api/auth/authorize'], ['delete', 'delete', '/api/auth/users/:username']];
 routes.forEach(([action, method, url], index) => {
   nodes.push({ id: `rx_auth_${action}_http`, z: tab, type: 'http in', name: method.toUpperCase() + ' ' + url, method, url, upload: false, swaggerDoc: '', x: 190, y: 100 + index * 70, wires: [[`rx_auth_${action}_start`]] });
   functionNode(`rx_auth_${action}_start`, action, action, 480, 100 + index * 70);
 });
 functionNode('rx_auth_advance', 'Advance auth state', null, 1140, 420);
-const operations = ['users.findOne', 'users.find', 'users.insertOne', 'users.updateOne', 'sessions.findOne', 'sessions.insertOne', 'sessions.deleteOne'];
+const operations = ['users.findOne', 'users.find', 'users.insertOne', 'users.updateOne', 'sessions.findOne', 'sessions.insertOne', 'sessions.deleteOne', 'users.deleteOne', 'sessions.deleteMany'];
 nodes.push({ id: 'rx_auth_db_switch', z: tab, type: 'switch', name: 'Database operation', property: 'authDb', propertyType: 'msg', rules: operations.map((v) => ({ t: 'eq', v, vt: 'str' })), checkall: 'true', repair: false, outputs: operations.length, x: 740, y: 280, wires: operations.map((op, i) => [`rx_auth_db_${i}`]) });
 operations.forEach((op, index) => {
   const [collection, operation] = op.split('.');

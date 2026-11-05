@@ -16,7 +16,7 @@ const invalid = request(); invalid.payload.history = [{ role: 'system', content:
 assert.equal(initialise(invalid, env)[1].statusCode, 400);
 let msg = initialise(request(), env)[0];
 const juniorRequest = request();
-juniorRequest.req.headers['x-ruhanex-role'] = 'JE';
+juniorRequest.req.headers['x-ruhanex-role'] = 'Line Supervisor';
 const junior = initialise(juniorRequest, env)[0];
 assert.equal(junior.aiChat.tools.length, 9);
 assert.equal(junior.aiChat.tools.some(tool => tool.name === 'get_energy_usage'), false);

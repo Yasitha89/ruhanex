@@ -1,8 +1,6 @@
 .ask-ai-launcher {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 999;
+  position: static;
+  flex-shrink: 0;
   border-radius: 24px;
   box-shadow: 0 6px 22px rgba(37, 99, 235, 0.25);
 }
@@ -34,7 +32,8 @@
   border: 0;
   object-position: center top;
 }
-.ask-ai-launcher { height: 56px; padding: 6px 18px 6px 8px; border-radius: 28px; }
+.ask-ai-launcher { height: 44px; padding: 4px 14px 4px 5px; border-radius: 24px; }
+.ask-ai-launcher .ruhana-avatar { width: 34px; height: 34px; }
 .ask-ai-welcome-icon .ruhana-avatar { width: 64px; height: 64px; }
 .ask-ai-message-author { display: flex; align-items: center; gap: 8px; }
 .ask-ai-message-author .ruhana-avatar { width: 32px; height: 32px; }
@@ -153,7 +152,8 @@
 .ask-ai-composer { flex-shrink: 0; }
 
 @media (max-width: 767px) {
-  .ask-ai-launcher { right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .ask-ai-launcher { width: 44px; padding: 4px; gap: 0; }
+  .ask-ai-launcher-label { display: none; }
   .ask-ai-content { padding: 20px 16px; }
   .ask-ai-composer { padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); }
 }

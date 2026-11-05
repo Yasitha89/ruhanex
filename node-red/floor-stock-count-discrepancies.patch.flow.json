@@ -1,0 +1,40 @@
+[
+  {
+    "id": "22067c251de74e14",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "FS: Verify ALL device summaries",
+    "func": "const f = msg.floorStock;\nif (!f) return null;\nconst rows = Array.isArray(msg.payload) ? msg.payload : [];\nconst byDevice = new Map();\nfor (const doc of rows) {\n    const s = doc?.lineStats || {};\n    if (s.device && !byDevice.has(String(s.device))) {\n        byDevice.set(String(s.device), s);\n    }\n}\nconst missing = [];\nconst invalid = [];\nconst discrepancies = [];\nfor (const id of f.expectedDevices) {\n    const s = byDevice.get(id);\n    if (!s || !Array.isArray(s.codeWiseProduction) || !s.codeWiseUpdatedAt) {\n        missing.push(id);\n        continue;\n    }\n    let sum = 0;\n    for (const entry of s.codeWiseProduction) {\n        const size = String(entry.tileSize || '').trim().toLowerCase();\n        const qty = Number(entry.tileCount);\n        if (!size || size === 'unknown' || !Number.isFinite(qty) || qty < 0) {\n            invalid.push(`${id}: invalid size/count in codeWiseProduction`);\n            break;\n        }\n        sum += qty;\n    }\n    const summaryCount = Number(s.tileCount);\n    if (Number.isFinite(summaryCount) && Math.abs(sum - summaryCount) > 0.001) {\n        discrepancies.push({device:id,summaryTiles:summaryCount,codeWiseTiles:sum,differenceTiles:sum-summaryCount});\n    }\n}\nif (missing.length || invalid.length) {\n    node.status({fill:'yellow',shape:'ring',text:`waiting ${f.snapshotId}, missing=${missing.length}, invalid=${invalid.length}`});\n    node.warn('Floor stock waiting: missing='+missing.join(', ')+'; invalid='+invalid.join('; '));\n    return null;\n}\nf.discrepancies = discrepancies;\nif (discrepancies.length) {\n    node.warn('Floor stock shift count discrepancies (using codeWiseProduction): '+JSON.stringify(discrepancies));\n}\nnode.status({fill:discrepancies.length?'yellow':'green',shape:'dot',text:`ready ${f.snapshotId}; mismatches=${discrepancies.length}`});\nf.lines = Object.fromEntries(f.expectedDevices.map(id => [id, byDevice.get(id)]));\nmsg.collection = 'floorStocks';\nmsg.operation = 'find';\nmsg.payload = [{}, {sort:{_id:-1},limit:1}];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 4360,
+    "y": 1300,
+    "wires": [
+      [
+        "aaaf68347d8d43b8"
+      ]
+    ]
+  },
+  {
+    "id": "33232c03a1704b68",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "FS: Build rolling snapshot",
+    "func": "const f=msg.floorStock;\nif(!f?.lines) return null;\nconst previous=(Array.isArray(msg.payload)?msg.payload:[])[0]||null;\nif(previous && String(previous._id)>=f.snapshotId) {\n node.status({fill:'blue',shape:'ring',text:`already saved or older: ${f.snapshotId}`});\n return null;\n}\nconst sizes=new Map();\nfunction item(key) {\n if(!sizes.has(key)) sizes.set(key,{tileSize:key,openingStock:0,kilnOutput:0,kedaOutput:0});\n return sizes.get(key);\n}\nfunction normalSize(x) {return String(x||'').trim().toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');}\nfunction area(size){const a=size.split('x').map(Number);return a.length===2&&a.every(n=>Number.isFinite(n)&&n>0)?a[0]*a[1]/10000:0;}\nfor(const old of previous?.stocks||[]) {\n const k=normalSize(old.tileSize);if(!k) continue;\n const x=item(k);x.openingStock=Number(old.closingStock||0);\n}\nfor(const id of f.expectedDevices) {\n const s=f.lines[id];const role=f.roles[id];\n for(const row of s.codeWiseProduction) {\n  const k=normalSize(row.tileSize);\n  const qty=Number(row.tileCount);\n  if(!k || k==='unknown' || !Number.isFinite(qty) || qty<0) {node.error(`Invalid code-wise production for ${id}`,msg);return null;}\n  if(role==='kiln') item(k).kilnOutput+=qty;\n  else item(k).kedaOutput+=qty;\n }\n}\nconst result=[...sizes.values()].map(s=>{\n const raw=s.openingStock+s.kilnOutput-s.kedaOutput;\n const closing=Math.max(0,raw);\n return {...s,rawClosingStock:raw,closingStock:closing,closingStockM2:Math.round(closing*area(s.tileSize)*100)/100,clampedToZero:raw<0};\n}).sort((a,b)=>a.tileSize.localeCompare(b.tileSize));\nconst from = f.shift==='06-14' ? `${f.shiftDate}T06:00:00+05:30` : f.shift==='14-22' ? `${f.shiftDate}T14:00:00+05:30` : `${f.shiftDate}T22:00:00+05:30`;\nconst end = Math.max(...f.expectedDevices.map(id=>Date.parse(f.lines[id].shiftEnd||'')));\nif(!Number.isFinite(end)) {node.error('Missing shiftEnd from line summaries',msg);return null;}\nconst doc={_id:f.snapshotId,shiftDate:f.shiftDate,shift:f.shift,\n shiftStart:new Date(from).toISOString(),shiftEnd:new Date(end).toISOString(),\n status:'completed',previousSnapshotId:previous?previous._id:null,\n expectedDevices:f.expectedDevices,productionCountDiscrepancies:f.discrepancies||[],stocks:result,\n totalFloorStockM2:Math.round(result.reduce((n,s)=>n+s.closingStockM2,0)*100)/100,\n calculatedAt:new Date().toISOString()};\nmsg.floorStockDocument=doc;\nmsg.collection='floorStocks';msg.operation='insertOne';msg.payload=[doc];\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 4930,
+    "y": 1300,
+    "wires": [
+      [
+        "d691be0026a04f80"
+      ]
+    ]
+  }
+]

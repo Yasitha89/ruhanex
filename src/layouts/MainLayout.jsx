@@ -50,7 +50,10 @@ export default function MainLayout() {
         </div>
 
         <div className="app-header-spacer" />
-        <HeaderBar />
+        <div className="app-header-actions">
+          {!user.mustChangePassword && !["Line Supervisor", "JE"].includes(user.role) && <AskAiDrawer />}
+          <HeaderBar />
+        </div>
       </Header>
 
       <Layout className="app-body">
@@ -72,8 +75,6 @@ export default function MainLayout() {
           </div>
         </Content>
       </Layout>
-
-      {!user.mustChangePassword && <AskAiDrawer />}
 
       <Drawer
         title="Navigation"

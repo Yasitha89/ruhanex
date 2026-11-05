@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Drawer, Grid, Input, Popover, Spin } from "antd";
+import { Alert, Button, Drawer, Grid, Input, Popover, Spin, theme } from "antd";
 import { SendOutlined, CloseOutlined } from "@ant-design/icons";
 import { useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
@@ -44,6 +44,7 @@ function RuhanaProfile({ label = "Ruhana" }) {
 }
 
 export default function AskAiDrawer() {
+  const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState({});
   const [threads, setThreads] = useState({});
@@ -121,17 +122,18 @@ export default function AskAiDrawer() {
   return (
     <>
       {!open && (
-        <Popover content={<RuhanaProfileCard />} trigger={["hover", "focus"]} placement="topRight">
+        <Popover content={<RuhanaProfileCard />} trigger={["hover", "focus"]} placement="bottomRight">
         <Button
           type="primary"
           size="large"
           icon={<RuhanaAvatar />}
           className="ask-ai-launcher"
+          style={{ backgroundColor: token.colorPrimaryActive, borderColor: token.colorPrimaryActive }}
           onClick={() => setOpen(true)}
           aria-label={heading}
           aria-haspopup="dialog"
         >
-          Ask Ruhana
+          <span className="ask-ai-launcher-label">Ask Ruhana</span>
         </Button>
         </Popover>
       )}

@@ -1,0 +1,426 @@
+[
+  {
+    "id": "rx_stock_gap_tab",
+    "type": "tab",
+    "label": "Stock snapshot gap recovery",
+    "info": "See stock-gap-saving.README.md. Replace old saving branches; connect completed code-wise update results to the matching entry. Single-flight queues per stock type."
+  },
+  {
+    "id": "rx_gap_floor_entry",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: QUEUED ENTRY after code-wise save",
+    "func": "const key='rx_gap_floor_queue'; const queue=flow.get(key)||[]; queue.push(msg); flow.set(key,queue); if(flow.get('rx_gap_floor_busy')) return null; flow.set('rx_gap_floor_busy',true); return queue.shift();",
+    "outputs": 1,
+    "x": 200,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_start",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: validate completed shift",
+    "func": "const next=(function startStock(msg, global, kind) {\n  const t = msg.codeWiseTarget || {};\n  const result = Array.isArray(msg.payload) ? msg.payload[0] : msg.payload;\n  if (!t.shiftDate || !['06-14', '14-22', '22-06'].includes(t.shift)) throw Error('Missing target shift/date.');\n  if (!msg.manualStock && (!result?.acknowledged || Number(result.matchedCount) !== 1)) throw Error('Code-wise shift write was not confirmed.');\n  const start = Date.parse(`${t.shiftDate}T${t.shift === '06-14' ? '06' : t.shift === '14-22' ? '14' : '22'}:00:00+05:30`);\n  const end = start + 8 * 3600000;\n  if (!Number.isFinite(start) || end > Date.now()) throw Error('Target shift is invalid or not completed.');\n  const cfg = global.get('counterConfig') || {};\n  const overrides = global.get(kind === 'floor' ? 'floorStockDeviceRoles' : 'carStockDeviceRoles') || {};\n  const positive = kind === 'floor' ? 'kiln' : 'glaze';\n  const negative = kind === 'floor' ? 'keda' : 'kiln';\n  const roles = {};\n  for (const [id, c] of Object.entries(cfg)) {\n    if (c?.enabled !== true) continue;\n    let role = String(overrides[id] || '').toLowerCase();\n    if (![positive, negative].includes(role)) {\n      const line = String(c.line || id);\n      role = /kiln|firing/i.test(line) ? 'kiln' : /keda|sorting/i.test(line) ? 'keda' : /glaze|glazing/i.test(line) ? 'glaze' : '';\n    }\n    if ([positive, negative].includes(role)) roles[id] = role;\n  }\n  if (![positive, negative].every(role => Object.values(roles).includes(role))) throw Error('Configure enabled source and destination counters.');\n  if (!msg.manualStock && !roles[t.device]) return null;\n  msg.stockGap = { kind, positive, negative, roles, start, end, id: `${t.shiftDate}|${t.shift}`, shiftDate: t.shiftDate, shift: t.shift };\n  msg.payload = [{}, { sort: { _id: -1 }, limit: 1 }];\n  return msg;\n})(msg,global,'floor'); return next ? [next,null] : [null,msg];",
+    "outputs": 2,
+    "x": 490,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_latest"
+      ],
+      [
+        "rx_gap_floor_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_latest",
+    "z": "rx_stock_gap_tab",
+    "type": "mongodb4",
+    "name": "floor: find floorStocks",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "floorStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 760,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_query",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: query entire snapshot gap",
+    "func": "return (function queryStockGap(msg) {\n  const f = msg.stockGap;\n  f.previous = (Array.isArray(msg.payload) ? msg.payload : [])[0] || null;\n  if (f.previous && String(f.previous._id) >= f.id) { msg.payload = { skipped: true, reason: 'Target already saved or older than latest snapshot', snapshotId: f.id }; return [null, msg]; }\n  f.from = f.previous ? Date.parse(f.previous.shiftEnd) : f.start;\n  const step = 8 * 3600000;\n  if (!Number.isFinite(f.from) || f.from > f.start || (f.end - f.from) % step !== 0) throw Error('Previous snapshot end is not a valid preceding shift boundary.');\n  if (f.end - f.from > 93 * 86400000) throw Error('Snapshot gap exceeds 93 days; recover in smaller chronological batches.');\n  const ids = JSON.stringify(Object.keys(f.roles));\n  msg.query = `from(bucket:\"RCLH\")\n |> range(start:time(v:${JSON.stringify(new Date(f.from).toISOString())}),stop:time(v:${JSON.stringify(new Date(f.end).toISOString())}))\n |> filter(fn:(r)=>r._measurement==\"tile_events\" and r._field==\"count_delta\")\n |> filter(fn:(r)=>contains(value:r.device,set:${ids}))\n |> filter(fn:(r)=>r._value>0)\n |> map(fn:(r)=>({r with tileSize:if exists r.tileSize then r.tileSize else \"unknown\"}))\n |> group(columns:[\"device\",\"tileSize\"])\n |> aggregateWindow(every:8h,offset:30m,fn:sum,createEmpty:false)\n |> keep(columns:[\"device\",\"tileSize\",\"_time\",\"_value\"])`;\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "x": 1010,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_influx"
+      ],
+      [
+        "rx_gap_floor_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_influx",
+    "z": "rx_stock_gap_tab",
+    "type": "influxdb in",
+    "influxdb": "eef122fda5340dac",
+    "name": "floor: Influx shift buckets since last snapshot",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 1300,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_build",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: calculate chronological closing balances",
+    "func": "return (function buildStockGap(msg) {\n  const f = msg.stockGap;\n  if (!Array.isArray(msg.payload)) throw Error('Influx did not return an array.');\n  const step = 8 * 3600000;\n  const normal = size => String(size || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n  const area = size => { const parts = size.split('x').map(Number); return parts.length === 2 && parts.every(n => Number.isFinite(n) && n > 0) ? parts[0] * parts[1] / 10000 : 0; };\n  const sizes = new Map(), windows = new Map();\n  const get = size => {\n    if (!sizes.has(size)) sizes.set(size, { tileSize: size, openingStock: 0, incoming: 0, outgoing: 0, closingStock: 0, zeroClampAdjustment: 0 });\n    return sizes.get(size);\n  };\n  for (const s of f.previous?.stocks || []) {\n    const size = normal(s.tileSize), count = Number(s.closingStock);\n    if (!area(size) || !Number.isFinite(count) || count < 0) throw Error('Invalid previous snapshot stock.');\n    const item = get(size); item.openingStock = count; item.closingStock = count;\n  }\n  for (const row of msg.payload) {\n    const size = normal(row.tileSize), count = Number(row._value), end = Date.parse(row._time), role = f.roles[String(row.device)];\n    if (!area(size) || !Number.isFinite(count) || count < 0 || !role || !Number.isFinite(end) || end <= f.from || end > f.end || (end - f.from) % step !== 0) throw Error('Invalid production bucket from Influx. Snapshot not saved.');\n    get(size);\n    if (!windows.has(end)) windows.set(end, new Map());\n    const bucket = windows.get(end);\n    const value = bucket.get(size) || { incoming: 0, outgoing: 0 };\n    value[role === f.positive ? 'incoming' : 'outgoing'] += count;\n    bucket.set(size, value);\n  }\n  const intervalBalances = [];\n  for (let end = f.from + step; end <= f.end; end += step) {\n    const balances = [];\n    for (const item of sizes.values()) {\n      const delta = windows.get(end)?.get(item.tileSize) || { incoming: 0, outgoing: 0 };\n      const opening = item.closingStock;\n      const raw = opening + delta.incoming - delta.outgoing;\n      item.incoming += delta.incoming; item.outgoing += delta.outgoing;\n      item.zeroClampAdjustment += Math.max(0, -raw);\n      item.closingStock = Math.max(0, raw);\n      balances.push({ tileSize: item.tileSize, openingStock: opening, incoming: delta.incoming, outgoing: delta.outgoing, rawClosingStock: raw, closingStock: item.closingStock });\n    }\n    intervalBalances.push({ shiftEnd: new Date(end).toISOString(), stocks: balances });\n  }\n  const round = n => Math.round((n + Number.EPSILON) * 100) / 100;\n  const stocks = [...sizes.values()].map(item => ({ tileSize: item.tileSize, openingStock: item.openingStock,\n    [f.kind === 'floor' ? 'kilnOutput' : 'glazeOutput']: item.incoming,\n    [f.kind === 'floor' ? 'kedaOutput' : 'kilnOutput']: item.outgoing,\n    rawClosingStock: item.openingStock + item.incoming - item.outgoing,\n    zeroClampAdjustment: item.zeroClampAdjustment, closingStock: item.closingStock,\n    closingStockM2: round(item.closingStock * area(item.tileSize)), clampedToZero: item.zeroClampAdjustment > 0,\n  })).sort((a, b) => a.tileSize.localeCompare(b.tileSize));\n  const doc = { _id: f.id, shiftDate: f.shiftDate, shift: f.shift, shiftStart: new Date(f.start).toISOString(), shiftEnd: new Date(f.end).toISOString(),\n    status: 'completed', source: 'mongo+influx', previousSnapshotId: f.previous?._id || null,\n    calculationFrom: new Date(f.from).toISOString(), calculationTo: new Date(f.end).toISOString(),\n    coveredShifts: intervalBalances.length, recoveredMissingShifts: Math.max(0, intervalBalances.length - 1),\n    openingStockInitializedToZero: !f.previous, expectedDevices: Object.keys(f.roles), stocks,\n    intervalBalances, [f.kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: round(stocks.reduce((sum, row) => sum + row.closingStockM2, 0)),\n    calculatedAt: new Date().toISOString() };\n  msg.stockGapDocument = doc; msg.payload = [doc]; return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1590,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_insert"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_insert",
+    "z": "rx_stock_gap_tab",
+    "type": "mongodb4",
+    "name": "floor: insertOne floorStocks",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "floorStocks",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 1880,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_confirmed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_confirmed",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: verify snapshot insert",
+    "func": "const result=Array.isArray(msg.payload)?msg.payload[0]:msg.payload; if(result?.acknowledged!==true) throw Error('Snapshot insert was not acknowledged'); msg.payload={saved:true,id:msg.stockGapDocument._id,calculationFrom:msg.stockGapDocument.calculationFrom,coveredShifts:msg.stockGapDocument.coveredShifts};return msg;",
+    "outputs": 1,
+    "x": 2110,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_finish",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: release queue",
+    "func": "const queue=flow.get('rx_gap_floor_queue')||[]; const next=queue.shift(); flow.set('rx_gap_floor_queue',queue); if(!next) flow.set('rx_gap_floor_busy',false); return [msg,next||null];",
+    "outputs": 2,
+    "x": 2350,
+    "y": 180,
+    "wires": [
+      [
+        "rx_gap_floor_debug"
+      ],
+      [
+        "rx_gap_floor_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_catch",
+    "z": "rx_stock_gap_tab",
+    "type": "catch",
+    "name": "floor: save failed",
+    "scope": [
+      "rx_gap_floor_start",
+      "rx_gap_floor_latest",
+      "rx_gap_floor_query",
+      "rx_gap_floor_influx",
+      "rx_gap_floor_build",
+      "rx_gap_floor_insert",
+      "rx_gap_floor_confirmed"
+    ],
+    "uncaught": false,
+    "x": 800,
+    "y": 280,
+    "wires": [
+      [
+        "rx_gap_floor_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_error",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "floor: report failure and release queue",
+    "func": "const message=String(msg.error?.message||'Snapshot failed');node.warn(message);msg.payload={saved:false,error:message,snapshotId:msg.stockGap?.id};delete msg.error;return msg;",
+    "outputs": 1,
+    "x": 1160,
+    "y": 280,
+    "wires": [
+      [
+        "rx_gap_floor_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_floor_debug",
+    "z": "rx_stock_gap_tab",
+    "type": "debug",
+    "name": "floor: snapshot result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 2590,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "rx_gap_car_entry",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: QUEUED ENTRY after code-wise save",
+    "func": "const key='rx_gap_car_queue'; const queue=flow.get(key)||[]; queue.push(msg); flow.set(key,queue); if(flow.get('rx_gap_car_busy')) return null; flow.set('rx_gap_car_busy',true); return queue.shift();",
+    "outputs": 1,
+    "x": 200,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_start",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: validate completed shift",
+    "func": "const next=(function startStock(msg, global, kind) {\n  const t = msg.codeWiseTarget || {};\n  const result = Array.isArray(msg.payload) ? msg.payload[0] : msg.payload;\n  if (!t.shiftDate || !['06-14', '14-22', '22-06'].includes(t.shift)) throw Error('Missing target shift/date.');\n  if (!msg.manualStock && (!result?.acknowledged || Number(result.matchedCount) !== 1)) throw Error('Code-wise shift write was not confirmed.');\n  const start = Date.parse(`${t.shiftDate}T${t.shift === '06-14' ? '06' : t.shift === '14-22' ? '14' : '22'}:00:00+05:30`);\n  const end = start + 8 * 3600000;\n  if (!Number.isFinite(start) || end > Date.now()) throw Error('Target shift is invalid or not completed.');\n  const cfg = global.get('counterConfig') || {};\n  const overrides = global.get(kind === 'floor' ? 'floorStockDeviceRoles' : 'carStockDeviceRoles') || {};\n  const positive = kind === 'floor' ? 'kiln' : 'glaze';\n  const negative = kind === 'floor' ? 'keda' : 'kiln';\n  const roles = {};\n  for (const [id, c] of Object.entries(cfg)) {\n    if (c?.enabled !== true) continue;\n    let role = String(overrides[id] || '').toLowerCase();\n    if (![positive, negative].includes(role)) {\n      const line = String(c.line || id);\n      role = /kiln|firing/i.test(line) ? 'kiln' : /keda|sorting/i.test(line) ? 'keda' : /glaze|glazing/i.test(line) ? 'glaze' : '';\n    }\n    if ([positive, negative].includes(role)) roles[id] = role;\n  }\n  if (![positive, negative].every(role => Object.values(roles).includes(role))) throw Error('Configure enabled source and destination counters.');\n  if (!msg.manualStock && !roles[t.device]) return null;\n  msg.stockGap = { kind, positive, negative, roles, start, end, id: `${t.shiftDate}|${t.shift}`, shiftDate: t.shiftDate, shift: t.shift };\n  msg.payload = [{}, { sort: { _id: -1 }, limit: 1 }];\n  return msg;\n})(msg,global,'car'); return next ? [next,null] : [null,msg];",
+    "outputs": 2,
+    "x": 490,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_latest"
+      ],
+      [
+        "rx_gap_car_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_latest",
+    "z": "rx_stock_gap_tab",
+    "type": "mongodb4",
+    "name": "car: find carStocks",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "carStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 760,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_query",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: query entire snapshot gap",
+    "func": "return (function queryStockGap(msg) {\n  const f = msg.stockGap;\n  f.previous = (Array.isArray(msg.payload) ? msg.payload : [])[0] || null;\n  if (f.previous && String(f.previous._id) >= f.id) { msg.payload = { skipped: true, reason: 'Target already saved or older than latest snapshot', snapshotId: f.id }; return [null, msg]; }\n  f.from = f.previous ? Date.parse(f.previous.shiftEnd) : f.start;\n  const step = 8 * 3600000;\n  if (!Number.isFinite(f.from) || f.from > f.start || (f.end - f.from) % step !== 0) throw Error('Previous snapshot end is not a valid preceding shift boundary.');\n  if (f.end - f.from > 93 * 86400000) throw Error('Snapshot gap exceeds 93 days; recover in smaller chronological batches.');\n  const ids = JSON.stringify(Object.keys(f.roles));\n  msg.query = `from(bucket:\"RCLH\")\n |> range(start:time(v:${JSON.stringify(new Date(f.from).toISOString())}),stop:time(v:${JSON.stringify(new Date(f.end).toISOString())}))\n |> filter(fn:(r)=>r._measurement==\"tile_events\" and r._field==\"count_delta\")\n |> filter(fn:(r)=>contains(value:r.device,set:${ids}))\n |> filter(fn:(r)=>r._value>0)\n |> map(fn:(r)=>({r with tileSize:if exists r.tileSize then r.tileSize else \"unknown\"}))\n |> group(columns:[\"device\",\"tileSize\"])\n |> aggregateWindow(every:8h,offset:30m,fn:sum,createEmpty:false)\n |> keep(columns:[\"device\",\"tileSize\",\"_time\",\"_value\"])`;\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "x": 1010,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_influx"
+      ],
+      [
+        "rx_gap_car_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_influx",
+    "z": "rx_stock_gap_tab",
+    "type": "influxdb in",
+    "influxdb": "eef122fda5340dac",
+    "name": "car: Influx shift buckets since last snapshot",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 1300,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_build",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: calculate chronological closing balances",
+    "func": "return (function buildStockGap(msg) {\n  const f = msg.stockGap;\n  if (!Array.isArray(msg.payload)) throw Error('Influx did not return an array.');\n  const step = 8 * 3600000;\n  const normal = size => String(size || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n  const area = size => { const parts = size.split('x').map(Number); return parts.length === 2 && parts.every(n => Number.isFinite(n) && n > 0) ? parts[0] * parts[1] / 10000 : 0; };\n  const sizes = new Map(), windows = new Map();\n  const get = size => {\n    if (!sizes.has(size)) sizes.set(size, { tileSize: size, openingStock: 0, incoming: 0, outgoing: 0, closingStock: 0, zeroClampAdjustment: 0 });\n    return sizes.get(size);\n  };\n  for (const s of f.previous?.stocks || []) {\n    const size = normal(s.tileSize), count = Number(s.closingStock);\n    if (!area(size) || !Number.isFinite(count) || count < 0) throw Error('Invalid previous snapshot stock.');\n    const item = get(size); item.openingStock = count; item.closingStock = count;\n  }\n  for (const row of msg.payload) {\n    const size = normal(row.tileSize), count = Number(row._value), end = Date.parse(row._time), role = f.roles[String(row.device)];\n    if (!area(size) || !Number.isFinite(count) || count < 0 || !role || !Number.isFinite(end) || end <= f.from || end > f.end || (end - f.from) % step !== 0) throw Error('Invalid production bucket from Influx. Snapshot not saved.');\n    get(size);\n    if (!windows.has(end)) windows.set(end, new Map());\n    const bucket = windows.get(end);\n    const value = bucket.get(size) || { incoming: 0, outgoing: 0 };\n    value[role === f.positive ? 'incoming' : 'outgoing'] += count;\n    bucket.set(size, value);\n  }\n  const intervalBalances = [];\n  for (let end = f.from + step; end <= f.end; end += step) {\n    const balances = [];\n    for (const item of sizes.values()) {\n      const delta = windows.get(end)?.get(item.tileSize) || { incoming: 0, outgoing: 0 };\n      const opening = item.closingStock;\n      const raw = opening + delta.incoming - delta.outgoing;\n      item.incoming += delta.incoming; item.outgoing += delta.outgoing;\n      item.zeroClampAdjustment += Math.max(0, -raw);\n      item.closingStock = Math.max(0, raw);\n      balances.push({ tileSize: item.tileSize, openingStock: opening, incoming: delta.incoming, outgoing: delta.outgoing, rawClosingStock: raw, closingStock: item.closingStock });\n    }\n    intervalBalances.push({ shiftEnd: new Date(end).toISOString(), stocks: balances });\n  }\n  const round = n => Math.round((n + Number.EPSILON) * 100) / 100;\n  const stocks = [...sizes.values()].map(item => ({ tileSize: item.tileSize, openingStock: item.openingStock,\n    [f.kind === 'floor' ? 'kilnOutput' : 'glazeOutput']: item.incoming,\n    [f.kind === 'floor' ? 'kedaOutput' : 'kilnOutput']: item.outgoing,\n    rawClosingStock: item.openingStock + item.incoming - item.outgoing,\n    zeroClampAdjustment: item.zeroClampAdjustment, closingStock: item.closingStock,\n    closingStockM2: round(item.closingStock * area(item.tileSize)), clampedToZero: item.zeroClampAdjustment > 0,\n  })).sort((a, b) => a.tileSize.localeCompare(b.tileSize));\n  const doc = { _id: f.id, shiftDate: f.shiftDate, shift: f.shift, shiftStart: new Date(f.start).toISOString(), shiftEnd: new Date(f.end).toISOString(),\n    status: 'completed', source: 'mongo+influx', previousSnapshotId: f.previous?._id || null,\n    calculationFrom: new Date(f.from).toISOString(), calculationTo: new Date(f.end).toISOString(),\n    coveredShifts: intervalBalances.length, recoveredMissingShifts: Math.max(0, intervalBalances.length - 1),\n    openingStockInitializedToZero: !f.previous, expectedDevices: Object.keys(f.roles), stocks,\n    intervalBalances, [f.kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: round(stocks.reduce((sum, row) => sum + row.closingStockM2, 0)),\n    calculatedAt: new Date().toISOString() };\n  msg.stockGapDocument = doc; msg.payload = [doc]; return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1590,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_insert"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_insert",
+    "z": "rx_stock_gap_tab",
+    "type": "mongodb4",
+    "name": "car: insertOne carStocks",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "carStocks",
+    "operation": "insertOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 1880,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_confirmed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_confirmed",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: verify snapshot insert",
+    "func": "const result=Array.isArray(msg.payload)?msg.payload[0]:msg.payload; if(result?.acknowledged!==true) throw Error('Snapshot insert was not acknowledged'); msg.payload={saved:true,id:msg.stockGapDocument._id,calculationFrom:msg.stockGapDocument.calculationFrom,coveredShifts:msg.stockGapDocument.coveredShifts};return msg;",
+    "outputs": 1,
+    "x": 2110,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_finish",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: release queue",
+    "func": "const queue=flow.get('rx_gap_car_queue')||[]; const next=queue.shift(); flow.set('rx_gap_car_queue',queue); if(!next) flow.set('rx_gap_car_busy',false); return [msg,next||null];",
+    "outputs": 2,
+    "x": 2350,
+    "y": 520,
+    "wires": [
+      [
+        "rx_gap_car_debug"
+      ],
+      [
+        "rx_gap_car_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_catch",
+    "z": "rx_stock_gap_tab",
+    "type": "catch",
+    "name": "car: save failed",
+    "scope": [
+      "rx_gap_car_start",
+      "rx_gap_car_latest",
+      "rx_gap_car_query",
+      "rx_gap_car_influx",
+      "rx_gap_car_build",
+      "rx_gap_car_insert",
+      "rx_gap_car_confirmed"
+    ],
+    "uncaught": false,
+    "x": 800,
+    "y": 620,
+    "wires": [
+      [
+        "rx_gap_car_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_error",
+    "z": "rx_stock_gap_tab",
+    "type": "function",
+    "name": "car: report failure and release queue",
+    "func": "const message=String(msg.error?.message||'Snapshot failed');node.warn(message);msg.payload={saved:false,error:message,snapshotId:msg.stockGap?.id};delete msg.error;return msg;",
+    "outputs": 1,
+    "x": 1160,
+    "y": 620,
+    "wires": [
+      [
+        "rx_gap_car_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_gap_car_debug",
+    "z": "rx_stock_gap_tab",
+    "type": "debug",
+    "name": "car: snapshot result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 2590,
+    "y": 520,
+    "wires": []
+  }
+]

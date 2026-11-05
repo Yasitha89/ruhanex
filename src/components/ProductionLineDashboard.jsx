@@ -51,6 +51,7 @@ import {
 } from "../api/settingsApi";
 import { TILE_SIZE_OPTIONS } from "../utils/constants";
 import { calculateTileSqm } from "../utils/shiftUtils";
+import { getSizeProduction } from "../utils/sizeProduction";
 import {
   DOWNTIME_TYPES,
   PLANNED_CATEGORIES,
@@ -532,6 +533,10 @@ export default function ProductionLineDashboard({ line, title = line }) {
      */
     if (isSelectedCurrentShift && live) {
       return {
+        sizeWiseProduction: live.sizeWiseProduction,
+        multipleTileSizes: live.multipleTileSizes,
+        tileSizes: live.tileSizes,
+        codeWiseProduction: live.codeWiseProduction,
         tileSize: live.tileSize,
         tileCount: Number(live.shiftCount || 0),
         production: Number(
@@ -594,6 +599,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
 
     return {};
   }, [isSelectedCurrentShift, live, selectedShiftStats]);
+
+  const selectedSizeProduction = useMemo(() => getSizeProduction(selectedDetails), [selectedDetails]);
 
   const selectedCodeProduction = useMemo(() => {
     const rows = selectedShiftStats?.codeWiseProduction;
@@ -1248,21 +1255,24 @@ export default function ProductionLineDashboard({ line, title = line }) {
               <div className="production-shift-section-title">
                 Shift Overview
               </div>
-              <Descriptions
-                className="production-shift-details"
-                layout="vertical"
-                column={2}
-                colon={false}
-                size="small"
-                bordered={false}
-              >
-                <Descriptions.Item label="Tile Size">
-                  {selectedDetails.tileSize || "-"}
-                </Descriptions.Item>
-                <Descriptions.Item label="Tile Count">
-                  {fmt(selectedDetails.tileCount, 0)} tiles
-                </Descriptions.Item>
-              </Descriptions>
+              <Table
+                  size="small"
+                  rowKey="tileSize"
+                  pagination={false}
+                  dataSource={selectedSizeProduction}
+                  summary={() => (
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0}><Text strong>Total</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right"><Text strong>{fmt(selectedDetails.tileCount, 0)}</Text></Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} align="right"><Text strong>{fmt(selectedDetails.production, 2)}</Text></Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  )}
+                  columns={[
+                    { title: "Tile Size", dataIndex: "tileSize" },
+                    { title: "Tiles", dataIndex: "tileCount", align: "right", render: value => fmt(value, 0) },
+                    { title: "Production (m²)", dataIndex: "production", align: "right", render: value => fmt(value, 2) },
+                  ]}
+                />
               <div className="production-shift-section-title">
                 Time &amp; Downtime
               </div>
