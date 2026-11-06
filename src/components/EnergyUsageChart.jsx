@@ -29,31 +29,6 @@ function formatNumber(value) {
   });
 }
 
-function getBucketKey(timestamp, interval) {
-  if (!timestamp) return "";
-
-  if (interval === "1y") {
-    return formatColomboApiTime(timestamp, "YYYY");
-  }
-
-  if (interval === "1mo") {
-    return formatColomboApiTime(timestamp, "YYYY-MM");
-  }
-
-  if (interval === "1d") {
-    return formatColomboApiTime(timestamp, "YYYY-MM-DD");
-  }
-
-  if (interval === "6h") {
-    const day = formatColomboApiTime(timestamp, "YYYY-MM-DD");
-    const hour = Number(formatColomboApiTime(timestamp, "HH"));
-    const bucketHour = Math.floor((Number.isFinite(hour) ? hour : 0) / 6) * 6;
-    return `${day} ${String(bucketHour).padStart(2, "0")}:00`;
-  }
-
-  return formatColomboApiTime(timestamp, "YYYY-MM-DD HH");
-}
-
 function getAxisLabel(timestamp, interval) {
   if (interval === "1y") {
     return formatColomboApiTime(timestamp, "YYYY");
@@ -86,7 +61,7 @@ function getTooltipLabel(timestamp, interval) {
   return formatColomboApiTime(timestamp, "DD MMMM YYYY, HH:mm");
 }
 
-function buildStackedData(data, interval) {
+function buildStackedData(data) {
   const grouped = new Map();
 
   for (const record of data || []) {
@@ -94,7 +69,7 @@ function buildStackedData(data, interval) {
 
     const meterKey = getEnergyMeterKey(record);
 
-    const bucketKey = getBucketKey(record.intervalStart, interval);
+    const bucketKey = `${record.intervalStart}|${record.intervalEnd}`;
     if (!bucketKey) continue;
 
     const value = Math.max(0, Number(record.energyUsageKwh) || 0);

@@ -87,6 +87,8 @@ export const getHistoricalEnergyUsage = async ({
   fromTime,
   toTime,
   interval,
+  dailyStart,
+  dailyEnd,
 }) => {
   const hasMeters = Array.isArray(meters) && meters.length > 0;
   const hasMultipleDeviceIds = Array.isArray(deviceIds) && deviceIds.length > 0;
@@ -96,6 +98,11 @@ export const getHistoricalEnergyUsage = async ({
     to_time: toTime,
     interval,
   };
+  if (dailyStart || dailyEnd) {
+    params.daily_start = dailyStart;
+    params.daily_end = dailyEnd;
+    params.timezone = "Asia/Colombo";
+  }
 
   /*
    * Supported request modes

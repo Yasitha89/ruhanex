@@ -35,6 +35,7 @@ import {
   getEnergyMeters,
 } from "../utils/energyMeter";
 import EnergyUsageChart from "../components/EnergyUsageChart";
+import { clipEnergyWindowInterval } from "../utils/energyWindowInterval";
 
 const { RangePicker } = DatePicker;
 const { Text, Title } = Typography;
@@ -426,6 +427,11 @@ export default function EnergyHistoricalReport() {
   // these as a comma-separated parameter, for example: device_ids=1,3.
   const [energyDeviceIds, setEnergyDeviceIds] = useState([1]);
   const [energyInterval, setEnergyInterval] = useState("1h");
+  const [energyHoursMode, setEnergyHoursMode] = useState("all");
+  const [energyDailyHours, setEnergyDailyHours] = useState([
+    dayjs("2000-01-01T18:30:00"), dayjs("2000-01-01T22:30:00"),
+  ]);
+  const [energyServerTotal, setEnergyServerTotal] = useState(null);
 
   const [energyData, setEnergyData] = useState([]);
   const [energyLoading, setEnergyLoading] = useState(false);
@@ -515,12 +521,21 @@ export default function EnergyHistoricalReport() {
       return null;
     }
 
-    return {
-      panel,
-      deviceIds: validDeviceIds,
-      fromTime: energyDateRange[0].startOf("day").toISOString(),
-      toTime: energyDateRange[1].endOf("day").toISOString(),
-    };
+    const fromTime = dayjs(`${energyDateRange[0].format("YYYY-MM-DD")}T00:00:00+05:30`).toISOString();
+    const toTime = dayjs(`${energyDateRange[1].add(1, "day").format("YYYY-MM-DD")}T00:00:00+05:30`).toISOString();
+    let dailyWindow = {};
+    if (energyHoursMode === "custom") {
+      if (!energyDailyHours[0] || !energyDailyHours[1] || energyDailyHours[0].format("HH:mm") === energyDailyHours[1].format("HH:mm")) {
+        message.warning("Select different daily start and end times.");
+        return null;
+      }
+      if (Date.parse(toTime) - Date.parse(fromTime) > 366 * 86400000) {
+        message.warning("Select at most 366 days when filtering daily hours.");
+        return null;
+      }
+      dailyWindow = { dailyStart: energyDailyHours[0].format("HH:mm"), dailyEnd: energyDailyHours[1].format("HH:mm") };
+    }
+    return { panel, deviceIds: validDeviceIds, fromTime, toTime, ...dailyWindow };
   };
 
   const loadElectricityData = async () => {
@@ -592,7 +607,7 @@ export default function EnergyHistoricalReport() {
         .map((record, index) =>
           normalizeEnergyUsageRecord(
             {
-              ...record,
+              ...clipEnergyWindowInterval(record, result?.dailyWindow, result?.fromTime || request.fromTime, result?.toTime || request.toTime),
 
               panel: record.panel ?? request.panel ?? "",
               device_id: record.device_id ?? "",
@@ -608,6 +623,7 @@ export default function EnergyHistoricalReport() {
         );
 
       setEnergyData(normalized);
+      setEnergyServerTotal(typeof result?.totalEnergyUsageKwh === "number" ? result.totalEnergyUsageKwh : null);
 
       if (!normalized.length) {
         message.info("No energy usage data found");
@@ -616,6 +632,7 @@ export default function EnergyHistoricalReport() {
       console.error("Energy usage history error:", error);
 
       message.error(
+        error?.response?.data?.error ||
         error?.response?.data?.message ||
           error?.message ||
           "Unable to load energy usage",
@@ -628,11 +645,12 @@ export default function EnergyHistoricalReport() {
   };
 
   const totalEnergyUsage = useMemo(() => {
+    if (energyServerTotal !== null) return energyServerTotal;
     return energyData.reduce(
       (total, item) => total + (Number(item.energyUsageKwh) || 0),
       0,
     );
-  }, [energyData]);
+  }, [energyData, energyServerTotal]);
 
   const exportElectricityExcel = async () => {
     if (!electricityData.length) {
@@ -760,27 +778,12 @@ export default function EnergyHistoricalReport() {
     // when future multi-panel selection includes the same device ID on two panels.
     const meters = getEnergyMeters(energyData);
 
-    const getBucketKey = (timestamp) => {
-      if (!timestamp) return "";
-      if (energyInterval === "1y") return dayjs(timestamp).format("YYYY");
-      if (energyInterval === "1mo") return dayjs(timestamp).format("YYYY-MM");
-      if (energyInterval === "1d") return dayjs(timestamp).format("YYYY-MM-DD");
-
-      if (energyInterval === "6h") {
-        const local = dayjs(timestamp);
-        const bucketHour = Math.floor(local.hour() / 6) * 6;
-        return `${local.format("YYYY-MM-DD")} ${String(bucketHour).padStart(2, "0")}:00`;
-      }
-
-      return dayjs(timestamp).format("YYYY-MM-DD HH");
-    };
-
     const grouped = new Map();
 
     for (const record of energyData) {
       if (!record?.intervalStart) continue;
 
-      const bucketKey = getBucketKey(record.intervalStart);
+      const bucketKey = `${record.intervalStart}|${record.intervalEnd}`;
       if (!bucketKey) continue;
 
       const meterKey = getEnergyMeterKey(record);
@@ -1244,6 +1247,43 @@ export default function EnergyHistoricalReport() {
             style={{ width: "100%", marginTop: 6 }}
           />
         </Col>
+
+        <Col xs={24} sm={12} md={6} lg={4}>
+          <Text strong>Daily hours</Text>
+          <Select
+            value={energyHoursMode}
+            options={[{ value: "all", label: "All hours" }, { value: "custom", label: "Selected hours" }]}
+            onChange={value => { setEnergyHoursMode(value); setEnergyData([]); }}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </Col>
+
+        {energyHoursMode === "custom" && (
+          <Col xs={24} sm={12} md={10} lg={7}>
+            <Text strong>Time window (Sri Lanka)</Text>
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <TimePicker
+                aria-label="Daily start time"
+                value={energyDailyHours[0]}
+                format="HH:mm"
+                onChange={value => { setEnergyDailyHours(previous => [value, previous[1]]); setEnergyData([]); }}
+                style={{ width: "50%" }}
+                placeholder="Start"
+              />
+              <TimePicker
+                aria-label="Daily end time"
+                value={energyDailyHours[1]}
+                format="HH:mm"
+                onChange={value => { setEnergyDailyHours(previous => [previous[0], value]); setEnergyData([]); }}
+                style={{ width: "50%" }}
+                placeholder="End"
+              />
+            </div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Applies each day. An earlier end time continues overnight.
+            </Text>
+          </Col>
+        )}
 
         <Col flex="none">
           <Button

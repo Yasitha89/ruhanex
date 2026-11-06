@@ -17,6 +17,7 @@ const cases = {
   get_line_settings: { line: 'Keda 1' }, get_design_codes: { tileSize: '', search: '' },
   get_machines: { line: 'Keda 1', search: '' }, get_device_inventory: {},
   get_current_energy: { deviceId: '1' },
+  get_energy_time_window: { panel: 'ATS1', deviceIds: '1,3,5', ...time, dailyStart: '18:30', dailyEnd: '22:30', interval: '1d' },
   get_energy_usage: { source: 'ceb', ...time, interval: '1d' },
   get_electricity_history: { deviceId: '3', ...time, interval: '1h' },
   get_live_energy_series: { source: 'generator', metric: 'active_power_kw', range: '24h' },
@@ -71,5 +72,5 @@ assert.equal(msg.aiChat.input.filter((item) => item.type === 'function_call_outp
 // without imports, URL globals or access to the generator's lexical variables.
 const sandbox = { msg: { req: { headers: { authorization: 'Bearer t' } }, payload: { message: 'Test' } }, env };
 const initial = vm.runInNewContext(nodes.find((n) => n.id === 'ai_chat_init').func.replace(/^/, '(function(){\n') + '\n})()', sandbox);
-assert.equal(initial[0].aiChat.tools.length, 17);
-console.log('PASS: all 17 schemas/routes, energy parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, energy and downtime rollups, stock warnings, request cache, exported sandbox execution.');
+assert.equal(initial[0].aiChat.tools.length, 18);
+console.log('PASS: all 18 schemas/routes, energy parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, energy and downtime rollups, stock warnings, request cache, exported sandbox execution.');
