@@ -15,7 +15,7 @@ export default function Sidebar() {
   const { user } = useAuth();
   const filterMenu = (items) => items.filter((item) => {
     if (["Line Supervisor", "JE"].includes(user.role)) return ["dashboard", "production", "keda1", "keda2", "keda3", "kiln1", "kiln2", "gl1", "gl3"].includes(item.key);
-    return user.role === "Admin" || !["administration", "users"].includes(item.key);
+    return user.role === "Admin" || !["administration", "users", "process"].includes(item.key);
   }).map((item) => ({ ...item, ...(item.children ? { children: filterMenu(item.children) } : {}) }));
 
   const selectedKey = (() => {
@@ -44,6 +44,8 @@ export default function Sidebar() {
         return "production_history";
       case "/production_breakdown":
         return "production_breakdown";
+      case "/process/milling/temperature":
+        return "milling";
       case "/historical_data_energy":
         return "energy_history";
       case "/settings":
@@ -119,6 +121,12 @@ export default function Sidebar() {
           ],
         },
 
+        {
+          key: "process",
+          icon: <AppstoreOutlined />,
+          label: "Process",
+          children: [{ key: "milling", label: "Milling", onClick: () => navigate("/process/milling/temperature") }],
+        },
         {
           key: "energy",
           icon: <ThunderboltOutlined />,

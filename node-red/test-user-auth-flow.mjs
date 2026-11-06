@@ -132,6 +132,7 @@ assert.equal(guard({ ...settings, stopDelayMs: 1 })[1].statusCode, 403);
 for (const role of ['Admin', 'Manager', 'Line Supervisor']) {
   assert.equal(canAccessPage(role, '/dashboard'), true);
   assert.equal(canAccessPage(role, '/users'), role === 'Admin');
+  assert.equal(canAccessPage(role, '/process/milling/temperature'), role === 'Admin');
   assert.equal(canAccessPage(role, '/settings'), role !== 'Line Supervisor');
 }
 for (const node of nodes.filter(node => node.type === 'function')) new Function('msg', 'env', 'global', 'flow', 'Buffer', 'node', node.func);

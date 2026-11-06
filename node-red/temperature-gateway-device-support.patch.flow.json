@@ -1,0 +1,141 @@
+[
+  {
+    "id": "fn_post_device",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Validate + build update",
+    "func": "const temperatureError=(function validateTemperatureDevice(msg, buildControllers) {\n  const body = msg.payload || {};\n  const key = String(msg.req?.params?.key || body.key || '').trim();\n  if (body.deviceType !== 'temperature_gateway' && !key.startsWith('RX-TEMP-')) return null;\n  const fail = error => { msg.statusCode = 400; msg.headers = { 'Content-Type': 'application/json' }; msg.payload = { success: false, error }; return [null, msg]; };\n  if (body.deviceType !== 'temperature_gateway' || !/^RX-TEMP-\\d+$/.test(key)) return fail('Temperature gateway IDs must use RX-TEMP followed by the numeric short ID.');\n  if (body.shortId != null && String(body.shortId).trim() !== key.slice('RX-TEMP-'.length)) return fail('Gateway short ID must match the device key.');\n  try { body.slaves = buildControllers(key, body.slaves); }\n  catch (error) { return fail(error.message); }\n  return null;\n})(msg,function buildTemperatureControllers(gatewayId, slaves) {\n  if (!Array.isArray(slaves) || !slaves.length || slaves.length > 6) throw new Error('Configure between 1 and 6 temperature controllers.');\n  const addresses = new Set(), slots = new Set(), identifiers = new Set();\n  return slaves.map((slave, index) => {\n    const slaveId = Number(slave?.slaveId), controllerSlot = Number(slave?.controllerSlot ?? index + 1);\n    if (!Number.isInteger(slaveId) || slaveId < 1 || slaveId > 247) throw new Error('Modbus slave IDs must be whole numbers from 1 to 247.');\n    if (!Number.isInteger(controllerSlot) || controllerSlot < 1 || controllerSlot > 6) throw new Error('Controller slots must be whole numbers from 1 to 6.');\n    if (addresses.has(slaveId) || slots.has(controllerSlot)) throw new Error('Each controller needs a unique slave ID and controller slot.');\n    addresses.add(slaveId); slots.add(controllerSlot);\n    const deviceLabel = String(slave.deviceLabel || '').trim();\n    if (!deviceLabel || deviceLabel.length > 100) throw new Error('Enter a controller label of at most 100 characters.');\n    const controllerId = String(slave.controllerId || `${gatewayId}-T${String(controllerSlot).padStart(2, '0')}`).trim();\n    if (controllerId.length > 100 || identifiers.has(controllerId)) throw new Error('Controller IDs must be unique and at most 100 characters.');\n    identifiers.add(controllerId);\n    return { controllerId, controllerSlot, slaveId, enabled: slave.enabled !== false, deviceLabel };\n  });\n}); if(temperatureError)return temperatureError;\nconst body = msg.payload || {};\nconst routeKey = msg.req?.params?.key;\nconst key = String(routeKey || body.key || \"\").trim();\nif (!key || !/^RX-(CNT|ENM|TEMP)-\\d+$/.test(key)) {\n  msg.statusCode = 400;\n  msg.payload = {success:false,error:\"Invalid device key\"};\n  return [null,msg];\n}\nconst device = {...body};\ndelete device.key;\ndevice.shortId = String(device.shortId || key.split(\"-\").pop());\ndevice.updatedAt = new Date().toISOString();\nconst set = {};\nset[`devices.${key}`] = device;\nset.updatedAt = device.updatedAt;\nmsg.deviceKey = key;\nmsg.savedDevice = device;\nmsg.payload = [\n  {_id:\"devices\"},\n  {$set:set, $setOnInsert:{createdAt:device.updatedAt}},\n  {upsert:true}\n];\nreturn [msg,null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 180,
+    "wires": [
+      [
+        "mongo_post_device"
+      ],
+      [
+        "http_post_response"
+      ]
+    ]
+  },
+  {
+    "id": "fn_put_device",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Validate + build update",
+    "func": "const temperatureError=(function validateTemperatureDevice(msg, buildControllers) {\n  const body = msg.payload || {};\n  const key = String(msg.req?.params?.key || body.key || '').trim();\n  if (body.deviceType !== 'temperature_gateway' && !key.startsWith('RX-TEMP-')) return null;\n  const fail = error => { msg.statusCode = 400; msg.headers = { 'Content-Type': 'application/json' }; msg.payload = { success: false, error }; return [null, msg]; };\n  if (body.deviceType !== 'temperature_gateway' || !/^RX-TEMP-\\d+$/.test(key)) return fail('Temperature gateway IDs must use RX-TEMP followed by the numeric short ID.');\n  if (body.shortId != null && String(body.shortId).trim() !== key.slice('RX-TEMP-'.length)) return fail('Gateway short ID must match the device key.');\n  try { body.slaves = buildControllers(key, body.slaves); }\n  catch (error) { return fail(error.message); }\n  return null;\n})(msg,function buildTemperatureControllers(gatewayId, slaves) {\n  if (!Array.isArray(slaves) || !slaves.length || slaves.length > 6) throw new Error('Configure between 1 and 6 temperature controllers.');\n  const addresses = new Set(), slots = new Set(), identifiers = new Set();\n  return slaves.map((slave, index) => {\n    const slaveId = Number(slave?.slaveId), controllerSlot = Number(slave?.controllerSlot ?? index + 1);\n    if (!Number.isInteger(slaveId) || slaveId < 1 || slaveId > 247) throw new Error('Modbus slave IDs must be whole numbers from 1 to 247.');\n    if (!Number.isInteger(controllerSlot) || controllerSlot < 1 || controllerSlot > 6) throw new Error('Controller slots must be whole numbers from 1 to 6.');\n    if (addresses.has(slaveId) || slots.has(controllerSlot)) throw new Error('Each controller needs a unique slave ID and controller slot.');\n    addresses.add(slaveId); slots.add(controllerSlot);\n    const deviceLabel = String(slave.deviceLabel || '').trim();\n    if (!deviceLabel || deviceLabel.length > 100) throw new Error('Enter a controller label of at most 100 characters.');\n    const controllerId = String(slave.controllerId || `${gatewayId}-T${String(controllerSlot).padStart(2, '0')}`).trim();\n    if (controllerId.length > 100 || identifiers.has(controllerId)) throw new Error('Controller IDs must be unique and at most 100 characters.');\n    identifiers.add(controllerId);\n    return { controllerId, controllerSlot, slaveId, enabled: slave.enabled !== false, deviceLabel };\n  });\n}); if(temperatureError)return temperatureError;\nconst body = msg.payload || {};\nconst routeKey = msg.req?.params?.key;\nconst key = String(routeKey || body.key || \"\").trim();\nif (!key || !/^RX-(CNT|ENM|TEMP)-\\d+$/.test(key)) {\n  msg.statusCode = 400;\n  msg.payload = {success:false,error:\"Invalid device key\"};\n  return [null,msg];\n}\nconst device = {...body};\ndelete device.key;\ndevice.shortId = String(device.shortId || key.split(\"-\").pop());\ndevice.updatedAt = new Date().toISOString();\nconst set = {};\nset[`devices.${key}`] = device;\nset.updatedAt = device.updatedAt;\nmsg.deviceKey = key;\nmsg.savedDevice = device;\nmsg.payload = [\n  {_id:\"devices\"},\n  {$set:set, $setOnInsert:{createdAt:device.updatedAt}},\n  {upsert:true}\n];\nreturn [msg,null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 260,
+    "wires": [
+      [
+        "mongo_put_device"
+      ],
+      [
+        "http_put_response"
+      ]
+    ]
+  },
+  {
+    "id": "fn_post_response",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Save device response",
+    "func": "const devices = global.get(\"devices\") || {};\nif (msg.deviceKey && msg.savedDevice) {\n    devices[msg.deviceKey] = msg.savedDevice;\n}\nglobal.set(\"devices\", devices);\n(function syncTemperatureDevices(global) {\n  const devices = global.get('devices') || {};\n  const gateways = {};\n  for (const [id, cfg] of Object.entries(devices)) {\n    if (cfg?.deviceType === 'temperature_gateway' || id.startsWith('RX-TEMP-')) gateways[id] = cfg;\n  }\n  global.set('temperatureGatewayConfig', gateways);\n  global.set('temperatureGatewayConfigReady', true);\n})(global);\n\n// Keep derived runtime caches synchronized immediately after MongoDB succeeds.\nconst counterConfig = {};\nconst gateways = {};\nconst labels = {};\nfor (const [key, cfg] of Object.entries(devices)) {\n    const type = String(cfg?.deviceType || \"\").toLowerCase();\n    if (key.startsWith(\"RX-CNT-\") || type === \"counter\") counterConfig[key] = cfg;\n    if (key.startsWith(\"RX-ENM-\") || type === \"energy_gateway\") {\n        gateways[key] = cfg;\n        for (const slave of (Array.isArray(cfg?.slaves) ? cfg.slaves : [])) {\n            const id = Number(slave?.slaveId);\n            if (!Number.isInteger(id) || id <= 0) continue;\n            const panel = String(slave?.panelId || slave?.panel || \"UNKNOWN\");\n            if (!labels[panel]) labels[panel] = {};\n            labels[panel][id] = String(slave?.deviceLabel || slave?.label || `Device ${id}`);\n        }\n    }\n}\nglobal.set(\"counterConfig\", counterConfig);\nglobal.set(\"energyGatewayConfig\", gateways);\nglobal.set(\"energyDeviceConfig\", labels);\nglobal.set(\"counterConfigReady\", true);\nglobal.set(\"energyDeviceConfigReady\", true);\nglobal.set(\"devicesReady\", true);\n\nmsg.statusCode = 200;\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.payload = {success:true, key:msg.deviceKey, device:msg.savedDevice};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 820,
+    "y": 180,
+    "wires": [
+      [
+        "http_post_response"
+      ]
+    ]
+  },
+  {
+    "id": "fn_put_response",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Save device response",
+    "func": "const devices = global.get(\"devices\") || {};\nif (msg.deviceKey && msg.savedDevice) {\n    devices[msg.deviceKey] = msg.savedDevice;\n}\nglobal.set(\"devices\", devices);\n(function syncTemperatureDevices(global) {\n  const devices = global.get('devices') || {};\n  const gateways = {};\n  for (const [id, cfg] of Object.entries(devices)) {\n    if (cfg?.deviceType === 'temperature_gateway' || id.startsWith('RX-TEMP-')) gateways[id] = cfg;\n  }\n  global.set('temperatureGatewayConfig', gateways);\n  global.set('temperatureGatewayConfigReady', true);\n})(global);\n\n// Keep derived runtime caches synchronized immediately after MongoDB succeeds.\nconst counterConfig = {};\nconst gateways = {};\nconst labels = {};\nfor (const [key, cfg] of Object.entries(devices)) {\n    const type = String(cfg?.deviceType || \"\").toLowerCase();\n    if (key.startsWith(\"RX-CNT-\") || type === \"counter\") counterConfig[key] = cfg;\n    if (key.startsWith(\"RX-ENM-\") || type === \"energy_gateway\") {\n        gateways[key] = cfg;\n        for (const slave of (Array.isArray(cfg?.slaves) ? cfg.slaves : [])) {\n            const id = Number(slave?.slaveId);\n            if (!Number.isInteger(id) || id <= 0) continue;\n            const panel = String(slave?.panelId || slave?.panel || \"UNKNOWN\");\n            if (!labels[panel]) labels[panel] = {};\n            labels[panel][id] = String(slave?.deviceLabel || slave?.label || `Device ${id}`);\n        }\n    }\n}\nglobal.set(\"counterConfig\", counterConfig);\nglobal.set(\"energyGatewayConfig\", gateways);\nglobal.set(\"energyDeviceConfig\", labels);\nglobal.set(\"counterConfigReady\", true);\nglobal.set(\"energyDeviceConfigReady\", true);\nglobal.set(\"devicesReady\", true);\n\nmsg.statusCode = 200;\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.payload = {success:true, key:msg.deviceKey, device:msg.savedDevice};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 820,
+    "y": 260,
+    "wires": [
+      [
+        "http_put_response"
+      ]
+    ]
+  },
+  {
+    "id": "fn_delete_response",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Delete response",
+    "func": "const devices = global.get(\"devices\") || {};\nif (msg.deviceKey) delete devices[msg.deviceKey];\nglobal.set(\"devices\", devices);\n(function syncTemperatureDevices(global) {\n  const devices = global.get('devices') || {};\n  const gateways = {};\n  for (const [id, cfg] of Object.entries(devices)) {\n    if (cfg?.deviceType === 'temperature_gateway' || id.startsWith('RX-TEMP-')) gateways[id] = cfg;\n  }\n  global.set('temperatureGatewayConfig', gateways);\n  global.set('temperatureGatewayConfigReady', true);\n})(global);\n\nconst counterConfig = {};\nconst gateways = {};\nconst labels = {};\nfor (const [key, cfg] of Object.entries(devices)) {\n    const type = String(cfg?.deviceType || \"\").toLowerCase();\n    if (key.startsWith(\"RX-CNT-\") || type === \"counter\") counterConfig[key] = cfg;\n    if (key.startsWith(\"RX-ENM-\") || type === \"energy_gateway\") {\n        gateways[key] = cfg;\n        for (const slave of (Array.isArray(cfg?.slaves) ? cfg.slaves : [])) {\n            const id = Number(slave?.slaveId);\n            if (!Number.isInteger(id) || id <= 0) continue;\n            const panel = String(slave?.panelId || slave?.panel || \"UNKNOWN\");\n            if (!labels[panel]) labels[panel] = {};\n            labels[panel][id] = String(slave?.deviceLabel || slave?.label || `Device ${id}`);\n        }\n    }\n}\nglobal.set(\"counterConfig\", counterConfig);\nglobal.set(\"energyGatewayConfig\", gateways);\nglobal.set(\"energyDeviceConfig\", labels);\n\nmsg.statusCode=200;\nmsg.headers={\"Content-Type\":\"application/json\"};\nmsg.payload={success:true, key:msg.deviceKey};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 820,
+    "y": 340,
+    "wires": [
+      [
+        "http_delete_response"
+      ]
+    ]
+  },
+  {
+    "id": "c69ec7943d734c03",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Devices -> Global Context",
+    "func": "const doc = Array.isArray(msg.payload) ? (msg.payload[0] || {}) : (msg.payload || {});\nconst devices = (doc.devices && typeof doc.devices === \"object\") ? doc.devices : {};\n\n// Keep the complete device registry available to every Ruhanex flow.\nglobal.set(\"devices\", devices);\n(function syncTemperatureDevices(global) {\n  const devices = global.get('devices') || {};\n  const gateways = {};\n  for (const [id, cfg] of Object.entries(devices)) {\n    if (cfg?.deviceType === 'temperature_gateway' || id.startsWith('RX-TEMP-')) gateways[id] = cfg;\n  }\n  global.set('temperatureGatewayConfig', gateways);\n  global.set('temperatureGatewayConfigReady', true);\n})(global);\n\n// Existing counter flow expects global.counterConfig. Build it dynamically\n// from the central device registry, so no device list is hard-coded here.\nconst counterConfig = {};\nfor (const [key, cfg] of Object.entries(devices)) {\n    const type = String(cfg?.deviceType || \"\").toLowerCase();\n    if (key.startsWith(\"RX-CNT-\") || type === \"counter\") {\n        counterConfig[key] = cfg || {};\n    }\n}\n\nglobal.set(\"counterConfig\", counterConfig);\nglobal.set(\"devicesReady\", true);\nglobal.set(\"counterConfigReady\", true);\n\nnode.status({\n    fill: Object.keys(counterConfig).length ? \"green\" : \"yellow\",\n    shape: \"dot\",\n    text: `${Object.keys(counterConfig).length} counters loaded`\n});\n\nmsg.configPart = \"devices\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1210,
+    "y": 680,
+    "wires": [
+      [
+        "529c177482b7eb7b"
+      ]
+    ]
+  },
+  {
+    "id": "88737009f81f9070",
+    "type": "function",
+    "z": "d999af8b1f23ffdc",
+    "name": "Energy Config -> Global Context",
+    "func": "const doc = Array.isArray(msg.payload) ? (msg.payload[0] || {}) : (msg.payload || {});\nconst devices = (doc.devices && typeof doc.devices === \"object\") ? doc.devices : {};\n\n// Complete registry shared with counter/admin flows.\nglobal.set(\"devices\", devices);\n(function syncTemperatureDevices(global) {\n  const devices = global.get('devices') || {};\n  const gateways = {};\n  for (const [id, cfg] of Object.entries(devices)) {\n    if (cfg?.deviceType === 'temperature_gateway' || id.startsWith('RX-TEMP-')) gateways[id] = cfg;\n  }\n  global.set('temperatureGatewayConfig', gateways);\n  global.set('temperatureGatewayConfigReady', true);\n})(global);\n\nconst gateways = {};\nconst labels = {};\n\nfor (const [gatewayId, cfg] of Object.entries(devices)) {\n    const type = String(cfg?.deviceType || \"\").toLowerCase();\n    if (!gatewayId.startsWith(\"RX-ENM-\") && type !== \"energy_gateway\") continue;\n\n    gateways[gatewayId] = cfg || {};\n\n    for (const slave of (Array.isArray(cfg?.slaves) ? cfg.slaves : [])) {\n        const slaveId = Number(slave?.slaveId);\n        if (!Number.isInteger(slaveId) || slaveId <= 0) continue;\n\n        const panel = String(slave?.panelId || slave?.panel || \"UNKNOWN\").trim();\n        const label = String(slave?.deviceLabel || slave?.label || `Device ${slaveId}`).trim();\n        if (!labels[panel]) labels[panel] = {};\n        labels[panel][slaveId] = label;\n    }\n}\n\nglobal.set(\"energyGatewayConfig\", gateways);\nglobal.set(\"energyDeviceConfig\", labels);\nglobal.set(\"energyDeviceConfigReady\", true);\n\nnode.status({\n    fill: Object.keys(gateways).length ? \"green\" : \"yellow\",\n    shape: \"dot\",\n    text: `${Object.keys(gateways).length} energy gateways loaded`\n});\nreturn null;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1050,
+    "y": 260,
+    "wires": [
+      []
+    ]
+  }
+]

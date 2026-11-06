@@ -17,6 +17,7 @@ import GlazeLine1 from "./pages/GlazeLine1";
 import GlazeLine3 from "./pages/GlazeLine3";
 import HistoricalReport from "./pages/HistoricalReport";
 import ProductionBreakdownReport from "./pages/ProductionBreakdownReport";
+import MillingTemperature from "./pages/MillingTemperature";
 import EnergyDashboard from "./pages/EnergyDashboard";
 import EnergyOverview from "./pages/EnergyOverview";
 import EnergyHistoricalReport from "./pages/EnergyHistoricalReport";
@@ -51,6 +52,7 @@ function App() {
           <Route path="gl3" element={<GlazeLine3 />} />
           <Route path="historical_data" element={<HistoricalReport />} />
           <Route path="production_breakdown" element={<ProductionBreakdownReport />} />
+          <Route path="process/milling/temperature" element={<MillingTemperature />} />
           <Route
             path="settings"
             element={

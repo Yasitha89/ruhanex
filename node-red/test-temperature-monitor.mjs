@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { mergeTemperatureSeries, temperatureNumber, temperatureChartPoints } from '../src/utils/temperatureSeries.js';
+import { canAccessPage } from '../src/utils/permissions.js';
+const previous = [{ timestamp: '2026-11-07T04:30:00Z', pv: 100, sv: 110 }];
+const rows = mergeTemperatureSeries(previous, [{ timestamp: '2026-11-07T04:30:00Z', pv: 101, sv: 111 }, { timestamp: '2026-11-07T04:30:05Z', pv: null, sv: 0 }, { timestamp: 'bad', pv: 1, sv: 1 }], Date.parse('2026-11-07T04:29:00Z'), Date.parse('2026-11-07T04:31:00Z'));
+assert.equal(rows.length, 2);
+assert.equal(rows[0].pv, 101);
+assert.equal(rows[1].pv, null);
+assert.equal(rows[1].sv, 0);
+assert.equal(temperatureNumber(null), null);
+assert.equal(temperatureNumber(''), null);
+assert.equal(mergeTemperatureSeries(rows, [], Date.parse('2026-11-07T04:30:01Z'), Date.parse('2026-11-07T04:31:00Z')).length, 1);
+assert.equal(temperatureChartPoints([{ timestamp: 10000, pv: 1 }, { timestamp: 50000, pv: 2 }], 'pv', 5000)[1][1], null);
+assert.equal(canAccessPage('Manager', '/process/milling/temperature'), false);
+assert.equal(canAccessPage('Admin', '/process/milling/temperature'), true);
+assert.equal(canAccessPage('Line Supervisor', '/process/milling/temperature'), false);
+console.log('PASS: live sample replacement, rolling cutoff, invalid timestamps, null/zero preservation, missing-data gaps and process route access.');

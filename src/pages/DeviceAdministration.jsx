@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { PRODUCTION_LINE_OPTIONS } from "../utils/constants";
+import { buildTemperatureControllers } from "../utils/temperatureGateway";
 import {
   Alert,
   Button,
@@ -40,6 +41,7 @@ const { Title, Text } = Typography;
 const DEVICE_TYPES = [
   { value: "counter", label: "Counter" },
   { value: "energy_gateway", label: "Energy Gateway" },
+  { value: "temperature_gateway", label: "Temperature Gateway" },
 ];
 
 const DEFAULT_DEVICE = {
@@ -113,7 +115,7 @@ export default function DeviceAdministration() {
     form.setFieldsValue({
       ...DEFAULT_DEVICE,
       ...record,
-      slaves: Array.isArray(record.slaves) ? record.slaves : [],
+      slaves: Array.isArray(record.slaves) ? record.slaves.map((slave, index) => record.deviceType === "temperature_gateway" ? { ...slave, controllerSlot: slave.controllerSlot ?? index + 1, deviceLabel: slave.deviceLabel || slave.label || "" } : slave) : [],
     });
     setModalOpen(true);
   };
@@ -125,7 +127,7 @@ export default function DeviceAdministration() {
 
       const shortId = String(values.shortId || "").trim();
       const prefix =
-        values.deviceType === "energy_gateway" ? "RX-ENM" : "RX-CNT";
+        values.deviceType === "temperature_gateway" ? "RX-TEMP" : values.deviceType === "energy_gateway" ? "RX-ENM" : "RX-CNT";
       const deviceKey = editingKey || `${prefix}-${shortId}`;
 
       const payload = {
@@ -143,6 +145,8 @@ export default function DeviceAdministration() {
           machine: values.machine || "",
           displayTopic: values.displayTopic || "",
         });
+      } else if (values.deviceType === "temperature_gateway") {
+        Object.assign(payload, { location: values.location || "", slaves: buildTemperatureControllers(deviceKey, values.slaves) });
       } else {
         Object.assign(payload, {
           location: values.location || "",
@@ -210,7 +214,7 @@ export default function DeviceAdministration() {
       key: "deviceType",
       width: 140,
       render: (value) =>
-        value === "energy_gateway" ? "Energy Gateway" : "Counter",
+        DEVICE_TYPES.find(type => type.value === value)?.label || value || "Counter",
     },
     { title: "Tenant", dataIndex: "tenantId", key: "tenantId", width: 110 },
     { title: "Site", dataIndex: "siteId", key: "siteId", width: 100 },
@@ -218,7 +222,7 @@ export default function DeviceAdministration() {
       title: "Assignment",
       key: "assignment",
       render: (_, record) =>
-        record.deviceType === "energy_gateway"
+        ["energy_gateway", "temperature_gateway"].includes(record.deviceType)
           ? record.location || "-"
           : record.line || "-",
     },
@@ -351,7 +355,7 @@ export default function DeviceAdministration() {
                 label="Device Type"
                 rules={[{ required: true }]}
               >
-                <Select options={DEVICE_TYPES} disabled={Boolean(editingKey)} />
+                <Select options={DEVICE_TYPES} disabled={Boolean(editingKey)} onChange={() => form.setFieldsValue({ slaves: [] })} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
@@ -368,7 +372,7 @@ export default function DeviceAdministration() {
               >
                 <Input
                   placeholder={
-                    deviceType === "energy_gateway" ? "2000" : "1002"
+                    deviceType === "temperature_gateway" ? "3000" : deviceType === "energy_gateway" ? "2000" : "1002"
                   }
                   disabled={Boolean(editingKey)}
                 />
@@ -376,7 +380,7 @@ export default function DeviceAdministration() {
             </Col>
             <Col xs={24} md={8}>
               <Form.Item name="deviceLabel" label="Device Label">
-                <Input placeholder="Keda 3 Tile Counter" />
+                <Input placeholder={deviceType === "temperature_gateway" ? "Kiln Temperature Gateway" : "Device label"} />
               </Form.Item>
             </Col>
           </Row>
@@ -406,9 +410,9 @@ export default function DeviceAdministration() {
           ) : (
             <>
               <Form.Item name="location" label="Location">
-                <Input placeholder="Power Room" />
+                <Input placeholder={deviceType === "temperature_gateway" ? "Kiln Control Room" : "Power Room"} />
               </Form.Item>
-              <Divider orientation="left">Modbus Energy Meters</Divider>
+              <Divider orientation="left">{deviceType === "temperature_gateway" ? "Modbus Temperature Controllers" : "Modbus Energy Meters"}</Divider>
               <Form.List name="slaves">
                 {(fields, { add, remove }) => (
                   <>
@@ -433,7 +437,11 @@ export default function DeviceAdministration() {
                               />
                             </Form.Item>
                           </Col>
-                          <Col xs={24} md={5}>
+                          {deviceType === "temperature_gateway" ? <Col xs={24} md={5}>
+                            <Form.Item {...rest} name={[name, "controllerSlot"]} label="Controller Slot" rules={[{ required: true }]}>
+                              <InputNumber min={1} max={6} precision={0} style={{ width: "100%" }} />
+                            </Form.Item>
+                          </Col> : <Col xs={24} md={5}>
                             <Form.Item
                               {...rest}
                               name={[name, "panelId"]}
@@ -442,8 +450,12 @@ export default function DeviceAdministration() {
                             >
                               <Input placeholder="ATS" />
                             </Form.Item>
-                          </Col>
-                          <Col xs={24} md={5}>
+                          </Col>}
+                          {deviceType === "temperature_gateway" ? <Col xs={24} md={5}>
+                            <Form.Item {...rest} name={[name, "controllerId"]} label="Controller ID">
+                              <Input placeholder="Auto-generated" />
+                            </Form.Item>
+                          </Col> : <Col xs={24} md={5}>
                             <Form.Item
                               {...rest}
                               name={[name, "panelLabel"]}
@@ -451,15 +463,15 @@ export default function DeviceAdministration() {
                             >
                               <Input placeholder="ATS Panel" />
                             </Form.Item>
-                          </Col>
+                          </Col>}
                           <Col xs={24} md={6}>
                             <Form.Item
                               {...rest}
                               name={[name, "deviceLabel"]}
-                              label="Meter Label"
+                              label={deviceType === "temperature_gateway" ? "Controller Label" : "Meter Label"}
                               rules={[{ required: true }]}
                             >
-                              <Input placeholder="ATS CEB" />
+                              <Input placeholder={deviceType === "temperature_gateway" ? "Kiln Zone 1" : "ATS CEB"} />
                             </Form.Item>
                           </Col>
                           <Col xs={12} md={2}>
@@ -488,9 +500,14 @@ export default function DeviceAdministration() {
                       type="dashed"
                       block
                       icon={<PlusOutlined />}
-                      onClick={() => add({ enabled: true })}
+                      disabled={deviceType === "temperature_gateway" && fields.length >= 6}
+                      onClick={() => {
+                        const used = new Set((form.getFieldValue("slaves") || []).map(slave => Number(slave?.controllerSlot)));
+                        const controllerSlot = [1, 2, 3, 4, 5, 6].find(slot => !used.has(slot));
+                        add({ enabled: true, ...(deviceType === "temperature_gateway" ? { controllerSlot } : {}) });
+                      }}
                     >
-                      Add Energy Meter
+                      {deviceType === "temperature_gateway" ? "Add Temperature Controller" : "Add Energy Meter"}
                     </Button>
                   </>
                 )}
