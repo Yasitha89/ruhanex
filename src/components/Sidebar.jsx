@@ -42,6 +42,8 @@ export default function Sidebar() {
         return "energy_live";
       case "/historical_data":
         return "production_history";
+      case "/production_breakdown":
+        return "production_breakdown";
       case "/historical_data_energy":
         return "energy_history";
       case "/settings":
@@ -148,12 +150,17 @@ export default function Sidebar() {
           children: [
             {
               key: "production_history",
-              label: "Production History",
+              label: "Shifts Report",
               onClick: () => navigate("/historical_data"),
             },
             {
+              key: "production_breakdown",
+              label: "Production Report",
+              onClick: () => navigate("/production_breakdown"),
+            },
+            {
               key: "energy_history",
-              label: "Energy History",
+              label: "Energy Report",
               onClick: () => navigate("/historical_data_energy"),
             },
           ],

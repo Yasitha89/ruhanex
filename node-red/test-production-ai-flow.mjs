@@ -27,7 +27,7 @@ const originalRequest = msg.req;
 buildModelRequest(msg, env);
 assert.equal(msg.url, 'https://api.openai.com/v1/responses');
 assert.equal(msg.payload.store, false);
-assert.equal(msg.payload.tools.length, 18);
+assert.equal(msg.payload.tools.length, 19);
 const call = (id, args) => ({ type: 'function_call', call_id: id, name: 'get_monthly_production', arguments: JSON.stringify(args) });
 msg.statusCode = 200;
 msg.payload = { status: 'completed', output: [

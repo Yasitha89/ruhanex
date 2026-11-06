@@ -7,6 +7,7 @@ const kit = productionToolkit();
 const lines = ['Keda 1', 'Keda 2', 'Keda 3', 'Glaze Line 1', 'Glaze Line 2', 'Glaze Line 3', 'Kiln 1', 'Kiln 2', 'Kiln 3'];
 const time = { fromTime: '2026-10-01T00:00:00+05:30', toTime: '2026-11-01T00:00:00+05:30' };
 const cases = {
+  get_production_breakdown_report: { category: 'green', lines: '', ...time, breakdown: 'design' },
   get_monthly_production: { line: 'Keda 1', month: '2026-10' },
   get_daily_production: { line: 'Keda 1', date: new Date(Date.now() + 330 * 60000 - 6 * 3600000).toISOString().slice(0, 10) },
   get_shift_summary: { line: 'Keda 1', date: '2026-10-25', shift: '06-14' },
@@ -27,6 +28,21 @@ for (const tool of kit.tools(lines)) {
   assert.deepEqual(tool.parameters.required, Object.keys(tool.parameters.properties));
   assert(kit.plan(tool.name, cases[tool.name], lines).path.startsWith('/api/'));
 }
+const reportPlan = kit.plan('get_production_breakdown_report', cases.get_production_breakdown_report, lines);
+assert.equal(reportPlan.path, '/api/production/breakdown-report');
+assert.equal(reportPlan.query.lines, 'Glaze Line 1,Glaze Line 2,Glaze Line 3');
+assert.equal(reportPlan.query.breakdown, undefined);
+assert.equal(reportPlan.query.fromTime, time.fromTime);
+assert.throws(() => kit.plan('get_production_breakdown_report', { ...cases.get_production_breakdown_report, lines: 'Keda 1' }, lines));
+const report = kit.normalise('get_production_breakdown_report', { success: true, rowsBySize: [{ production: 999 }], rowsByDesign: [
+  { line: 'Glaze Line 1', month: '2026-10', production: 12, tileCount: 100, designCode: 'A', tileSize: '60x30' },
+  { line: 'Glaze Line 3', month: '2026-10', production: 8, tileCount: null, designCode: 'B', tileSize: '60x60' },
+], warnings: ['Partial telemetry'], unavailableLines: ['Glaze Line 2'] }, cases.get_production_breakdown_report);
+assert.equal(report.totalProduction, 20);
+assert.equal(report.totalTiles, null);
+assert.equal(report.rows.length, 2);
+assert.equal(report.rowsBySize, undefined);
+assert.ok(report.warnings.includes('Partial telemetry'));
 assert.deepEqual(kit.plan('get_energy_usage', cases.get_energy_usage, lines).query,
   { interval: '1d', panel: 'ATS1', device_ids: '1,3,5', from_time: time.fromTime, to_time: time.toTime });
 assert.equal(kit.plan('get_live_energy_series', cases.get_live_energy_series, lines).query.meters, 'ATS1:2,ATS1:4');
@@ -72,5 +88,5 @@ assert.equal(msg.aiChat.input.filter((item) => item.type === 'function_call_outp
 // without imports, URL globals or access to the generator's lexical variables.
 const sandbox = { msg: { req: { headers: { authorization: 'Bearer t' } }, payload: { message: 'Test' } }, env };
 const initial = vm.runInNewContext(nodes.find((n) => n.id === 'ai_chat_init').func.replace(/^/, '(function(){\n') + '\n})()', sandbox);
-assert.equal(initial[0].aiChat.tools.length, 18);
-console.log('PASS: all 18 schemas/routes, energy parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, energy and downtime rollups, stock warnings, request cache, exported sandbox execution.');
+assert.equal(initial[0].aiChat.tools.length, 19);
+console.log('PASS: all 19 schemas/routes, energy parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, energy and downtime rollups, stock warnings, request cache, exported sandbox execution.');

@@ -22,6 +22,14 @@ export const getProductionMonthlySummary = async (line, month) => {
   return response.data;
 };
 
+export const getProductionBreakdownReport = async ({ category, lines, fromDate, toDate, fromTime, toTime }) => {
+  const response = await api.get("/api/production/breakdown-report", {
+    params: { category, lines: lines.join(","), ...(fromTime && toTime ? { fromTime, toTime } : { fromDate, toDate }) },
+    timeout: 60000,
+  });
+  return response.data;
+};
+
 export const getProductionShiftCountSeries = async ({
   line,
   date,

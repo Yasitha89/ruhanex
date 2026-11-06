@@ -12,6 +12,12 @@ export function productionToolkit() {
     const device = enumeration(['1', '2', '3', '4', '5'], 'ATS1 meter: 1 ATS CEB, 2 ATS Generator, 3 MSB CEB, 4 MSB Generator, 5 ATS KEDA 2 (CEB).');
     const times = { fromTime: text('Inclusive ISO timestamp with Z or explicit UTC offset. Interpret user dates in Asia/Colombo.'), toTime: text('Exclusive ISO timestamp with Z or explicit UTC offset.') };
     return {
+      get_production_breakdown_report: spec('/api/production/breakdown-report', {
+        category: enumeration(['green', 'sorted', 'kiln'], 'Production stage: green=Glaze Line 1/2/3; sorted=Keda 1/2/3; kiln=Kiln 1/2/3.'),
+        lines: text('Comma-separated canonical line names within that category. Empty string selects all three lines.'),
+        ...times,
+        breakdown: enumeration(['size', 'design'], 'Choose size totals or design-code totals including tile size. Never add both breakdowns together.'),
+      }, 'Preferred multi-line production report for exact date/time periods, size comparisons and design-code analysis. At most 366 days. Fully covered completed shifts use MongoDB; partial/active/missing shifts and calendar-month boundaries use Influx. Returns monthly rows for selected lines, precise period boundaries and retrieval diagnostics. Missing sources/telemetry are not confirmed zero; see warnings. Do not add green/kiln/sorted as factory output because they are successive stages.'),
       get_monthly_production: spec('/api/production/monthly-summary', { line, month: text('YYYY-MM; any available historical month.') }, 'Monthly m² total, daily/shift breakdown, size totals and unique design-code totals. Prefer this for monthly, size or design comparisons. Current shift is included for the current production month. Do not sum totalProduction and its breakdowns again. Missing days mean missing records, not proven zero. The top-level run timeline is NOT returned by this deployed handler.'),
       get_daily_production: spec('/api/production/daily-line-summary', { line, date }, 'Current production-day overview only. The exported handler mixes current runtime with saved shifts; use get_historical_shifts for past dates. Not authoritative historical live status.'),
       get_shift_summary: spec('/api/production/shift-summary', { line, date, shift }, 'Detailed saved/current shift KPI, m² production, tiles, target, timing, downtime and code-wise production/timeline when available. lineStats:null means missing data. Quality is assumed 100%, not a measured reject rate.'),
@@ -48,7 +54,7 @@ export function productionToolkit() {
       const value = args[key];
       const property = route.properties[key];
       if (property.enum && !property.enum.includes(value)) throw new Error(`Invalid ${key}.`);
-      if (value.length > 200 || (!value.trim() && !['search', 'tileSize'].includes(key))) throw new Error(`Invalid ${key}.`);
+      if (value.length > 200 || (!value.trim() && !['search', 'tileSize', 'lines'].includes(key))) throw new Error(`Invalid ${key}.`);
       if (['date', 'fromDate', 'toDate'].includes(key) && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw new Error(`Invalid ${key}.`);
       if (key === 'month' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('Invalid month.');
       if (['fromTime', 'toTime'].includes(key) && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value)))) throw new Error(`Invalid ${key}; use an ISO timestamp with timezone.`);
@@ -60,6 +66,13 @@ export function productionToolkit() {
     if (args.interval && duration / windows[args.interval] > 5000) throw new Error('Too many sample buckets. Use a coarser interval.');
     const query = {};
     for (const key of keys) query[route.query[key] || key] = args[key];
+    if (name === 'get_production_breakdown_report') {
+      const categories = { green: ['Glaze Line 1', 'Glaze Line 2', 'Glaze Line 3'], sorted: ['Keda 1', 'Keda 2', 'Keda 3'], kiln: ['Kiln 1', 'Kiln 2', 'Kiln 3'] };
+      const selected = args.lines.trim() ? [...new Set(args.lines.split(',').map(line => line.trim()).filter(Boolean))] : categories[args.category];
+      if (!selected.length || selected.some(line => !categories[args.category].includes(line))) throw new Error('Select lines belonging to the production category.');
+      if (duration > 366 * 86400000) throw new Error('Production report supports at most 366 days.');
+      query.lines = selected.join(','); delete query.breakdown;
+    }
     const ids = args.source === 'ceb' ? [1, 3, 5] : args.source === 'generator' ? [2, 4] : [1, 2, 3, 4, 5];
     if (name === 'get_energy_time_window') {
       if (!/^[A-Za-z0-9 _.-]{1,64}$/.test(args.panel)) throw new Error('Invalid panel.');
@@ -91,6 +104,23 @@ export function productionToolkit() {
     const warnings = Array.isArray(data?.warnings) ? [...data.warnings] : [];
     const add = (note) => { if (!warnings.includes(note)) warnings.push(note); };
     if (data?.success === false) return data;
+    if (name === 'get_production_breakdown_report') {
+      const rows = args.breakdown === 'design' ? data.rowsByDesign : data.rowsBySize;
+      if (!Array.isArray(rows)) return { success: false, error: 'Production report breakdown missing.' };
+      const byLine = new Map(), byMonth = new Map();
+      let totalProduction = 0, totalTiles = 0;
+      for (const row of rows) {
+        const production = numeric(row.production), tiles = numeric(row.tileCount);
+        if (production === null || production < 0) return { success: false, error: 'Invalid production report values.' };
+        totalProduction += production; totalTiles = totalTiles === null || tiles === null ? null : totalTiles + tiles;
+        byLine.set(row.line, (byLine.get(row.line) || 0) + production);
+        byMonth.set(row.month, (byMonth.get(row.month) || 0) + production);
+      }
+      if (!rows.length) add('No matching source records were returned; this does not prove zero production.');
+      return { ...pick(data, ['success', 'source', 'category', 'lines', 'fromTime', 'toTime', 'requestedToTime', 'fromDate', 'toDate', 'asOf', 'retrieval', 'coverage', 'unavailableLines']),
+        breakdown: args.breakdown, rows, hasRecords: rows.length > 0, totalProduction, totalTiles,
+        byLine: [...byLine].map(([line, production]) => ({ line, production })), byMonth: [...byMonth].map(([month, production]) => ({ month, production })), warnings };
+    }
     if (name === 'get_device_inventory') {
       const source = data?.devices;
       if (!source || typeof source !== 'object') return { success: false, error: 'Invalid device inventory.' };
