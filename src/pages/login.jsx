@@ -23,7 +23,7 @@ export default function Login() {
   if (user) return <Navigate to={user.mustChangePassword ? '/profile' : '/dashboard'} replace />;
   return <div style={styles.container}><div style={styles.glassCard}>
     <img src="/logo.png" alt="Company Logo" style={styles.logo} />
-    <Title level={3} style={{color:'#fff',textAlign:'center'}}>Ruhanex Technologies</Title>
+    <Title level={3} style={{color:'#fff',textAlign:'center'}}>Ruhanex Technology</Title>
     {error && <Alert type="error" showIcon title={error} style={{marginBottom:16}} />}
     <Form layout="vertical" onFinish={onFinish} disabled={busy || sessionLoading}>
       <Form.Item name="username" rules={[{required:true}]}><Input prefix={<UserOutlined />} placeholder="Username" autoComplete="username" style={styles.input} /></Form.Item>

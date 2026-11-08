@@ -152,7 +152,7 @@ export default function AskAiDrawer() {
             <div className="ask-ai-welcome-icon"><RuhanaAvatar alt="Ruhana, your AI assistant" /></div>
             <div className="ask-ai-welcome-text">
               <h3>Hi, I’m Ruhana</h3>
-              <p>Ask me anything about your production efficiency, downtime, energy consumption, or line performance.</p>
+              <p>I'm your AI production assistant. Ask me anything about your production efficiency, downtime, energy consumption, or line performance.</p>
             </div>
           </div>
           <div className="ask-ai-prompts" aria-label="Suggested questions">

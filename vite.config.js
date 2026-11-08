@@ -26,7 +26,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "https://ruhanex.com",
+        target: "https://app.ruhanex.com",
         changeOrigin: true,
         secure: true,
       },
