@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Alert, Button, Card, Descriptions, Form, Input, Typography, message } from "antd";
 import { changePassword } from "../api/authApi";
 import { useAuth } from "../services/authContext";
+import NotificationSettings from "../components/NotificationSettings";
 
 export default function Profile() {
   const { user, clearSession } = useAuth();
@@ -29,6 +30,7 @@ export default function Profile() {
         <Form.Item name="confirmPassword" label="Confirm New Password" dependencies={["newPassword"]} rules={[{ required: true }, ({ getFieldValue }) => ({ validator: (_, value) => value === getFieldValue("newPassword") ? Promise.resolve() : Promise.reject(new Error("Passwords do not match.")) })]}><Input.Password autoComplete="new-password" maxLength={128} /></Form.Item>
         <Button type="primary" htmlType="submit" loading={busy}>Change Password</Button>
       </Form>
+      <NotificationSettings user={user} />
     </Card>
   );
 }

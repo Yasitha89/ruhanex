@@ -14,3 +14,7 @@ export const changePassword = (currentPassword, newPassword) => request("post", 
 export const getUsers = () => request("get", "/users");
 export const createUser = (values) => request("post", "/users", values);
 export const deleteUser = (username) => request("delete", `/users/${encodeURIComponent(username)}`);
+export const getPushPublicKey = () => request("get", "/push/public-key");
+export const subscribePush = (subscription, applicationServerKey) => request("post", "/push/subscribe", { subscription, applicationServerKey });
+export const unsubscribePush = (endpoint) => request("post", "/push/unsubscribe", { endpoint });
+export const testPush = () => request("post", "/push/test", {});
