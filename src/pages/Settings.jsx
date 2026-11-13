@@ -8,6 +8,7 @@ import {
   Divider,
   Form,
   InputNumber,
+  Modal,
   Select,
   Spin,
   Tabs,
@@ -22,6 +23,7 @@ import {
   saveLineSettings,
 } from "../api/settingsApi";
 import { buildLineSettingsPayload } from "../utils/lineSettings";
+import { RATED_SPEED_TILE_SIZES, GLAZE_TILE_SIZES, KILN_TILE_SIZES, ratedSpeedFor, validateRatedSpeeds } from "../utils/ratedLineSpeeds";
 import DowntimeCodesAdmin from "../components/DowntimeCodesAdmin";
 import "./Settings.css";
 
@@ -41,6 +43,13 @@ const DEFAULT_SETTINGS = {
 
 function LineSettingsForm({ line, administration }) {
   const [form] = Form.useForm();
+  const [speedForm] = Form.useForm();
+  const [speedModalOpen, setSpeedModalOpen] = useState(false);
+  const [speedSaving, setSpeedSaving] = useState(false);
+  const [ratedSpeeds, setRatedSpeeds] = useState({});
+  const sizes = RATED_SPEED_TILE_SIZES[line];
+  const isGlaze = Boolean(GLAZE_TILE_SIZES[line]);
+  const isKiln = Boolean(KILN_TILE_SIZES[line]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,6 +74,7 @@ function LineSettingsForm({ line, administration }) {
         throw new Error("Unable to load current line settings.");
       }
       form.setFieldsValue({ ...DEFAULT_SETTINGS, ...settings });
+      setRatedSpeeds(settings.savedSpeeds || {});
       setUpdatedAt(settings.updatedAt || result?.updatedAt || null);
       setLoaded(true);
     } catch (err) {
@@ -127,12 +137,40 @@ function LineSettingsForm({ line, administration }) {
     [form],
   );
 
-  const handleTileSizeChange = () => {
+  const handleTileSizeChange = (tileSize) => {
+    if (sizes) {
+      form.setFieldValue("lineSpeed", ratedSpeedFor(line, tileSize, ratedSpeeds));
+    }
     // A design belongs to a tile size. Clear the previous selection
     // whenever the size changes, then load designs for the new size.
     form.setFieldValue("designCode", "");
     setDesignOptions([]);
     searchDesignCodes("");
+  };
+
+  const saveSpeedPresets = async () => {
+    try {
+      const values = await speedForm.validateFields();
+      const speeds = validateRatedSpeeds(line, values.speeds);
+      setSpeedSaving(true);
+      const result = await saveLineSettings({ line, settingsAction: 'saveSpeeds', savedSpeeds: speeds });
+      if (result?.success === false) throw new Error(result.error || 'Unable to save rated speeds.');
+      const stored = result?.settings?.savedSpeeds;
+      if (!stored || Object.keys(stored).length !== Object.keys(speeds).length ||
+          Object.entries(speeds).some(([size, speed]) => JSON.stringify(validateRatedSpeeds(line, stored)?.[size]) !== JSON.stringify(speed))) {
+        throw new Error('The server did not confirm the speed presets. Deploy the updated rated-speed Node-RED patch.');
+      }
+      setRatedSpeeds(stored);
+      const selectedSpeed = ratedSpeedFor(line, form.getFieldValue('tileSize'), stored);
+      if (selectedSpeed !== undefined) form.setFieldValue('lineSpeed', selectedSpeed);
+      setUpdatedAt(result.settings.updatedAt || result.updatedAt || new Date().toISOString());
+      setSpeedModalOpen(false);
+      message.success(`${line} rated speeds saved`);
+    } catch (err) {
+      if (!err.errorFields) message.error(err.message || 'Unable to save rated speeds.');
+    } finally {
+      setSpeedSaving(false);
+    }
   };
 
   const handleSave = async (values) => {
@@ -148,7 +186,7 @@ function LineSettingsForm({ line, administration }) {
       if (!current || typeof current !== 'object' || Array.isArray(current)) {
         throw new Error('Unable to preserve the current line settings. Reload and try again.');
       }
-      const payload = buildLineSettingsPayload(line, current, values, administration);
+      const payload = buildLineSettingsPayload(line, current, { ...values, savedSpeeds: current.savedSpeeds }, administration);
 
       const result = await saveLineSettings(payload);
       if (result?.success === false) {
@@ -195,7 +233,7 @@ function LineSettingsForm({ line, administration }) {
         wrapperCol={{ xs: { span: 24 }, sm: { span: 16 }, md: { span: 12 } }}
         initialValues={DEFAULT_SETTINGS}
         onFinish={handleSave}
-        disabled={saving || loading || !loaded}
+        disabled={saving || speedSaving || loading || !loaded}
       >
         {!administration && <>
         <Form.Item
@@ -205,7 +243,7 @@ function LineSettingsForm({ line, administration }) {
         >
           <Select
             className="left-aligned-select"
-            options={TILE_SIZE_OPTIONS}
+            options={sizes ? sizes.map(value => ({ value, label: value })) : TILE_SIZE_OPTIONS}
             onChange={handleTileSizeChange}
           />
         </Form.Item>
@@ -243,12 +281,17 @@ function LineSettingsForm({ line, administration }) {
 
         <Form.Item
           label="Rated Line Speed"
+          extra={sizes ? "Select a tile size to apply its saved speed, or enter a speed manually." : undefined}
+        >
+          <div className="line-rated-speed-controls">
+          <Form.Item
           name="lineSpeed"
+          noStyle
           rules={[
             { required: true },
             {
               type: "number",
-              min: 1,
+              min: 0.01,
               message: "Line speed must be greater than zero",
             },
           ]}
@@ -258,9 +301,18 @@ function LineSettingsForm({ line, administration }) {
             min={0.1}
             step={0.1}
             precision={2}
-            style={{ width: "100%" }}
+            style={{ width: "100%", minWidth: 0, flex: 1 }}
             addonAfter="Tiles/min"
           />
+          </Form.Item>
+          {sizes && <Button onClick={() => {
+            speedForm.resetFields();
+            speedForm.setFieldsValue({ speeds: isKiln ? Object.fromEntries(sizes.map(size => [size, {
+              standardDailyOutputSqm: ratedSpeeds[size]?.standardDailyOutputSqm,
+            }])) : ratedSpeeds });
+            setSpeedModalOpen(true);
+          }}>Size speeds</Button>}
+          </div>
         </Form.Item>
 
         <Form.Item
@@ -355,6 +407,59 @@ function LineSettingsForm({ line, administration }) {
           </div>
         </Form.Item>
       </Form>
+      {sizes && !administration && <Modal
+        title={`${line} — Rated speeds by tile size`}
+        open={speedModalOpen}
+        onCancel={() => !speedSaving && setSpeedModalOpen(false)}
+        onOk={saveSpeedPresets}
+        okText="Save speeds"
+        confirmLoading={speedSaving}
+        cancelButtonProps={{ disabled: speedSaving }}
+        closable={!speedSaving}
+        maskClosable={!speedSaving}
+      >
+        <Typography.Paragraph type="secondary">{isKiln
+          ? 'Rated speed = standard output (m² per 24 hours) ÷ tile area (m²) ÷ 1,440 minutes. Enter full-capacity output without downtime allowances. Blank sizes have no preset.'
+          : isGlaze
+          ? 'Rated speed = press cycles per minute × tiles per press. Save both inputs for each size; leave both blank for no preset.'
+          : 'Save a rated speed in tiles/min for each size. Blank sizes have no preset.'} Other unsaved line settings are kept in the form.</Typography.Paragraph>
+        <Form form={speedForm} layout="horizontal" disabled={speedSaving}>
+          {isKiln && Object.values(ratedSpeeds).some(speed => speed && typeof speed === 'object' && ('cycleMinutes' in speed || 'tilesPerRow' in speed)) &&
+            <Alert type="info" showIcon style={{ marginBottom: 12 }} message="Replace the old cycle-based presets with standard daily outputs. Existing presets cannot be converted automatically." />}
+          {sizes.map(size => isKiln ? <div key={size} className="glaze-size-speed-row">
+            <Text strong>{size}</Text>
+              <Form.Item label="Standard output (m² / 24 hours)" name={['speeds', size, 'standardDailyOutputSqm']}
+                style={{ marginTop: 8, marginBottom: 8 }}
+                rules={[{ type: 'number', min: 0.01, message: 'Enter positive standard daily output' }]}>
+                <InputNumber min={0.01} step={1} precision={2} style={{ width: '100%' }} />
+              </Form.Item>
+            <Form.Item noStyle shouldUpdate>
+              {() => {
+                const speed = ratedSpeedFor(line, size, speedForm.getFieldValue('speeds') || {});
+                return <Text type="secondary">Rated speed: {speed === undefined ? '—' : speed.toLocaleString('en-US', { maximumFractionDigits: 2 })} tiles/min</Text>;
+              }}
+            </Form.Item>
+          </div> : isGlaze ? <div key={size} className="glaze-size-speed-row">
+            <Text strong>{size}</Text>
+            <div className="glaze-size-speed-inputs">
+              <Form.Item label="Press cycles/min" name={['speeds', size, 'pressCyclesPerMinute']}
+                rules={[{ type: 'number', min: 0.01, message: 'Enter positive cycles/min' }]}>
+                <InputNumber min={0.01} step={0.1} precision={2} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item label="Tiles per press" name={['speeds', size, 'tilesPerPress']}
+                rules={[{ type: 'integer', min: 1, message: 'Enter a positive whole number' }]}>
+                <InputNumber min={1} step={1} precision={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </div>
+            <Form.Item noStyle shouldUpdate>
+              {() => <Text type="secondary">Rated speed: {ratedSpeedFor(line, size, speedForm.getFieldValue('speeds') || {}) ?? '—'} tiles/min</Text>}
+            </Form.Item>
+          </div> : <Form.Item key={size} label={size} name={['speeds', size]}
+            rules={[{ type: 'number', min: 0.01, message: 'Enter a positive speed' }]}>
+            <InputNumber min={0.01} step={0.1} precision={2} addonAfter="Tiles/min" style={{ width: '100%' }} />
+          </Form.Item>)}
+        </Form>
+      </Modal>}
     </Spin>
   );
 }

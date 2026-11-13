@@ -148,6 +148,18 @@
   }
 }
 
+@media (min-width: 1200px) {
+  .production-kpi-row-with-quality > .ant-col {
+    flex: 0 0 20%;
+    max-width: 20%;
+  }
+}
+
+.production-kpi-quality .production-kpi-icon {
+  background: linear-gradient(145deg, #13c2c2, #006d75);
+}
+
+
 .production-kpi-card .ant-card-body {
   height: 100%;
   padding: 16px;

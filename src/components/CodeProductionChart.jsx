@@ -20,7 +20,7 @@ export default function CodeProductionChart({ title, monthly, lines, colors, mon
   const option = {
     animationDuration: 500,
     color: colors,
-    grid: { left: 20, right: 18, top: 72, bottom: rows.length > 8 ? 60 : 28, containLabel: true },
+    grid: { left: 20, right: 18, top: 72, bottom: 28, containLabel: true },
     tooltip: {
       trigger: "axis",
       confine: true,
@@ -33,7 +33,7 @@ export default function CodeProductionChart({ title, monthly, lines, colors, mon
       data: rows.map((row) => `${row.designCode}\n${row.tileSize}`),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: "#dbe3ee" } },
-      axisLabel: { interval: 0, width: 80, overflow: "truncate" },
+      axisLabel: { interval: 0, width: 64, overflow: "truncate" },
     },
     yAxis: {
       type: "value",
@@ -41,10 +41,6 @@ export default function CodeProductionChart({ title, monthly, lines, colors, mon
       nameGap: 18,
       splitLine: { lineStyle: { color: "#edf2f7" } },
     },
-    dataZoom: rows.length > 8 ? [
-      { type: "slider", bottom: 4, height: 18, startValue: 0, endValue: 7 },
-      { type: "inside", startValue: 0, endValue: 7 },
-    ] : [],
     series: [{
       name: title,
       type: "bar",
@@ -58,7 +54,18 @@ export default function CodeProductionChart({ title, monthly, lines, colors, mon
   return (
     <Card className="overview-chart-card" title={title} extra={<Typography.Text type="secondary">{monthLabel}</Typography.Text>}>
       {rows.length ? (
-        <ReactECharts option={option} notMerge style={{ height: 280 }} />
+        <div
+          className="overview-code-chart-scroll"
+          role="region"
+          aria-label={`${title} — scroll horizontally to view all design codes`}
+          tabIndex={0}
+        >
+          <ReactECharts
+            option={option}
+            notMerge
+            style={{ height: 280, width: "100%", minWidth: rows.length * 76 + 100 }}
+          />
+        </div>
       ) : (
         <div className="overview-empty">No code-wise production data</div>
       )}

@@ -3,6 +3,33 @@
   margin-bottom: 20px;
 }
 
+.overview-code-chart-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #9fb8d2 #f4f7fb;
+}
+
+.overview-code-chart-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.overview-code-chart-scroll::-webkit-scrollbar-track {
+  background: #f4f7fb;
+  border-radius: 8px;
+}
+
+.overview-code-chart-scroll::-webkit-scrollbar-thumb {
+  background: #9fb8d2;
+  border-radius: 8px;
+  border: 2px solid #f4f7fb;
+}
+
+.overview-code-chart-scroll::-webkit-scrollbar-thumb:hover {
+  background: #7897b8;
+}
+
 .overview-dashboard {
   width: 100%;
   padding-bottom: 24px;

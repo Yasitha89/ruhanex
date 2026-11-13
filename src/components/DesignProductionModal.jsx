@@ -7,6 +7,8 @@ import { saveAs } from "file-saver";
 import dayjs from "dayjs";
 import { getDesignProduction } from "../utils/designProduction";
 import { formatColomboApiTime } from "../utils/energyTime";
+import { useAuth } from "../services/authContext";
+import { canExportProduction } from "../utils/permissions";
 
 const format = (value) => value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const formatProducedAt = (value) => value && dayjs(value).isValid()
@@ -14,6 +16,8 @@ const formatProducedAt = (value) => value && dayjs(value).isValid()
   : "Unavailable";
 
 export default function DesignProductionModal({ tileSize, line, month, data, onClose }) {
+  const { user } = useAuth();
+  const canDownloadExcel = canExportProduction(user?.role);
   const [exporting, setExporting] = useState(false);
   const rows = useMemo(() => getDesignProduction(data?.codeWiseProduction, tileSize), [data, tileSize]);
   const total = rows.reduce((sum, row) => sum + row.total, 0);
@@ -48,6 +52,7 @@ export default function DesignProductionModal({ tileSize, line, month, data, onC
   };
 
   const download = async () => {
+    if (!canDownloadExcel) return;
     setExporting(true);
     try {
       const { default: ExcelJS } = await import("exceljs");
@@ -74,7 +79,7 @@ export default function DesignProductionModal({ tileSize, line, month, data, onC
   return (
     <Modal open title={`Design Code Production — ${tileSize}`} width={800} onCancel={onClose}
       footer={[
-        <Button key="download" icon={<DownloadOutlined />} loading={exporting} disabled={!rows.length} onClick={download}>Download Excel</Button>,
+        <Button key="download" icon={<DownloadOutlined />} loading={exporting} disabled={!rows.length || !canDownloadExcel} onClick={download}>Download Excel</Button>,
         <Button key="close" onClick={onClose}>Close</Button>,
       ]}>
       <Typography.Paragraph>{line} · {dayjs(month).format("MMMM YYYY")}</Typography.Paragraph>

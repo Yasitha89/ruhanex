@@ -1,3 +1,4 @@
+import { validateRatedSpeeds } from './ratedLineSpeeds.js';
 const PRODUCTION_FIELDS = ["tileSize", "designCode", "lineSpeed", "plannedDowntime"];
 const DETECTION_FIELDS = ["stopDelayMs", "maxPulseGapMs", "requiredRunTimeMs"];
 
@@ -18,5 +19,7 @@ export function buildLineSettingsPayload(line, current, values, administration) 
       payload[field] = Number(value);
     }
   }
+  const speeds = validateRatedSpeeds(line, administration ? current.savedSpeeds : (values.savedSpeeds ?? current.savedSpeeds));
+  if (speeds !== undefined) payload.savedSpeeds = speeds;
   return payload;
 }

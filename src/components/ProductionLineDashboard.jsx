@@ -28,6 +28,7 @@ import {
   RiseOutlined,
   DownloadOutlined,
   WifiOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import ProductionMonthlyPanel, {
@@ -35,6 +36,7 @@ import ProductionMonthlyPanel, {
 } from "./ProductionMonthlyPanel";
 import ShiftDowntimeBarChart from "./ShiftDowntimeBarChart";
 import ShiftTileCountChart from "./ShiftTileCountChart";
+import ShiftGradeChart from "./ShiftGradeChart";
 import {
   getProductionLiveSummary,
   getProductionMonthlySummary,
@@ -57,10 +59,18 @@ import {
   PLANNED_CATEGORIES,
 } from "../utils/downtimeCodes";
 import useDowntimeCodes from "../hooks/useDowntimeCodes";
+import { useAuth } from "../services/authContext";
+import { canExportProduction } from "../utils/permissions";
 import "./ProductionLineDashboard.css";
 
 const { Text } = Typography;
 const SHIFTS = ["06-14", "14-22", "22-06"];
+// Preview values until the quality API is available.
+const SAMPLE_QUALITY = {
+  "Keda 1": { first: 0, second: 0 },
+  "Keda 2": { first: 0, second: 0 },
+  "Keda 3": { first: 0, second: 0 },
+};
 
 function fmt(value, digits = 1) {
   return Number(value || 0).toLocaleString("en-US", {
@@ -115,6 +125,9 @@ function KpiCard({ icon, label, value, suffix, children, tone = "blue" }) {
 }
 
 export default function ProductionLineDashboard({ line, title = line }) {
+  const { user } = useAuth();
+  const canDownloadExcel = canExportProduction(user?.role);
+  const quality = SAMPLE_QUALITY[line];
   const [sizeModalOpen, setSizeModalOpen] = useState(false);
   const [selectedTileSize, setSelectedTileSize] = useState("");
   const [sizeSaving, setSizeSaving] = useState(false);
@@ -399,7 +412,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
               ...previous,
               shiftCount: latestCount,
               tileSize: latestTileSize,
-              productionSqm: calculateTileSqm(latestTileSize, latestCount),
+              // A cumulative count and latest size cannot reconstruct a
+              // mixed-size shift. Keep the area supplied by /live-summary.
               shiftCountTimestamp: Number.isFinite(latestTimestamp)
                 ? latestTimestamp
                 : Number(
@@ -442,6 +456,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
     const timer = window.setInterval(loadLive, 5000);
     return () => window.clearInterval(timer);
   }, [loadLive]);
+
+  useEffect(() => {
+    if (!isSelectedCurrentShift) return undefined;
+    loadSelectedSummary();
+    const timer = window.setInterval(loadSelectedSummary, 5000);
+    return () => window.clearInterval(timer);
+  }, [isSelectedCurrentShift, loadSelectedSummary]);
 
   useEffect(() => {
     loadCurrentStops();
@@ -521,16 +542,10 @@ export default function ProductionLineDashboard({ line, title = line }) {
   }, [live]);
 
   const selectedDetails = useMemo(() => {
-    /*
-     * Current shift:
-     *   Use /live-summary as the single source of truth.
-     *   This keeps Shift Production Details synchronized with the top KPI cards
-     *   on every live-summary refresh and avoids a second current-shift
-     *   /shift-summary response overwriting the live values.
-     *
-     * Historical/completed shift:
-     *   Use the saved /production/shift-summary lineStats.
-     */
+    // The selected summary owns total, size and code production together,
+    // including during a live shift. Never replace it with latest-size math.
+    if (selectedShiftStats) return selectedShiftStats;
+
     if (isSelectedCurrentShift && live) {
       return {
         sizeWiseProduction: live.sizeWiseProduction,
@@ -540,7 +555,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         tileSize: live.tileSize,
         tileCount: Number(live.shiftCount || 0),
         production: Number(
-          live.productionSqm ||
+          live.productionSqm ??
             calculateTileSqm(live.tileSize, live.shiftCount),
         ),
 
@@ -916,7 +931,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
           <div className="production-header-chip production-ole-chip">
             <BarChartOutlined />
             <div>
-              <small>OLE</small>
+              <small>{quality ? "OEE" : "OLE"}</small>
               <strong>{fmt(live?.ole, 1)} %</strong>
             </div>
           </div>
@@ -979,7 +994,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         <div className="production-live-warning">{liveError}</div>
       ) : null}
 
-      <Row gutter={[12, 12]} className="production-kpi-row">
+      <Row gutter={[12, 12]} className={`production-kpi-row${quality ? " production-kpi-row-with-quality" : ""}`}>
         <Col xs={12}>
           <KpiCard
             icon={<BarChartOutlined />}
@@ -1075,6 +1090,20 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </span>
           </KpiCard>
         </Col>
+        {quality && (
+          <Col xs={12}>
+            <KpiCard
+              icon={<SafetyCertificateOutlined />}
+              label="Quality"
+              value="100"
+              suffix="%"
+              tone="quality"
+            >
+              <span>Normal damages <strong>{fmt(quality.first, 1)}%</strong></span>
+              <span>Cut damages <strong>{fmt(quality.second, 1)}%</strong></span>
+            </KpiCard>
+          </Col>
+        )}
       </Row>
 
       <Card
@@ -1086,11 +1115,11 @@ export default function ProductionLineDashboard({ line, title = line }) {
               <Button
                 type="default"
                 icon={<DownloadOutlined />}
-                disabled={!monthly}
+                disabled={!monthly || !canDownloadExcel}
                 aria-label="Download Excel"
                 title="Download Excel"
                 onClick={() =>
-                  exportProductionWorkbook({ line, month, data: monthly })
+                  canDownloadExcel && exportProductionWorkbook({ line, month, data: monthly })
                 }
               >
                 Excel
@@ -1154,7 +1183,17 @@ export default function ProductionLineDashboard({ line, title = line }) {
         }
       >
         <Row gutter={[12, 12]}>
-          <Col xs={24} xl={12}>
+          {quality && (
+            <Col xs={24} xl={6}>
+              <div className="production-analysis-panel">
+                <div className="production-panel-heading">
+                  <strong>Shift Grades ({selectedShift})</strong>
+                </div>
+                <ShiftGradeChart first={quality.first} second={quality.second} />
+              </div>
+            </Col>
+          )}
+          <Col xs={24} xl={quality ? 11 : 12}>
             <div className="production-analysis-panel">
               <div className="production-panel-heading">
                 <strong>Current Shift Downtime ({selectedShift})</strong>
@@ -1174,7 +1213,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
               />
             </div>
           </Col>
-          <Col xs={24} xl={12}>
+          <Col xs={24} xl={quality ? 7 : 12}>
             <div className="production-analysis-panel">
               <div className="production-panel-heading">
                 <strong>Shift Tile Count ({selectedShift})</strong>

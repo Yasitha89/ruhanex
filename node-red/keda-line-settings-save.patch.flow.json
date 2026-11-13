@@ -1,0 +1,356 @@
+[
+  {
+    "id": "rx_saved_speeds_router",
+    "type": "subflow",
+    "name": "Keda: save speeds action",
+    "category": "Ruhanex",
+    "color": "#C0DEED",
+    "info": "Insert after existing POST /api/line-setting authorization/detection guard and BEFORE its validator. Output 1: normal settings request -> existing validator. Output 2: speeds response -> HTTP response. Select existing Mongo client inside this subflow. No new HTTP route.",
+    "in": [
+      {
+        "x": 40,
+        "y": 80,
+        "wires": [
+          {
+            "id": "rx_sp_route"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "x": 900,
+        "y": 40,
+        "wires": [
+          {
+            "id": "rx_sp_route",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "x": 900,
+        "y": 180,
+        "wires": [
+          {
+            "id": "rx_sp_route",
+            "port": 2
+          },
+          {
+            "id": "rx_sp_write_prepare",
+            "port": 1
+          },
+          {
+            "id": "rx_sp_done",
+            "port": 0
+          },
+          {
+            "id": "rx_sp_failure",
+            "port": 0
+          }
+        ]
+      }
+    ],
+    "env": []
+  },
+  {
+    "id": "rx_sp_route",
+    "type": "function",
+    "z": "rx_saved_speeds_router",
+    "name": "Route saveSpeeds / validate",
+    "func": "const RATED_SPEED_TILE_SIZES={\"Keda 1\":[\"40x40\",\"60x30\",\"60x60\"],\"Keda 2\":[\"60x60\",\"90x45\",\"80x80\",\"120x60\",\"120x80\",\"100x100\"],\"Keda 3\":[\"60x30\",\"60x60\",\"90x45\"],\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nconst GLAZE_TILE_SIZES={\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"]};\nconst KILN_TILE_SIZES={\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nfunction kilnRatedSpeed(size, standardDailyOutputSqm) {\n  const dimensions = String(size).split('x').map(Number);\n  if (dimensions.length !== 2 || !dimensions.every(v => Number.isFinite(v) && v > 0) ||\n      typeof standardDailyOutputSqm !== 'number' || !Number.isFinite(standardDailyOutputSqm) || standardDailyOutputSqm <= 0) return undefined;\n  const tileAreaSqm = dimensions[0] * dimensions[1] / 10000;\n  const speed = standardDailyOutputSqm / tileAreaSqm / 1440;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction pressRatedSpeed(pressCyclesPerMinute, tilesPerPress) {\n  if (typeof pressCyclesPerMinute !== 'number' || !Number.isFinite(pressCyclesPerMinute) || pressCyclesPerMinute <= 0 ||\n      !Number.isSafeInteger(tilesPerPress) || tilesPerPress <= 0) return undefined;\n  const speed = Math.round(pressCyclesPerMinute * tilesPerPress * 100) / 100;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction validateRatedSpeeds(line, speeds = {}) {\n  const sizes = RATED_SPEED_TILE_SIZES[line];\n  if (!sizes) return undefined;\n  const result = {};\n  for (const [size, speed] of Object.entries(speeds)) {\n    if (!sizes.includes(size)) throw new Error(`Unsupported tile size ${size} for ${line}.`);\n    if (speed == null || speed === '') continue;\n    if (KILN_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter standard output for ${size}.`);\n      const { standardDailyOutputSqm } = speed;\n      if (standardDailyOutputSqm == null || standardDailyOutputSqm === '') {\n        if ('cycleMinutes' in speed || 'tilesPerRow' in speed) throw new Error(`Re-save ${line} size speeds with standard output in m² per 24 hours; the old cycle-based preset for ${size} cannot be converted automatically.`);\n        continue;\n      }\n      const lineSpeed = kilnRatedSpeed(size, standardDailyOutputSqm);\n      if (lineSpeed === undefined) throw new Error(`Enter positive standard output in m² per 24 hours for ${size}.`);\n      result[size] = { standardDailyOutputSqm, lineSpeed };\n      continue;\n    }\n    if (GLAZE_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter press cycles/min and tiles per press for ${size}.`);\n      const { pressCyclesPerMinute, tilesPerPress } = speed;\n      if ((pressCyclesPerMinute == null || pressCyclesPerMinute === '') && (tilesPerPress == null || tilesPerPress === '')) continue;\n      const lineSpeed = pressRatedSpeed(pressCyclesPerMinute, tilesPerPress);\n      if (lineSpeed === undefined) throw new Error(`Enter positive press cycles/min and a positive whole number of tiles per press for ${size}.`);\n      result[size] = { pressCyclesPerMinute, tilesPerPress, lineSpeed };\n      continue;\n    }\n    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) throw new Error(`Enter a positive rated speed for ${size}.`);\n    result[size] = speed;\n  }\n  return result;\n}\nfunction ratedSpeedFor(line, size, speeds = {}) {\n  if (!RATED_SPEED_TILE_SIZES[line]?.includes(size)) return undefined;\n  const speed = speeds[size];\n  if (KILN_TILE_SIZES[line]) return kilnRatedSpeed(size, speed?.standardDailyOutputSqm);\n  if (GLAZE_TILE_SIZES[line]) return pressRatedSpeed(speed?.pressCyclesPerMinute, speed?.tilesPerPress);\n  return typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nreturn (function routeSpeeds(msg, global) {\n  if (msg.payload?.settingsAction !== 'saveSpeeds') return [msg, null, null];\n  const fail = (statusCode, error) => { msg.statusCode = statusCode; msg.payload = { success: false, error }; return [null, null, msg]; };\n  if (!['Admin', 'Manager'].includes(msg.req?.headers?.['x-ruhanex-role'])) return fail(403, 'Only Admin and Manager can save rated speeds.');\n  if (global.get('settingsReady') !== true) return fail(503, 'Wait for line configuration to load.');\n  const b = msg.payload;\n  if (!RATED_SPEED_TILE_SIZES[b.line]) return fail(400, 'Unknown production line.');\n  if (!b.savedSpeeds || typeof b.savedSpeeds !== 'object' || Array.isArray(b.savedSpeeds)) return fail(400, 'savedSpeeds must be an object.');\n  try { msg.speedSave = { line: b.line, savedSpeeds: validateRatedSpeeds(b.line, b.savedSpeeds) }; }\n  catch (e) { return fail(400, e.message); }\n  msg.payload = [{ _id: 'lineSettings' }];\n  return [null, msg, null];\n})(msg,global);",
+    "outputs": 3,
+    "wires": [
+      [],
+      [
+        "rx_sp_read"
+      ],
+      []
+    ],
+    "x": 220,
+    "y": 80
+  },
+  {
+    "id": "rx_sp_read",
+    "type": "mongodb4",
+    "z": "rx_saved_speeds_router",
+    "name": "Read ruhanex_config",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 460,
+    "y": 80,
+    "wires": [
+      [
+        "rx_sp_write_prepare"
+      ]
+    ]
+  },
+  {
+    "id": "rx_sp_write_prepare",
+    "type": "function",
+    "z": "rx_saved_speeds_router",
+    "name": "Update only savedSpeeds + active speed",
+    "func": "const RATED_SPEED_TILE_SIZES={\"Keda 1\":[\"40x40\",\"60x30\",\"60x60\"],\"Keda 2\":[\"60x60\",\"90x45\",\"80x80\",\"120x60\",\"120x80\",\"100x100\"],\"Keda 3\":[\"60x30\",\"60x60\",\"90x45\"],\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nconst GLAZE_TILE_SIZES={\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"]};\nconst KILN_TILE_SIZES={\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nfunction kilnRatedSpeed(size, standardDailyOutputSqm) {\n  const dimensions = String(size).split('x').map(Number);\n  if (dimensions.length !== 2 || !dimensions.every(v => Number.isFinite(v) && v > 0) ||\n      typeof standardDailyOutputSqm !== 'number' || !Number.isFinite(standardDailyOutputSqm) || standardDailyOutputSqm <= 0) return undefined;\n  const tileAreaSqm = dimensions[0] * dimensions[1] / 10000;\n  const speed = standardDailyOutputSqm / tileAreaSqm / 1440;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction pressRatedSpeed(pressCyclesPerMinute, tilesPerPress) {\n  if (typeof pressCyclesPerMinute !== 'number' || !Number.isFinite(pressCyclesPerMinute) || pressCyclesPerMinute <= 0 ||\n      !Number.isSafeInteger(tilesPerPress) || tilesPerPress <= 0) return undefined;\n  const speed = Math.round(pressCyclesPerMinute * tilesPerPress * 100) / 100;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction validateRatedSpeeds(line, speeds = {}) {\n  const sizes = RATED_SPEED_TILE_SIZES[line];\n  if (!sizes) return undefined;\n  const result = {};\n  for (const [size, speed] of Object.entries(speeds)) {\n    if (!sizes.includes(size)) throw new Error(`Unsupported tile size ${size} for ${line}.`);\n    if (speed == null || speed === '') continue;\n    if (KILN_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter standard output for ${size}.`);\n      const { standardDailyOutputSqm } = speed;\n      if (standardDailyOutputSqm == null || standardDailyOutputSqm === '') {\n        if ('cycleMinutes' in speed || 'tilesPerRow' in speed) throw new Error(`Re-save ${line} size speeds with standard output in m² per 24 hours; the old cycle-based preset for ${size} cannot be converted automatically.`);\n        continue;\n      }\n      const lineSpeed = kilnRatedSpeed(size, standardDailyOutputSqm);\n      if (lineSpeed === undefined) throw new Error(`Enter positive standard output in m² per 24 hours for ${size}.`);\n      result[size] = { standardDailyOutputSqm, lineSpeed };\n      continue;\n    }\n    if (GLAZE_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter press cycles/min and tiles per press for ${size}.`);\n      const { pressCyclesPerMinute, tilesPerPress } = speed;\n      if ((pressCyclesPerMinute == null || pressCyclesPerMinute === '') && (tilesPerPress == null || tilesPerPress === '')) continue;\n      const lineSpeed = pressRatedSpeed(pressCyclesPerMinute, tilesPerPress);\n      if (lineSpeed === undefined) throw new Error(`Enter positive press cycles/min and a positive whole number of tiles per press for ${size}.`);\n      result[size] = { pressCyclesPerMinute, tilesPerPress, lineSpeed };\n      continue;\n    }\n    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) throw new Error(`Enter a positive rated speed for ${size}.`);\n    result[size] = speed;\n  }\n  return result;\n}\nfunction ratedSpeedFor(line, size, speeds = {}) {\n  if (!RATED_SPEED_TILE_SIZES[line]?.includes(size)) return undefined;\n  const speed = speeds[size];\n  if (KILN_TILE_SIZES[line]) return kilnRatedSpeed(size, speed?.standardDailyOutputSqm);\n  if (GLAZE_TILE_SIZES[line]) return pressRatedSpeed(speed?.pressCyclesPerMinute, speed?.tilesPerPress);\n  return typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nreturn (function prepareSpeedWrite(msg) {\n  const doc = Array.isArray(msg.payload) ? msg.payload[0] : msg.payload;\n  const s = msg.speedSave;\n  const current = doc?.settings?.[s.line];\n  if (!current) { msg.statusCode = 404; msg.payload = { success: false, error: 'Line settings do not exist.' }; return [null, msg]; }\n  const path = `settings.${s.line}`;\n  const updatedAt = new Date().toISOString();\n  const speed = ratedSpeedFor(s.line, current.tileSize, s.savedSpeeds);\n  s.patch = { savedSpeeds: s.savedSpeeds, updatedAt, ...(speed !== undefined ? { lineSpeed: speed } : {}) };\n  s.tileSize = current.tileSize;\n  s.settings = { ...current, ...s.patch };\n  const set = { updatedAt };\n  for (const [key, value] of Object.entries(s.patch)) set[`${path}.${key}`] = value;\n  // A concurrent tile-size change must not receive the old size's speed.\n  msg.payload = [{ _id: 'lineSettings', [`${path}.tileSize`]: current.tileSize }, { $set: set }, { upsert: false }];\n  return [msg, null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_sp_write"
+      ],
+      []
+    ],
+    "x": 700,
+    "y": 80
+  },
+  {
+    "id": "rx_sp_write",
+    "type": "mongodb4",
+    "z": "rx_saved_speeds_router",
+    "name": "Save settings.Keda N.savedSpeeds",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "x": 250,
+    "y": 180,
+    "wires": [
+      [
+        "rx_sp_done"
+      ]
+    ]
+  },
+  {
+    "id": "rx_sp_done",
+    "type": "function",
+    "z": "rx_saved_speeds_router",
+    "name": "Confirm then update global lineSettings",
+    "func": "return (function finishSpeedWrite(msg, global) {\n  const r = Array.isArray(msg.payload) ? msg.payload[0] : msg.payload;\n  if (!r?.acknowledged || Number(r.matchedCount) !== 1) {\n    msg.statusCode = r?.acknowledged ? 409 : 500;\n    msg.payload = { success: false, error: 'Save not confirmed or tile size changed concurrently. Retry saving speeds.' };\n    return msg;\n  }\n  const s = msg.speedSave, all = global.get('lineSettings') || {};\n  // Do not restore an old tile size/run or overwrite unrelated runtime fields.\n  const patch = { ...s.patch };\n  if (all[s.line]?.tileSize !== s.tileSize) delete patch.lineSpeed;\n  all[s.line] = { ...(all[s.line] || s.settings), ...patch };\n  global.set('lineSettings', all);\n  msg.statusCode = 200;\n  msg.headers = { 'Content-Type': 'application/json' };\n  msg.payload = { success: true, line: s.line, settings: s.settings };\n  return msg;\n})(msg,global);",
+    "outputs": 1,
+    "wires": [
+      []
+    ],
+    "x": 610,
+    "y": 180
+  },
+  {
+    "id": "rx_sp_catch",
+    "type": "catch",
+    "z": "rx_saved_speeds_router",
+    "name": "Speed save DB failure",
+    "scope": [
+      "rx_sp_read",
+      "rx_sp_write"
+    ],
+    "uncaught": false,
+    "x": 210,
+    "y": 260,
+    "wires": [
+      [
+        "rx_sp_failure"
+      ]
+    ]
+  },
+  {
+    "id": "rx_sp_failure",
+    "type": "function",
+    "z": "rx_saved_speeds_router",
+    "name": "Safe error response",
+    "func": "msg.statusCode=500;msg.payload={success:false,error:'Unable to save speeds to the database.'};return msg;",
+    "outputs": 1,
+    "wires": [
+      []
+    ],
+    "x": 570,
+    "y": 260
+  },
+  {
+    "id": "e188e4b926011c64",
+    "type": "http in",
+    "z": "tab_ruhanex_admin",
+    "name": "POST Line Setting",
+    "url": "/api/line-setting",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 1290,
+    "y": 540,
+    "wires": [
+      [
+        "rx_sp_router_instance"
+      ]
+    ]
+  },
+  {
+    "id": "9a4936a8388b9d61",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Validate line + design code",
+    "func": "const RATED_SPEED_TILE_SIZES={\"Keda 1\":[\"40x40\",\"60x30\",\"60x60\"],\"Keda 2\":[\"60x60\",\"90x45\",\"80x80\",\"120x60\",\"120x80\",\"100x100\"],\"Keda 3\":[\"60x30\",\"60x60\",\"90x45\"],\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nconst GLAZE_TILE_SIZES={\"Glaze Line 1\":[\"60x30\",\"60x60\",\"90x45\",\"120x60\",\"40x40\"],\"Glaze Line 2\":[\"40x40\",\"60x30\",\"60x60\"],\"Glaze Line 3\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"]};\nconst KILN_TILE_SIZES={\"Kiln 1\":[\"40x40\",\"60x30\",\"60x60\",\"90x45\",\"120x60\"],\"Kiln 2\":[\"60x60\",\"90x45\",\"120x60\",\"120x80\",\"80x80\",\"100x100\"],\"Kiln 3\":[\"40x40\",\"60x30\",\"60x60\"]};\nfunction kilnRatedSpeed(size, standardDailyOutputSqm) {\n  const dimensions = String(size).split('x').map(Number);\n  if (dimensions.length !== 2 || !dimensions.every(v => Number.isFinite(v) && v > 0) ||\n      typeof standardDailyOutputSqm !== 'number' || !Number.isFinite(standardDailyOutputSqm) || standardDailyOutputSqm <= 0) return undefined;\n  const tileAreaSqm = dimensions[0] * dimensions[1] / 10000;\n  const speed = standardDailyOutputSqm / tileAreaSqm / 1440;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction pressRatedSpeed(pressCyclesPerMinute, tilesPerPress) {\n  if (typeof pressCyclesPerMinute !== 'number' || !Number.isFinite(pressCyclesPerMinute) || pressCyclesPerMinute <= 0 ||\n      !Number.isSafeInteger(tilesPerPress) || tilesPerPress <= 0) return undefined;\n  const speed = Math.round(pressCyclesPerMinute * tilesPerPress * 100) / 100;\n  return Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction validateRatedSpeeds(line, speeds = {}) {\n  const sizes = RATED_SPEED_TILE_SIZES[line];\n  if (!sizes) return undefined;\n  const result = {};\n  for (const [size, speed] of Object.entries(speeds)) {\n    if (!sizes.includes(size)) throw new Error(`Unsupported tile size ${size} for ${line}.`);\n    if (speed == null || speed === '') continue;\n    if (KILN_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter standard output for ${size}.`);\n      const { standardDailyOutputSqm } = speed;\n      if (standardDailyOutputSqm == null || standardDailyOutputSqm === '') {\n        if ('cycleMinutes' in speed || 'tilesPerRow' in speed) throw new Error(`Re-save ${line} size speeds with standard output in m² per 24 hours; the old cycle-based preset for ${size} cannot be converted automatically.`);\n        continue;\n      }\n      const lineSpeed = kilnRatedSpeed(size, standardDailyOutputSqm);\n      if (lineSpeed === undefined) throw new Error(`Enter positive standard output in m² per 24 hours for ${size}.`);\n      result[size] = { standardDailyOutputSqm, lineSpeed };\n      continue;\n    }\n    if (GLAZE_TILE_SIZES[line]) {\n      if (typeof speed !== 'object' || Array.isArray(speed)) throw new Error(`Enter press cycles/min and tiles per press for ${size}.`);\n      const { pressCyclesPerMinute, tilesPerPress } = speed;\n      if ((pressCyclesPerMinute == null || pressCyclesPerMinute === '') && (tilesPerPress == null || tilesPerPress === '')) continue;\n      const lineSpeed = pressRatedSpeed(pressCyclesPerMinute, tilesPerPress);\n      if (lineSpeed === undefined) throw new Error(`Enter positive press cycles/min and a positive whole number of tiles per press for ${size}.`);\n      result[size] = { pressCyclesPerMinute, tilesPerPress, lineSpeed };\n      continue;\n    }\n    if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) throw new Error(`Enter a positive rated speed for ${size}.`);\n    result[size] = speed;\n  }\n  return result;\n}\nfunction ratedSpeedFor(line, size, speeds = {}) {\n  if (!RATED_SPEED_TILE_SIZES[line]?.includes(size)) return undefined;\n  const speed = speeds[size];\n  if (KILN_TILE_SIZES[line]) return kilnRatedSpeed(size, speed?.standardDailyOutputSqm);\n  if (GLAZE_TILE_SIZES[line]) return pressRatedSpeed(speed?.pressCyclesPerMinute, speed?.tilesPerPress);\n  return typeof speed === 'number' && Number.isFinite(speed) && speed > 0 ? speed : undefined;\n}\nfunction preserveSpeeds(msg, global) {\n  // Insert after the existing validator, before master-design lookup.\n  if (!msg.savedSettings || !RATED_SPEED_TILE_SIZES[msg.savedLine]) return [msg, null];\n  const current = (global.get('lineSettings') || {})[msg.savedLine] || {};\n  const supplied = msg.req?.body?.savedSpeeds;\n  try {\n    const savedSpeeds = validateRatedSpeeds(msg.savedLine, supplied ?? current.savedSpeeds ?? {});\n    msg.savedSettings.savedSpeeds = savedSpeeds;\n    if (msg.savedSettings.tileSize !== current.tileSize) {\n      const speed = ratedSpeedFor(msg.savedLine, msg.savedSettings.tileSize, savedSpeeds);\n      if (speed !== undefined) msg.savedSettings.lineSpeed = speed;\n    }\n    return [msg, null];\n  } catch (e) {\n    msg.statusCode = 400; msg.payload = { success: false, error: e.message }; return [null, msg];\n  }\n}\nconst b = msg.payload || {};\nconst line = String(b.line || \"\").trim();\nconst settings = {\n    tileSize: String(b.tileSize ?? \"\").trim(),\n    designCode: String(b.designCode || \"\").trim(),\n    lineSpeed: Number(b.lineSpeed),\n    plannedDowntime: Number(b.plannedDowntime),\n    stopDelayMs: Number(b.stopDelayMs),\n    maxPulseGapMs: Number(b.maxPulseGapMs),\n    requiredRunTimeMs: Number(b.requiredRunTimeMs),\n    updatedAt: new Date().toISOString()\n};\nfunction fail(code, error) {\n    msg.statusCode = code;\n    msg.payload = { success: false, error };\n    return [null,msg];\n}\nif (!line || line.length > 100 || /[.$\\x00]/.test(line)) return fail(400,\"Invalid line\");\nif (!settings.tileSize) return fail(400,\"Tile size is required\");\nif (!settings.designCode) return fail(400,\"Please select a valid Design Code\");\nif (!Number.isFinite(settings.lineSpeed) || settings.lineSpeed<=0) return fail(400,\"Invalid lineSpeed\");\nif (global.get(\"settingsReady\") !== true) return fail(503,\"Line settings are not loaded; retry after startup\");\nconst checked = preserveSpeeds({...msg, savedLine:line, savedSettings:settings}, global);\nif (checked[1]) return checked;\nmsg.savedLine = line;\nmsg.savedSettings = settings;\nconst escaped = settings.designCode.replace(/[.*+?^${}()|[\\]\\\\]/g,\"\\\\$&\");\nmsg.payload = [{ tileSize:settings.tileSize, designCode:{$regex:\"^\"+escaped+\"$\",$options:\"i\"}, active:{$ne:false} }];\nreturn [msg,null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1540,
+    "y": 540,
+    "wires": [
+      [
+        "da9c85bfb8199dea"
+      ],
+      [
+        "10b3ba4ef7f5f3ae"
+      ]
+    ]
+  },
+  {
+    "id": "da9c85bfb8199dea",
+    "type": "mongodb4",
+    "z": "tab_ruhanex_admin",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "design_codes",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Mongo validate design code",
+    "x": 1800,
+    "y": 520,
+    "wires": [
+      [
+        "f220fba582a82bec"
+      ]
+    ]
+  },
+  {
+    "id": "f220fba582a82bec",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Check master code + production run",
+    "func": "const match = Array.isArray(msg.payload) ? msg.payload[0] : msg.payload;\nfunction fail(code,error){msg.statusCode=code;msg.payload={success:false,error};return [null,msg];}\nif (!match || !match.designCode) return fail(400,`Design Code \"${msg.savedSettings?.designCode || \"\"}\" is not registered for tile size ${msg.savedSettings?.tileSize || \"\"}`);\nconst all = global.get(\"lineSettings\") || {};\nif (global.get(\"settingsReady\") !== true) return fail(503,\"Line settings have not loaded\");\nconst old = all[msg.savedLine] || all[msg.savedLine.toLowerCase()] || null;\nconst oldSize = old && typeof old.tileSize === 'string' ? old.tileSize.trim() : null;\nconst newSize = msg.savedSettings.tileSize;\nconst changed = oldSize !== newSize;\nconst newSettings = {...(old || {}), ...msg.savedSettings};\nnewSettings.designCode = String(match.designCode);\n// Allocate an initial run ID for a previously unconfigured line as well.\nif (changed || !old?.productionRunId) {\n    const ts = newSettings.updatedAt;\n    newSettings.productionRunId = `${msg.savedLine.replace(/[^a-zA-Z0-9_-]/g,\"_\")}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;\n    newSettings.productionRunStartTime = ts;\n} else {\n    newSettings.productionRunId = old.productionRunId;\n    if (old.productionRunStartTime) newSettings.productionRunStartTime = old.productionRunStartTime;\n}\nmsg.tileSizeChanged=changed;\nmsg.previousTileSize=oldSize;\nmsg.savedSettings=newSettings;\nconst set={updatedAt:newSettings.updatedAt};\nset[`settings.${msg.savedLine}`]=newSettings;\n// Preserve this endpoint's existing document upsert semantics.\nmsg.payload=[{_id:\"lineSettings\"},{$set:set,$setOnInsert:{createdAt:newSettings.updatedAt}},{upsert:true}];\nreturn [msg,null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2100,
+    "y": 530,
+    "wires": [
+      [
+        "ebdb1bdf6d00a85e"
+      ],
+      [
+        "10b3ba4ef7f5f3ae"
+      ]
+    ]
+  },
+  {
+    "id": "ebdb1bdf6d00a85e",
+    "type": "mongodb4",
+    "z": "tab_ruhanex_admin",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Mongo save line settings",
+    "x": 2420,
+    "y": 510,
+    "wires": [
+      [
+        "1855bc0f8d89ba6f"
+      ]
+    ]
+  },
+  {
+    "id": "1855bc0f8d89ba6f",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "Save line response + global",
+    "func": "const r=msg.payload;\nmsg.headers={\"Content-Type\":\"application/json\"};\nif(!r || r.acknowledged!==true || Number(r.matchedCount||0)+Number(r.upsertedCount||0)<1){\n  msg.statusCode=500;\n  msg.payload={success:false,error:\"MongoDB did not confirm a saved line setting\"};\n  return msg;\n}\nconst all=global.get(\"lineSettings\")||{};\nall[msg.savedLine]=msg.savedSettings;\nglobal.set(\"lineSettings\",all);\nglobal.set(\"settingsReady\",true);\nmsg.statusCode=200;\nmsg.payload={success:true,line:msg.savedLine,settings:msg.savedSettings,tileSizeChanged:msg.tileSizeChanged,previousTileSize:msg.previousTileSize,productionRunId:msg.savedSettings.productionRunId,productionRunStartTime:msg.savedSettings.productionRunStartTime};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2690,
+    "y": 510,
+    "wires": [
+      [
+        "10b3ba4ef7f5f3ae"
+      ]
+    ]
+  },
+  {
+    "id": "10b3ba4ef7f5f3ae",
+    "type": "http response",
+    "z": "tab_ruhanex_admin",
+    "name": "Line Setting response",
+    "statusCode": "",
+    "headers": {},
+    "x": 2950,
+    "y": 590,
+    "wires": []
+  },
+  {
+    "id": "165ec9496df1071c",
+    "type": "catch",
+    "z": "tab_ruhanex_admin",
+    "name": "Catch full errors",
+    "scope": [
+      "9a4936a8388b9d61",
+      "da9c85bfb8199dea",
+      "f220fba582a82bec",
+      "ebdb1bdf6d00a85e",
+      "1855bc0f8d89ba6f"
+    ],
+    "uncaught": false,
+    "x": 1950,
+    "y": 630,
+    "wires": [
+      [
+        "677a3585ceeb41e8"
+      ]
+    ]
+  },
+  {
+    "id": "677a3585ceeb41e8",
+    "type": "function",
+    "z": "tab_ruhanex_admin",
+    "name": "full error response",
+    "func": "msg.statusCode=500; msg.headers={\"Content-Type\":\"application/json\"}; msg.payload={success:false,error:\"Line settings database operation failed. Check Node-RED logs.\"}; return msg;",
+    "outputs": 1,
+    "x": 2200,
+    "y": 630,
+    "wires": [
+      [
+        "10b3ba4ef7f5f3ae"
+      ]
+    ]
+  },
+  {
+    "id": "rx_sp_router_instance",
+    "type": "subflow:rx_saved_speeds_router",
+    "z": "tab_ruhanex_admin",
+    "name": "Save speeds or normal settings",
+    "x": 1470,
+    "y": 430,
+    "wires": [
+      [
+        "9a4936a8388b9d61"
+      ],
+      [
+        "10b3ba4ef7f5f3ae"
+      ]
+    ]
+  }
+]
