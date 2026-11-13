@@ -1,0 +1,58 @@
+[
+  {
+    "id": "rx_push_alarm_test_inject",
+    "type": "inject",
+    "z": "5881476400b66af4",
+    "name": "Send test alarm (click)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 200,
+    "y": 1470,
+    "wires": [
+      [
+        "rx_push_alarm_test_message"
+      ]
+    ]
+  },
+  {
+    "id": "rx_push_alarm_test_message",
+    "type": "function",
+    "z": "5881476400b66af4",
+    "name": "Set recipient and alarm (EDIT username)",
+    "func": "msg.username = \"YOUR_LOGIN_USERNAME\";\nmsg.payload = {\n    title: \"Machine alarm\",\n    body: \"Test alarm from Node-RED\",\n    data: { url: \"/\" }\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 510,
+    "y": 1470,
+    "wires": [
+      [
+        "rx_push_alarm_test_link"
+      ]
+    ]
+  },
+  {
+    "id": "rx_push_alarm_test_link",
+    "type": "link out",
+    "z": "5881476400b66af4",
+    "name": "To Push alarm to user",
+    "mode": "link",
+    "links": [
+      "4b98af2b85f5ea91"
+    ],
+    "x": 765,
+    "y": 1470,
+    "wires": []
+  }
+]
