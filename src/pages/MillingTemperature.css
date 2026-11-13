@@ -22,3 +22,11 @@
   .milling-dryer-controls { gap: 6px; }
   .milling-dryer-values strong { font-size: 22px; }
 }
+.milling-temperature-panel { min-width: 0; height: 100%; border: 1px solid #d8e5f4; border-radius: 12px; box-shadow: 0 2px 10px rgba(13, 43, 82, .035); }
+.milling-temperature-panel > .ant-card-body { padding: 18px; }
+.milling-temperature-panel-header { padding-bottom: 14px; border-bottom: 1px solid #e8edf5; }
+@media (max-width: 767px) {
+  .milling-temperature-panel > .ant-card-body { padding: 12px; }
+}
+.milling-temperature-panel-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.milling-temperature-panel-header > span { font-weight: 600; }

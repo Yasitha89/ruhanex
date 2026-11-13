@@ -1,5 +1,7 @@
 # Milling live temperature page
 
+Current layout: one **Spray Dryer 2** tile, with the gateway Wi-Fi icon in that tile's header. It contains **Inside Temperature** (Modbus slave 3) and **Output Temperature** (Modbus slave 4) graph sections, side by side on wide screens and stacked on mobile. Each section retains its own live window, pause and refresh controls, readings and controller status. The graphs are not separate tiles.
+
 Frontend navigation: **Process → Milling**, with Process immediately below Production. Clicking Milling opens the temperature chart directly. The page is temporarily Admin-only during testing; Managers and Line Supervisors cannot see or open it.
 
 Uses the supplied existing backend endpoints:
@@ -11,7 +13,7 @@ Uses the supplied existing backend endpoints:
 
 No new backend endpoint is required. Deploy the previously supplied temperature monitoring flow and device support patch before using the page. No temporary backend restriction is added. The existing authenticated API role rules remain unchanged; only the frontend navigation and page route are temporarily Admin-only.
 
-The supplied API is hard-coded to gateway `RX-TEMP-3000`. The dashboard now fixes controller/slave ID **1** to **Spray Dryer 1** and ID **2** to **Spray Dryer 2**, showing both graph cards together. No controller selector or device-registry discovery is used. Other gateways need generalized backend routes before they can be monitored.
+The supplied API is hard-coded to gateway `RX-TEMP-3000`. The page shows only Spray Dryer 2: controller/slave ID **3** for Input Temperature and Modbus controller/slave ID **4** for Output Temperature. Spray Dryer 1 is no longer displayed. Both cards use the existing history/latest/status paths and retain independent graph controls. The gateway/backend must publish and expose slave 4 readings. No controller selector or device-registry discovery is used. Other gateways need generalized backend routes before they can be monitored.
 
 The page title is **Milling and Spray Dryer Monitoring**. Each spray-dryer card has independently controlled live window, pause/resume switch, green live dot and refresh button, right-aligned in its header. PV and SV values are right-aligned inside the card. PV is a solid blue line and SV a dashed orange line, with Y-axis padding below the minimum reading. Time labels use Asia/Colombo. The top-right Wi-Fi icon uses the supplied gateway-status endpoint (green online, red offline, grey unknown), with a status-only tooltip. It represents last-reported MQTT gateway connectivity, not measured Wi-Fi signal strength.
 

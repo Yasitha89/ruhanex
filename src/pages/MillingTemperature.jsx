@@ -29,8 +29,8 @@ import { formatColomboApiTime } from "../utils/energyTime";
 import "./MillingTemperature.css";
 
 const DRYERS = [
-  { id: 1, title: "Spray Dryer 1" },
-  { id: 3, title: "Spray Dryer 2" },
+  { id: 3, title: "Inside Temperature" },
+  { id: 4, title: "Output Temperature" },
 ];
 const WINDOWS = {
   "5m": { ms: 300000, interval: "5s", bucket: 5000 },
@@ -178,9 +178,8 @@ function SprayDryerCard({ dryer, latest, communication, checkedAt }) {
       ? "STALE"
       : communication?.status || latest.status || "Unknown";
   return (
-    <Card
-      className="milling-dryer-card"
-      title={
+    <Card className="milling-temperature-panel" aria-label={dryer.title}>
+      <div className="milling-temperature-panel-header">
         <span
           style={{
             display: "inline-flex",
@@ -197,8 +196,6 @@ function SprayDryerCard({ dryer, latest, communication, checkedAt }) {
             {status}
           </Tag>
         </span>
-      }
-      extra={
         <div className="milling-dryer-controls">
           <Select
             size="small"
@@ -231,8 +228,7 @@ function SprayDryerCard({ dryer, latest, communication, checkedAt }) {
             />
           </Tooltip>
         </div>
-      }
-    >
+      </div>
       {view.error && (
         <Alert
           type="error"
@@ -307,7 +303,7 @@ export default function MillingTemperature() {
   return (
     <Card
       className="milling-monitor"
-      title="Spray Dryer Process Data"
+      title="Spray Dryer 2"
       extra={
         <Tooltip title={`Temperature gateway: ${gateway}`}>
           <span
