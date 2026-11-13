@@ -3,6 +3,7 @@ import useTouchInput from "../hooks/useTouchInput";
 import { Empty } from "antd";
 import ZoomableShiftChart from "./ZoomableShiftChart";
 import dayjs from "dayjs";
+import { isCommunicationAffected, stoppageBarColor } from "../utils/stoppageCommunication";
 
 function formatMinutes(value) {
   const n = Number(value || 0);
@@ -42,6 +43,7 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
               <div>Start: <strong>${dayjs(Number(row.stopStart_ts)).format("HH:mm:ss")}</strong></div>
               <div>End: <strong>${end}</strong></div>
               <div>Duration: <strong>${formatMinutes(row.durationMinutes)}</strong></div>
+              ${isCommunicationAffected(row) ? '<div style="color:#8b5cf6;font-weight:600">Communication affected — machine state uncertain</div>' : ''}
               <div>Machine: <strong>${row.machine || "-"}</strong></div>
               <div>Reason: <strong>${row.reason || "Not specified"}</strong></div>
             </div>
@@ -73,7 +75,7 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
           data: rows.map((row) => ({
             value: Number(row.durationMinutes || 0),
             itemStyle: {
-              color: row.isOpen ? "#ff7a45" : "#ff4d4f",
+              color: stoppageBarColor(row),
               borderRadius: [4, 4, 0, 0],
             },
           })),
@@ -104,6 +106,10 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
   }
 
   return (
+    <div>
+      {rows.some(isCommunicationAffected) && <div style={{ color: '#8b5cf6', fontSize: 12, marginBottom: 6 }}>
+        <span aria-hidden="true">● </span>Communication affected (machine state uncertain)
+      </div>}
     <ZoomableShiftChart
       option={option}
       lazyUpdate
@@ -121,5 +127,6 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
         },
       }}
     />
+    </div>
   );
 }

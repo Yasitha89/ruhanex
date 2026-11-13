@@ -54,6 +54,7 @@ import {
 import { TILE_SIZE_OPTIONS } from "../utils/constants";
 import { calculateTileSqm } from "../utils/shiftUtils";
 import { getSizeProduction } from "../utils/sizeProduction";
+import { isCommunicationAffected } from "../utils/stoppageCommunication";
 import {
   DOWNTIME_TYPES,
   PLANNED_CATEGORIES,
@@ -913,7 +914,10 @@ export default function ProductionLineDashboard({ line, title = line }) {
     {
       title: "Reason",
       dataIndex: "reason",
-      render: (v) => v || <Text type="secondary">Not specified</Text>,
+      render: (v, row) => <>
+        {isCommunicationAffected(row) && <Tag color="purple">Communication affected</Tag>}
+        {v || <Text type="secondary">Not specified</Text>}
+      </>,
     },
   ];
 

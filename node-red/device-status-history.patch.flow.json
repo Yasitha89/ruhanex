@@ -1,0 +1,225 @@
+[
+  {
+    "id": "e7854d62c23ddcbf",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Update Sensor Status",
+    "func": "const m =\n    String(msg.topic || \"\")\n        .match(/^RX-CNT\\/([^/]+)\\/status$/);\n\nif (!m) {\n    return null;\n}\n\n\n// ============================================================\n// DEVICE ID\n// RX-CNT/1000/status -> RX-CNT-1000\n// ============================================================\n\nconst id =\n    \"RX-CNT-\" + m[1];\n\n\n// ============================================================\n// CONFIG\n// ============================================================\n\nconst cfg =\n    global.get(\"counterConfig\") || {};\n\n\n// Ignore completely unknown devices\nif (!cfg[id]) {\n\n    node.warn(\n        `[STATUS] Unknown device: ${id}`\n    );\n\n    return null;\n}\n\n\n// ============================================================\n// GET RUNTIME COUNTER STATE\n// ============================================================\n\nlet counters =\n    flow.get(\"counters\") || {};\n\n\n// ============================================================\n// IMPORTANT:\n//\n// Status MQTT message may arrive before counter restore.\n//\n// Do NOT discard the status.\n//\n// Create a minimal runtime state if it does not exist yet.\n// Restore logic can later populate the remaining properties.\n// ============================================================\n\nif (!counters[id]) {\n\n    counters[id] = {\n\n        rawCount: 0,\n\n        shiftCount: 0,\n\n        deviceCount: 0,\n\n        bootId: null,\n\n        lastSignal: null,\n\n        lastSeen: null,\n\n        sensorStatus: \"Unknown\",\n\n        shiftName: null,\n\n        shiftDate: null\n    };\n}\n\n\n// ============================================================\n// PARSE MQTT STATUS\n//\n// Supports:\n//\n// online\n// offline\n//\n// \"online\"\n// \"offline\"\n//\n// {\"status\":\"online\"}\n// {\"status\":\"offline\"}\n// ============================================================\n\nlet statusValue = msg.payload;\n\n\n// Buffer -> string\nif (Buffer.isBuffer(statusValue)) {\n\n    statusValue =\n        statusValue.toString();\n}\n\n\n// Try JSON if payload is string\nif (typeof statusValue === \"string\") {\n\n    const raw =\n        statusValue.trim();\n\n    try {\n\n        const parsed =\n            JSON.parse(raw);\n\n        if (\n            parsed &&\n            typeof parsed === \"object\"\n        ) {\n\n            statusValue =\n                parsed.status ??\n                parsed.state ??\n                parsed.sensorStatus ??\n                raw;\n\n        } else {\n\n            statusValue =\n                parsed;\n        }\n\n    } catch (e) {\n\n        // Normal plain-text MQTT message\n        statusValue =\n            raw;\n    }\n}\n\n\n// Object payload\nelse if (\n    statusValue &&\n    typeof statusValue === \"object\"\n) {\n\n    statusValue =\n        statusValue.status ??\n        statusValue.state ??\n        statusValue.sensorStatus ??\n        \"Unknown\";\n}\n\n\n// ============================================================\n// NORMALIZE STATUS\n// ============================================================\n\nconst v =\n    String(\n        statusValue ?? \"\"\n    )\n        .trim()\n        .toLowerCase();\n\n\nlet sensorStatus =\n    \"Unknown\";\n\n\nif (\n    v === \"online\" ||\n    v === \"connected\" ||\n    v === \"1\" ||\n    v === \"true\"\n) {\n\n    sensorStatus =\n        \"Online\";\n}\n\nelse if (\n    v === \"offline\" ||\n    v === \"disconnected\" ||\n    v === \"0\" ||\n    v === \"false\"\n) {\n\n    sensorStatus =\n        \"Offline\";\n}\n\n\n// ============================================================\n// SAVE STATUS\n// ============================================================\n\ncounters[id].sensorStatus =\n    sensorStatus;\n\n\n// A status message itself confirms that Node-RED received\n// communication from the MQTT broker/device status topic.\ncounters[id].lastSeen =\n    Date.now();\n\n\nflow.set(\n    \"counters\",\n    counters\n);\n\n\n// ============================================================\n// DEBUG OUTPUT\n// ============================================================\n\nmsg.payload = {\n\n    device: id,\n\n    receivedStatus:\n        statusValue,\n\n    sensorStatus:\n        sensorStatus,\n\n    lastSeen:\n        counters[id].lastSeen\n};\n\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 460,
+    "wires": [
+      [
+        "d8880cb03ff635db",
+        "rx_status_history_log"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_start",
+    "type": "inject",
+    "z": "e5489573e203f3d0",
+    "name": "Restore status log baseline on deploy",
+    "props": [],
+    "once": true,
+    "onceDelay": 2,
+    "repeat": "",
+    "x": 350,
+    "y": 2100,
+    "wires": [
+      [
+        "rx_status_history_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_query",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Restore last status per device",
+    "outputs": 1,
+    "initialize": "flow.set('deviceStatusHistoryReady',false);flow.set('deviceStatusHistoryPending',[]);",
+    "func": "msg.query='from(bucket:\"communication_monitoring\") |> range(start:1970-01-01T00:00:00Z) |> filter(fn:(r)=>r._measurement==\"device_status_events\" and r._field==\"state_json\" and r.source==\"mqtt_status\") |> group(columns:[\"device\"]) |> last()';return msg;",
+    "x": 650,
+    "y": 2100,
+    "wires": [
+      [
+        "rx_status_history_read"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_read",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "name": "Read communication history baseline",
+    "influxdb": "eef122fda5340dac",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 970,
+    "y": 2100,
+    "wires": [
+      [
+        "rx_status_history_restored"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_restored",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Release queued status messages",
+    "outputs": 1,
+    "func": "msg.statusHistoryRestore=true;return msg;",
+    "x": 1290,
+    "y": 2100,
+    "wires": [
+      [
+        "rx_status_history_log"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_log",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Log device status CHANGES only",
+    "outputs": 2,
+    "func": "try{return (function logStatus(msg, flow, global, node, now) {\n  if (msg.statusHistoryRestore === true) {\n    const states = {};\n    if (!Array.isArray(msg.payload)) throw Error('Invalid device status restore response.');\n    for (const row of msg.payload) {\n      const state = JSON.parse(row._value);\n      if (!state.device || !['Online','Offline','Unknown'].includes(state.status) || !Number.isFinite(state.changedAt) || !Number.isFinite(state.observedAt)) throw Error('Invalid stored status history.');\n      states[state.device] = state;\n    }\n    flow.set('deviceStatusHistoryStates', states);\n    flow.set('deviceStatusHistoryReady', true);\n    const pending = flow.get('deviceStatusHistoryPending') || [];\n    flow.set('deviceStatusHistoryPending', []);\n    return [pending.length ? pending : null, null];\n  }\n  if (!flow.get('deviceStatusHistoryReady')) {\n    const pending = flow.get('deviceStatusHistoryPending') || [];\n    if (pending.length >= 1000) { node.error('Device status history queue full; restore the Influx connection.'); return null; }\n    pending.push({ payload: msg.payload, retain: msg.retain, statusReceivedAt: msg.statusReceivedAt || now });\n    flow.set('deviceStatusHistoryPending', pending);\n    return null;\n  }\n  const p = msg.payload || {};\n  if (!/^RX-CNT-[A-Za-z0-9_-]+$/.test(String(p.device || '')) || !['Online','Offline','Unknown'].includes(p.sensorStatus)) return null;\n  const config = global.get('counterConfig') || {};\n  const cfg = config[p.device];\n  if (!cfg) return null;\n  const states = flow.get('deviceStatusHistoryStates') || {};\n  const previous = states[p.device];\n  if (previous?.status === p.sensorStatus) return null;\n  const receivedAt = Number(msg.statusReceivedAt || p.lastSeen || now);\n  const timestamp = Math.max(receivedAt, Number(previous?.observedAt || 0) + 1);\n  const retained = msg.retain === true;\n  const eventType = !previous ? 'initial_observation' : retained ? 'retained_observation' : 'status_change';\n  const state = { device:p.device, status:p.sensorStatus, changedAt:timestamp, observedAt:timestamp, retained, eventType };\n  const fields = {\n    status:state.status, previous_status:previous?.status || 'Unknown',\n    event_type:eventType, retained,\n    // Observed time between records, not necessarily the physical outage length.\n    previous_observation_duration_ms:previous ? Math.max(0,timestamp-previous.changedAt) : 0,\n    previous_observation_available:Boolean(previous),\n    live_transition_observation:Boolean(previous) && !retained,\n    state_json:JSON.stringify(state),\n  };\n  states[p.device]=state;\n  flow.set('deviceStatusHistoryStates',states);\n  return [null, { payload:[{\n    measurement:'device_status_events',\n    tags:{device:p.device,line:String(cfg.line || p.device),source:'mqtt_status'},\n    fields, timestamp,\n  }] }];\n})(msg,flow,global,node,Date.now());}catch(e){node.error(e.message,msg);return null;}",
+    "x": 660,
+    "y": 2200,
+    "wires": [
+      [
+        "rx_status_history_log"
+      ],
+      [
+        "rx_status_history_write"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_write",
+    "type": "influxdb batch",
+    "z": "e5489573e203f3d0",
+    "name": "Write device_status_events",
+    "influxdb": "eef122fda5340dac",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "communication_monitoring",
+    "x": 1010,
+    "y": 2200,
+    "wires": []
+  },
+  {
+    "id": "rx_status_history_write_catch",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Status log write error",
+    "scope": [
+      "rx_status_history_write"
+    ],
+    "uncaught": false,
+    "x": 370,
+    "y": 2300,
+    "wires": [
+      [
+        "rx_status_history_retry_check"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_retry_check",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Retry same timestamp, up to 5 times",
+    "outputs": 2,
+    "func": "msg.statusLogRetries=Number(msg.statusLogRetries||0)+1;if(msg.statusLogRetries<=5){delete msg.error;return [msg,null];}return [null,{payload:{error:'Device status log write failed after retries; event not confirmed saved.'}}];",
+    "x": 710,
+    "y": 2300,
+    "wires": [
+      [
+        "rx_status_history_retry_delay"
+      ],
+      [
+        "rx_status_history_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_retry_delay",
+    "type": "delay",
+    "z": "e5489573e203f3d0",
+    "name": "Retry status log after 10 seconds",
+    "pauseType": "delay",
+    "timeout": "10",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "drop": false,
+    "x": 1070,
+    "y": 2300,
+    "wires": [
+      [
+        "rx_status_history_write"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_restore_catch",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Status restore / logger error",
+    "scope": [
+      "rx_status_history_read",
+      "rx_status_history_log"
+    ],
+    "uncaught": false,
+    "x": 390,
+    "y": 2380,
+    "wires": [
+      [
+        "rx_status_history_safe_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_safe_error",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Safe status history error",
+    "outputs": 1,
+    "func": "return {payload:{error:msg.error?.source?.id==='rx_status_history_read'?'Cannot restore device status history. Check bucket/token, then click restore inject.':'Invalid device status history; check logger configuration.'}};",
+    "x": 730,
+    "y": 2380,
+    "wires": [
+      [
+        "rx_status_history_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_status_history_debug",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "Device status history errors",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1110,
+    "y": 2380,
+    "wires": []
+  }
+]

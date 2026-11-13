@@ -1,0 +1,34 @@
+[
+  {
+    "id": "rx_debug26_prepare",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Debug 26 value to Influx",
+    "outputs": 1,
+    "x": 850,
+    "y": 2520,
+    "func": "const p = msg.payload || {};\nif (!p.device || !p.sensorStatus) return null;\nconst cfg = (global.get('counterConfig') || {})[p.device] || {};\nmsg.payload = [{\n  measurement: 'device_status_debug',\n  tags: { device: String(p.device), line: String(cfg.line || p.device) },\n  fields: {\n    status: String(p.sensorStatus),\n    received_status: typeof p.receivedStatus === 'object' ? JSON.stringify(p.receivedStatus) : String(p.receivedStatus ?? ''),\n    last_seen: Number(p.lastSeen || Date.now())\n  },\n  timestamp: Date.now()\n}];\nreturn msg;",
+    "wires": [
+      [
+        "rx_debug26_influx"
+      ]
+    ]
+  },
+  {
+    "id": "rx_debug26_influx",
+    "type": "influxdb batch",
+    "z": "e5489573e203f3d0",
+    "name": "Save Debug 26 status",
+    "influxdb": "eef122fda5340dac",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "communication_monitoring",
+    "x": 1150,
+    "y": 2520,
+    "wires": []
+  }
+]
