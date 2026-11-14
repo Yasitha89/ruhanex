@@ -3,6 +3,7 @@ import { Alert, Button, Card, Descriptions, Form, Input, Typography, message } f
 import { changePassword } from "../api/authApi";
 import { useAuth } from "../services/authContext";
 import NotificationSettings from "../components/NotificationSettings";
+import TelegramUserManagement from "../components/TelegramUserManagement";
 
 export default function Profile() {
   const { user, clearSession } = useAuth();
@@ -31,6 +32,7 @@ export default function Profile() {
         <Button type="primary" htmlType="submit" loading={busy}>Change Password</Button>
       </Form>
       <NotificationSettings user={user} />
+      {user.role === "Admin" && !user.mustChangePassword && <TelegramUserManagement />}
     </Card>
   );
 }

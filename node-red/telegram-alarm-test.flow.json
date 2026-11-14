@@ -1,0 +1,66 @@
+[
+  {
+    "id": "rx_telegram_test_tab",
+    "type": "tab",
+    "label": "Approved Telegram alarm test",
+    "disabled": false,
+    "info": "Set a real Ruhanex username in the Function. The existing bridge tab supplies the bot token and checks MongoDB approval. Remove the old direct HTTP alarm test nodes when replacing.",
+    "env": []
+  },
+  {
+    "id": "rx_tg_test_inject",
+    "type": "inject",
+    "z": "rx_telegram_test_tab",
+    "name": "Send approved-user test alarm",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 220,
+    "y": 140,
+    "wires": [
+      [
+        "rx_tg_test_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tg_test_build",
+    "type": "function",
+    "z": "rx_telegram_test_tab",
+    "name": "EDIT Ruhanex username",
+    "func": "msg.username = \"YOUR_RUHANEX_USERNAME\";\nmsg.payload = { title: \"Ruhanex alarm\", body: \"Test alarm for approved Telegram users.\" };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 500,
+    "y": 140,
+    "wires": [
+      [
+        "rx_tg_test_approved_link"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tg_test_approved_link",
+    "type": "link out",
+    "z": "rx_telegram_test_tab",
+    "name": "To Telegram alarm to approved user",
+    "mode": "link",
+    "links": [
+      "rx_tgra_alarm_link"
+    ],
+    "x": 760,
+    "y": 140,
+    "wires": []
+  }
+]

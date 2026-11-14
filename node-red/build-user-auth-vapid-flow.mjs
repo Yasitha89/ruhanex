@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { telegramAdminStep } from './telegram-admin-runtime.mjs';
 
 // Self-contained: embedded inside every authentication state-machine Function.
 export async function pushStep(msg, env, crypto, Buffer, flow, webPush, helpers, start) {
@@ -139,9 +140,11 @@ export function buildVapidFlow(source) {
   };
   const dispatch = `return (${pushStep.toString()})(msg, env, crypto, Buffer, flow, global.get('webPush'), { db, finish, fail }, state.stage === 'authenticated');`;
   for (const n of nodes.filter(n => n.type === 'function' && n.func.includes('async function authStep'))) {
-    n.func = insert(n.func, "['login', 'logout', 'password', 'create', 'delete'].includes(state.action)", "['login', 'logout', 'password', 'create', 'delete', 'pushSubscribe', 'pushUnsubscribe', 'pushTest'].includes(state.action)");
+    n.func = insert(n.func, "['login', 'logout', 'password', 'create', 'delete'].includes(state.action)", "['login', 'logout', 'password', 'create', 'delete', 'pushSubscribe', 'pushUnsubscribe', 'pushTest', 'telegramAssign', 'telegramRevoke'].includes(state.action)");
+    const telegramDispatch = `return (${telegramAdminStep.toString()})(msg, crypto, {db, finish, fail}, state.stage === 'authenticated');`;
+    n.func = insert(n.func, "if (state.action === 'delete') {", `if (state.action.startsWith('telegram')) ${telegramDispatch}\n    if (state.action === 'delete') {`);
     n.func = insert(n.func, "if (state.action === 'authorize') {", `if (state.action.startsWith('push')) ${dispatch}\n    if (state.action === 'authorize') {`);
-    n.func = insert(n.func, "return fail(500, 'Invalid authentication state.');", `if (state.action.startsWith('push')) ${dispatch}\n  if (state.stage === 'pushDeletedCleaned') return msg.payload?.acknowledged === true ? finish(200, { success: true }) : fail(500, 'User removed; push cleanup failed.');\n  return fail(500, 'Invalid authentication state.');`);
+    n.func = insert(n.func, "return fail(500, 'Invalid authentication state.');", `if (state.action.startsWith('push')) ${dispatch}\n  if (state.action.startsWith('telegram')) ${telegramDispatch}\n  if (state.stage === 'pushDeletedCleaned') return msg.payload?.acknowledged === true ? db('telegram.updateMany', [{ruhanexUsername:state.deletedUsername}, {$set:{approved:false,updatedAt:new Date()}}], 'telegramDeletedCleaned') : fail(500, 'User removed; push cleanup failed.');\n  if (state.stage === 'telegramDeletedCleaned') return msg.payload?.acknowledged === true ? finish(200, {success:true}) : fail(500, 'User removed; Telegram cleanup failed.');\n  return fail(500, 'Invalid authentication state.');`);
     n.func = insert(n.func, "if (state.stage === 'deletedSessions') return msg.payload?.acknowledged === true ? finish(200, { success: true }) : fail(500, 'User removed, but session cleanup failed.');",
       "if (state.stage === 'deletedSessions') return msg.payload?.acknowledged === true ? db('push.deleteMany', [{ username: state.deletedUsername }], 'pushDeletedCleaned') : fail(500, 'User removed, but session cleanup failed.');");
     // Do not pass database/library exceptions containing secrets to Node-RED debug.
@@ -158,6 +161,15 @@ export function buildVapidFlow(source) {
     nodes.push({ ...structuredClone(advance), id, name: action, x: 520, y: 900 + i * 80,
       func: `msg.authAction = '${action}';\n${advance.func}` });
   }
+  for (const [i, [action, method, path]] of [
+    ['telegramList', 'get', '/api/auth/telegram-users'],
+    ['telegramAssign', 'post', '/api/auth/telegram-users/:chatId/approve'],
+    ['telegramRevoke', 'post', '/api/auth/telegram-users/:chatId/revoke'],
+  ].entries()) {
+    const id = `rx_tg_admin_${action}`;
+    nodes.push({ id: `${id}_http`, z: tab, type: 'http in', name: `${method.toUpperCase()} ${path}`, url: path, method, upload: false, swaggerDoc: '', x: 230, y: 1420 + i * 80, wires: [[id]] });
+    nodes.push({ ...structuredClone(advance), id, name: action, x: 560, y: 1420 + i * 80, func: `msg.authAction = '${action}';\n${advance.func}` });
+  }
   nodes.push({ ...structuredClone(advance), id: 'rx_vapid_internal_send', name: 'Send alarm to user (trusted flow only)', x: 560, y: 1270,
     func: `delete msg.req; delete msg.res; msg.pushInternal = true; msg.auth = {action:'pushSend',stage:'internalStart',body:{username:msg.username,notification:msg.payload}};\n${internalCode}` });
   nodes.push({ id: 'rx_vapid_internal_link', z: tab, type: 'link in', name: 'Push alarm to user', links: [], x: 255, y: 1270, wires: [['rx_vapid_internal_send']] });
@@ -166,6 +178,11 @@ export function buildVapidFlow(source) {
     router.rules.push({ t: 'eq', v: `push.${operation}`, vt: 'str' }); router.wires.push([id]); router.outputs++;
     nodes.push({ ...structuredClone(sampleDb), id, name: `push.${operation}`, collection: 'ruhanex_push_subscriptions', operation,
       x: 980, y: 900 + i * 70, wires: [[advance.id]] });
+  }
+  for (const [i, operation] of ['find', 'updateOne', 'updateMany'].entries()) {
+    const id = `rx_tg_admin_db_${operation}`;
+    router.rules.push({ t: 'eq', v: `telegram.${operation}`, vt: 'str' }); router.wires.push([id]); router.outputs++;
+    nodes.push({ ...structuredClone(sampleDb), id, name: `telegram.${operation}`, collection: 'ruhanex_telegram_users', operation, x: 1000, y: 1420 + i * 70, wires: [[advance.id]] });
   }
   const catcher = nodes.find(n => n.type === 'catch' && n.name === 'Auth errors');
   if (!catcher) throw new Error('Missing auth error handler.');

@@ -18,3 +18,6 @@ export const getPushPublicKey = () => request("get", "/push/public-key");
 export const subscribePush = (subscription, applicationServerKey) => request("post", "/push/subscribe", { subscription, applicationServerKey });
 export const unsubscribePush = (endpoint) => request("post", "/push/unsubscribe", { endpoint });
 export const testPush = () => request("post", "/push/test", {});
+export const getTelegramUsers = () => request("get", "/telegram-users");
+export const approveTelegramUser = (chatId, ruhanexUsername) => request("post", `/telegram-users/${encodeURIComponent(chatId)}/approve`, { ruhanexUsername });
+export const revokeTelegramUser = (chatId) => request("post", `/telegram-users/${encodeURIComponent(chatId)}/revoke`, {});

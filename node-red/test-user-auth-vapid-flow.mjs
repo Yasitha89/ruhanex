@@ -27,7 +27,7 @@ const source = advanceSource.slice(advanceSource.lastIndexOf('(async function au
 const step = new Function('global', `return ${source.slice(0, source.lastIndexOf(")(msg, env, global.get('crypto')") + 1)}`)({ get: key => key === 'webPush' ? webPush : crypto });
 const contexts = new Map();
 const flow = { get: key => contexts.get(key), set: (key, value) => contexts.set(key, value) };
-const tables = { users: [], sessions: [], push: [] };
+const tables = { users: [], sessions: [], push: [], telegram: [{ _id: '123', approved: false }] };
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const equal = (a, b) => a instanceof Date && b instanceof Date ? +a === +b : a === b;
 const matches = (row, query) => Object.entries(query).every(([key, value]) => key === '$or' ? value.some(q => matches(row, q)) :
@@ -37,6 +37,10 @@ function database(kind, args) {
   const rows = tables[table]; const found = rows.find(row => matches(row, query));
   if (op === 'findOne') return structuredClone(found || null);
   if (op === 'find') return structuredClone(rows.filter(row => matches(row, query)).slice(0, update?.limit || 1000));
+  if (op === 'updateMany') {
+    for (const row of rows.filter(row => matches(row, query))) Object.assign(row, update.$set);
+    return { acknowledged: true };
+  }
   if (op === 'updateOne') {
     if (found) Object.assign(found, update.$set);
     else if (options?.upsert) rows.push({ ...query, ...structuredClone(update.$set) });
@@ -73,6 +77,17 @@ async function request(action, token = alice, body = {}, headers = {}, params = 
 const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/test-device', keys: {
   p256dh: config.VAPID_PUBLIC_KEY, auth: crypto.randomBytes(16).toString('base64url') } };
 const body = { subscription, applicationServerKey: config.VAPID_PUBLIC_KEY, username: 'bobby' };
+assert.equal((await request('telegramList', alice)).statusCode, 403);
+assert.equal((await request('telegramList', admin)).payload.users.length, 1);
+assert.equal((await request('telegramAssign', admin, { ruhanexUsername: 'alice' }, { origin: 'https://evil.example' }, { chatId: '123' })).statusCode, 403);
+assert.equal((await request('telegramAssign', admin, { ruhanexUsername: 'missing' }, {}, { chatId: '123' })).statusCode, 400);
+assert.equal((await request('telegramAssign', admin, { ruhanexUsername: 'alice' }, {}, { chatId: '999' })).statusCode, 404);
+assert.equal((await request('telegramAssign', admin, { ruhanexUsername: 'alice' }, {}, { chatId: '123' })).statusCode, 200);
+assert.equal(tables.telegram[0].approved, true); assert.equal(tables.telegram[0].ruhanexUsername, 'alice');
+const revision = tables.telegram[0].approvalRevision;
+assert.equal((await request('telegramRevoke', admin, {}, {}, { chatId: '123' })).statusCode, 200);
+assert.equal(tables.telegram[0].approved, false); assert.notEqual(tables.telegram[0].approvalRevision, revision);
+await request('telegramAssign', admin, { ruhanexUsername: 'alice' }, {}, { chatId: '123' });
 assert.equal((await request('pushKey', '')).statusCode, 401);
 assert.equal((await request('pushKey')).payload.publicKey, config.VAPID_PUBLIC_KEY);
 assert.equal((await request('pushSubscribe', alice, body, { origin: 'https://evil.example' })).statusCode, 403);
@@ -131,6 +146,7 @@ assert.equal((await alarm('bobby')).payload.accepted, 0); bobUser.accountGenerat
 assert.equal((await alarm('bobby', { title: 'Alarm', body: 'Test', data: { url: '//evil.example' } })).statusCode, 400);
 await request('pushSubscribe', alice, body);
 await request('delete', admin, {}, {}, { username: 'alice' }); assert.equal(tables.push.length, 0);
+assert.equal(tables.telegram[0].approved, false);
 // Password changes invalidate login sessions but preserve notification consent.
 const charlie = account('charlie', 'Manager');
 const charlieUser = tables.users.find(u => u._id === 'charlie');

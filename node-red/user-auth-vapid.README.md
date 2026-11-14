@@ -1,5 +1,7 @@
 # Ruhanex users + VAPID Web Push backend
 
+This version also includes Admin-only Telegram registration APIs for **My Profile → Telegram users**. Replace/update the existing user nodes, preserving their IDs and tab environment variables, and deploy the updated frontend. Read `telegram-ruhana.README.md` for the matching Telegram bridge and approval-gated alarm sender. The new MongoDB collection is `ruhanex_telegram_users`; Telegram token/AI configuration stays on the Telegram bridge tab. Existing VAPID keys need no changes.
+
 Import **user-auth-vapid.flow.json** as a replacement for the user-handling section you supplied. Existing HTTP, Function, database and error-handler node IDs are retained. The flow adds four HTTP routes and three MongoDB operation nodes. It references the existing MongoDB client `8120871193b8f276`; connection credentials are intentionally excluded.
 
 This is the backend phase. The frontend still needs Enable/Disable notifications buttons, a service worker, subscription registration and a notification-click handler. A trusted internal alarm sender is included; machine/line event routing must be wired to it. There is no public endpoint allowing a caller to send arbitrary notifications to another user.

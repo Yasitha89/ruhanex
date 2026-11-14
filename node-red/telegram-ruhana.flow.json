@@ -1,0 +1,646 @@
+[
+  {
+    "id": "rx_telegram_ruhana_tab",
+    "type": "tab",
+    "label": "Telegram - Ruhana AI",
+    "disabled": false,
+    "env": [],
+    "info": "MongoDB Telegram registration/approval. Configure bot token, internal AI token/URL and TELEGRAM_RUHANA_ENABLED=true. Approve users in Admin My Profile. Manual TELEGRAM_RUHANA_USERS mapping is no longer used."
+  },
+  {
+    "id": "rx_tgra_poll",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "inject",
+    "name": "Poll Telegram every 5 seconds",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 3,
+    "x": 200,
+    "y": 120,
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_step",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Telegram / Ruhana state machine",
+    "func": "try { return (function bridgeStep(msg, env, flow, now = Date.now()) {\n  const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\n  const get = key => flow.get('tgRuhana.' + key, store);\n  const set = (key, value) => flow.set('tgRuhana.' + key, value, store);\n  const safe = description => {\n    const lock = get('lock');\n    if (lock?.id === msg.tg?.id) { set('lock', null); set('typing', null); }\n    return [null, null, null, { payload: { ok: false, description } }];\n  };\n  const token = String(env.get('TELEGRAM_BOT_TOKEN') || '');\n  const bearer = String(env.get('AI_CHAT_BEARER_TOKEN') || '');\n  const aiUrl = String(env.get('RUHANA_AI_URL') || 'http://127.0.0.1:1880/api/ai/chat');\n  if (!/^\\d+:[A-Za-z0-9_-]+$/.test(token) || !bearer || !/^https?:\\/\\/[a-z0-9.:[\\]-]+(?::\\d+)?\\/[a-z0-9/_-]+$/i.test(aiUrl))\n    return safe('Configure TELEGRAM_BOT_TOKEN, AI_CHAT_BEARER_TOKEN and a valid internal RUHANA_AI_URL.');\n  const request = (kind, method, payload, stage) => {\n    msg.tg.stage = stage; msg.method = 'POST'; msg.payload = JSON.stringify(payload);\n    msg.headers = { 'Content-Type': 'application/json' }; delete msg.statusCode; delete msg.error;\n    msg.requestTimeout = kind === 'ai' ? 240000 : 15000;\n    msg.url = kind === 'ai' ? aiUrl : `https://api.telegram.org/bot${token}/${method}`;\n    if (kind === 'ai') Object.assign(msg.headers, { Authorization: `Bearer ${bearer}`, 'X-Ruhanex-Role': msg.tg.account.role, 'X-Ruhanex-User': msg.tg.account.username });\n    return kind === 'ai' ? [null, msg, null, null] : [msg, null, null, null];\n  };\n  const database = (operation, args, stage) => {\n    msg.tg.stage = stage; msg.tgDb = operation; msg.payload = args;\n    delete msg.headers; delete msg.url; return [null, null, msg, null];\n  };\n  const lookup = stage => database('users.findOne', [{ _id: msg.tg.username }], stage);\n  const registration = stage => database('telegram.findOne', [{ _id: msg.tg.chatId }], stage);\n  const htmlParts = text => {\n    const escape = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n    // Only generate known Telegram tags; model-provided HTML is always escaped.\n    const pattern = /```(?:[^\\n`]*\\n)?([\\s\\S]*?)```|`([^`\\n]+)`|\\*\\*([^*]+)\\*\\*|__([^_]+)__/g;\n    const segments = []; let cursor = 0;\n    for (const match of text.matchAll(pattern)) {\n      if (match.index > cursor) segments.push({ text: text.slice(cursor, match.index) });\n      segments.push({ text: match[1] ?? match[2] ?? match[3] ?? match[4], tag: match[1] !== undefined ? 'pre' : match[2] !== undefined ? 'code' : 'b' });\n      cursor = match.index + match[0].length;\n    }\n    if (cursor < text.length) segments.push({ text: text.slice(cursor) });\n    const parts = []; let chunk = ''; let length = 0;\n    for (const segment of segments) {\n      let run = '';\n      const append = () => { if (run) chunk += segment.tag ? `<${segment.tag}>${escape(run)}</${segment.tag}>` : escape(run); run = ''; };\n      for (const character of segment.text) {\n        // Count UTF-16 units conservatively; never split a surrogate pair or HTML entity.\n        if (length + character.length > 3500) { append(); parts.push(chunk); chunk = ''; length = 0; }\n        run += character; length += character.length;\n      }\n      append();\n    }\n    if (chunk) parts.push(chunk);\n    return parts;\n  };\n  const sendPart = () => {\n    if (get('typing')?.id === msg.tg.id) set('typing', null);\n    return request('telegram', 'sendMessage', { chat_id: msg.tg.chatId, text: msg.tg.parts.shift(), parse_mode: 'HTML' }, 'sent');\n  };\n  const reply = text => {\n    const chars = Array.from(String(text));\n    msg.tg.parts = htmlParts(chars.slice(0, 24000).join(''));\n    if (chars.length > 24000) msg.tg.parts.push('Answer shortened. Ask a narrower question or open Ruhana in Ruhanex.');\n    return sendPart();\n  };\n  const commit = () => {\n    set('offset', msg.tg.current.update_id + 1);\n    delete msg.tg.current; delete msg.tg.answer; delete msg.tg.question; delete msg.tg.account; delete msg.tg.saveHistory;\n    return next();\n  };\n  const next = () => {\n    while (msg.tg.queue.length) {\n      const update = msg.tg.queue.shift(); msg.tg.current = update;\n      const m = update.message;\n      // No groups, edited messages, bot senders, attachments or unmapped users.\n      const reason = !m ? 'not a new message' : m.chat?.type !== 'private' ? 'not a private chat' :\n        m.from?.is_bot || String(m.from?.id) !== String(m.chat.id) ? 'sender mismatch' :\n        typeof m.text !== 'string' ? 'not text' :\n        now / 1000 - m.date > 600 ? 'message older than ten minutes' : '';\n      if (reason) {\n        msg.tg.ignored.push({ chatId: m?.chat?.id, reason });\n        set('offset', update.update_id + 1); continue;\n      }\n      msg.tg.chatId = String(m.chat.id); msg.tg.question = m.text.trim();\n      const clean = value => typeof value === 'string' ? value.slice(0, 100) : '';\n      return database('telegram.updateOne', [{ _id: msg.tg.chatId }, {\n        $setOnInsert: { chatId: msg.tg.chatId, approved: false, ruhanexUsername: null, firstSeenAt: new Date(now) },\n        $set: { telegramUserId: String(m.from.id), telegramUsername: clean(m.from.username), firstName: clean(m.from.first_name), lastName: clean(m.from.last_name), lastSeenAt: new Date(now) },\n      }, { upsert: true }], 'registered');\n    }\n    set('lock', null);\n    return [null, null, null, { payload: { ok: true, description: 'Telegram polling batch complete.', received: msg.tg.received, ignored: msg.tg.ignored } }];\n  };\n  if (!msg.tg) {\n    if (String(env.get('TELEGRAM_RUHANA_ENABLED')).toLowerCase() !== 'true') return safe('Polling disabled. Set TELEGRAM_RUHANA_ENABLED to true on this flow tab.');\n    if (get('backoffUntil') > now) return null;\n    if (get('lock')?.until > now) return null;\n    const id = msg._msgid || String(now);\n    msg.tg = { id }; set('lock', { id, until: now + 300000 });\n    return request('telegram', 'getUpdates', { offset: get('offset') || 0, timeout: 0, limit: 10, allowed_updates: ['message'] }, 'polled');\n  }\n  if (get('lock')?.id !== msg.tg.id) return null;\n  set('lock', { id: msg.tg.id, until: now + 300000 });\n  if (msg.tg.stage === 'polled') {\n    if (msg.payload?.parameters?.retry_after) set('backoffUntil', now + Math.min(86400, Math.max(1, Number(msg.payload.parameters.retry_after) || 60)) * 1000);\n    if (msg.statusCode !== 200 || msg.payload?.ok !== true || !Array.isArray(msg.payload.result))\n      return safe(`Telegram polling failed (HTTP ${Number(msg.statusCode) || 'unknown'}, API ${Number(msg.payload?.error_code) || 'unknown'}). Check token, connectivity, webhook status and competing pollers.`);\n    msg.tg.queue = msg.payload.result.filter(u => Number.isSafeInteger(u.update_id)).sort((a, b) => a.update_id - b.update_id);\n    msg.tg.received = msg.tg.queue.length; msg.tg.ignored = [];\n    return next();\n  }\n  const validUser = user => user?.enabled === true && user.mustChangePassword !== true && ['Admin', 'Manager', 'Line Supervisor', 'JE'].includes(user.role);\n  const identity = user => ({ username: user._id, role: user.role === 'JE' ? 'Line Supervisor' : user.role,\n    generation: user.accountGeneration ?? null, version: user.authVersion, approvalRevision: msg.tg.binding.approvalRevision });\n  const approved = row => row?.approved === true && typeof row.ruhanexUsername === 'string' && typeof row.approvalRevision === 'string';\n  if (msg.tg.stage === 'registered') {\n    if (msg.payload?.acknowledged !== true) return safe('Unable to save Telegram registration.');\n    return registration('mapping');\n  }\n  if (msg.tg.stage === 'mapping') {\n    if (!approved(msg.payload)) {\n      set('history.' + msg.tg.chatId, null);\n      return reply('Registration received. Waiting for administrator approval. Your Telegram chat ID is ' + msg.tg.chatId + '.');\n    }\n    msg.tg.binding = msg.payload; msg.tg.username = msg.payload.ruhanexUsername;\n    return lookup('user');\n  }\n  if (msg.tg.stage === 'user') {\n    const user = msg.payload;\n    if (!validUser(user) || (user.accountGeneration ?? null) !== msg.tg.binding.ruhanexAccountGeneration) { set('history.' + msg.tg.chatId, null); return reply('Your Ruhanex account is unavailable. Contact your administrator or complete your initial password change in the app.'); }\n    msg.tg.account = identity(user);\n    const command = msg.tg.question.toLowerCase();\n    if (command === '/reset') { set('history.' + msg.tg.chatId, null); return reply('Conversation cleared. What would you like to ask Ruhana?'); }\n    if (command === '/start' || command === '/help') return reply('Hi, I am Ruhana. Ask about production, downtime or energy. Your Ruhanex account permissions apply. Use /reset to clear this conversation.');\n    if (!msg.tg.question || msg.tg.question.length > 4000) return reply('Please send a text question between 1 and 4000 characters.');\n    if (get('last.' + msg.tg.chatId) > now - 10000) return reply('Please wait a few seconds before asking another question.');\n    set('last.' + msg.tg.chatId, now);\n    const previous = get('history.' + msg.tg.chatId);\n    const history = previous?.until > now && JSON.stringify(previous.account) === JSON.stringify(msg.tg.account) ? previous.messages : [];\n    msg.tg.history = history;\n    return request('ai', '', { message: msg.tg.question, history }, 'answered');\n  }\n  if (msg.tg.stage === 'answered') {\n    if (msg.statusCode !== 200 || msg.payload?.success !== true || typeof msg.payload.answer !== 'string' || !msg.payload.answer.trim())\n      return reply('Ruhana could not answer right now. Please try again later.');\n    msg.tg.answer = msg.payload.answer;\n    return registration('mappingRecheck');\n  }\n  if (msg.tg.stage === 'mappingRecheck') {\n    if (!approved(msg.payload) || msg.payload.ruhanexUsername !== msg.tg.username || msg.payload.approvalRevision !== msg.tg.binding.approvalRevision) {\n      set('history.' + msg.tg.chatId, null); return reply('Your Telegram approval changed. Please contact your administrator.');\n    }\n    return lookup('recheck');\n  }\n  if (msg.tg.stage === 'recheck') {\n    if (!validUser(msg.payload) || JSON.stringify(identity(msg.payload)) !== JSON.stringify(msg.tg.account)) {\n      set('history.' + msg.tg.chatId, null);\n      return reply('Your account access changed. Please ask again after your administrator checks your access.');\n    }\n    msg.tg.saveHistory = true;\n    return reply(msg.tg.answer);\n  }\n  if (msg.tg.stage === 'sent') {\n    if (msg.payload?.parameters?.retry_after) set('backoffUntil', now + Math.min(86400, Math.max(1, Number(msg.payload.parameters.retry_after) || 60)) * 1000);\n    if (msg.payload?.ok === false && [400, 403].includes(msg.payload.error_code)) { msg.tg.saveHistory = false; return commit(); }\n    if (msg.statusCode !== 200 || msg.payload?.ok !== true) return safe('Telegram reply failed. The update is unacknowledged and may be retried.');\n    if (msg.tg.parts.length) return sendPart();\n    if (msg.tg.saveHistory) set('history.' + msg.tg.chatId, { until: now + 86400000, account: msg.tg.account,\n      messages: [...msg.tg.history, { role: 'user', content: msg.tg.question }, { role: 'assistant', content: msg.tg.answer.slice(0, 4000) }].slice(-12) });\n    return commit();\n  }\n  return safe('Unexpected Telegram bridge state.');\n})(msg, env, flow); } catch { node.error('Telegram bridge failed. Check configuration.', msg); return; }",
+    "outputs": 4,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_tg_http"
+      ],
+      [
+        "rx_tgra_typing_start"
+      ],
+      [
+        "rx_tgra_db_router"
+      ],
+      [
+        "rx_tgra_debug"
+      ]
+    ],
+    "x": 520,
+    "y": 120
+  },
+  {
+    "id": "rx_tgra_tg_http",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "http request",
+    "name": "Telegram Bot API",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 880,
+    "y": 100,
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_ai_http",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "http request",
+    "name": "Existing Ruhana AI endpoint",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 880,
+    "y": 180,
+    "wires": [
+      [
+        "rx_tgra_typing_stop"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_typing_start",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Start typing + request AI",
+    "func": "const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\nflow.set('tgRuhana.typing', { id: msg.tg.id, chatId: msg.tg.chatId, until: Date.now() + 255000 }, store);\nreturn [msg, (function typingRequest(env, flow, now = Date.now()) {\n  const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\n  const state = flow.get('tgRuhana.typing', store);\n  const lock = flow.get('tgRuhana.lock', store);\n  if (!state) return null;\n  if (state.until <= now || lock?.id !== state.id || lock.until <= now || String(env.get('TELEGRAM_RUHANA_ENABLED')).toLowerCase() !== 'true') {\n    flow.set('tgRuhana.typing', null, store); return null;\n  }\n  const token = String(env.get('TELEGRAM_BOT_TOKEN') || '');\n  if (!/^\\d+:[A-Za-z0-9_-]+$/.test(token)) return null;\n  return { method: 'POST', url: `https://api.telegram.org/bot${token}/sendChatAction`,\n    headers: { 'Content-Type': 'application/json' }, requestTimeout: 3000,\n    payload: JSON.stringify({ chat_id: state.chatId, action: 'typing' }) };\n})(env, flow)];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_ai_http"
+      ],
+      [
+        "rx_tgra_typing_http"
+      ]
+    ],
+    "x": 630,
+    "y": 500
+  },
+  {
+    "id": "rx_tgra_typing_stop",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Stop typing on AI completion",
+    "func": "const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\nif (flow.get('tgRuhana.typing', store)?.id === msg.tg?.id) flow.set('tgRuhana.typing', null, store);\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ],
+    "x": 950,
+    "y": 500
+  },
+  {
+    "id": "rx_tgra_typing_tick",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "inject",
+    "name": "Refresh typing every 4 seconds",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "4",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "x": 230,
+    "y": 600,
+    "wires": [
+      [
+        "rx_tgra_typing_refresh"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_typing_refresh",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Typing only while AI is pending",
+    "func": "return (function typingRequest(env, flow, now = Date.now()) {\n  const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\n  const state = flow.get('tgRuhana.typing', store);\n  const lock = flow.get('tgRuhana.lock', store);\n  if (!state) return null;\n  if (state.until <= now || lock?.id !== state.id || lock.until <= now || String(env.get('TELEGRAM_RUHANA_ENABLED')).toLowerCase() !== 'true') {\n    flow.set('tgRuhana.typing', null, store); return null;\n  }\n  const token = String(env.get('TELEGRAM_BOT_TOKEN') || '');\n  if (!/^\\d+:[A-Za-z0-9_-]+$/.test(token)) return null;\n  return { method: 'POST', url: `https://api.telegram.org/bot${token}/sendChatAction`,\n    headers: { 'Content-Type': 'application/json' }, requestTimeout: 3000,\n    payload: JSON.stringify({ chat_id: state.chatId, action: 'typing' }) };\n})(env, flow);",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_typing_http"
+      ]
+    ],
+    "x": 560,
+    "y": 600
+  },
+  {
+    "id": "rx_tgra_typing_http",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "http request",
+    "name": "Telegram typing (best effort)",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 880,
+    "y": 600,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rx_tgra_typing_catch",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "catch",
+    "name": "Ignore typing network errors",
+    "scope": [
+      "rx_tgra_typing_http"
+    ],
+    "uncaught": false,
+    "x": 240,
+    "y": 680,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rx_tgra_db_router",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "switch",
+    "name": "Registration or account query",
+    "property": "tgDb",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "users.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "telegram.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "telegram.updateOne",
+        "vt": "str"
+      }
+    ],
+    "checkall": "true",
+    "outputs": 3,
+    "wires": [
+      [
+        "rx_tgra_users"
+      ],
+      [
+        "rx_tgra_registration"
+      ],
+      [
+        "rx_tgra_register"
+      ]
+    ],
+    "x": 820,
+    "y": 260
+  },
+  {
+    "id": "rx_tgra_users",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Verify mapped Ruhanex user",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1150,
+    "y": 260,
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_registration",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Read Telegram approval",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1150,
+    "y": 320,
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_register",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Register Telegram sender",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1150,
+    "y": 380,
+    "wires": [
+      [
+        "rx_tgra_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_debug",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "debug",
+    "name": "Telegram bridge safe status",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 880,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "rx_tgra_catch",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "catch",
+    "name": "Bridge request errors",
+    "scope": [
+      "rx_tgra_step",
+      "rx_tgra_tg_http",
+      "rx_tgra_ai_http",
+      "rx_tgra_users",
+      "rx_tgra_registration",
+      "rx_tgra_register",
+      "rx_tgra_typing_start",
+      "rx_tgra_typing_stop"
+    ],
+    "uncaught": false,
+    "x": 220,
+    "y": 400,
+    "wires": [
+      [
+        "rx_tgra_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_error",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Release lock and sanitize error",
+    "func": "const store = env.get('TELEGRAM_CONTEXT_STORE') || undefined;\nconst lock = flow.get('tgRuhana.lock', store);\nif (lock?.id === msg.tg?.id) { flow.set('tgRuhana.lock', null, store); flow.set('tgRuhana.typing', null, store); }\nreturn {payload:{ok:false,description:'Telegram/Ruhana request failed. Check configuration and connectivity. No update was acknowledged; a retry may occur.'}};",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_debug"
+      ]
+    ],
+    "x": 530,
+    "y": 400
+  },
+  {
+    "id": "rx_tgra_note",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "comment",
+    "name": "SET ENV + Mongo client; see telegram-ruhana.README.md",
+    "info": "Read telegram-ruhana.README.md. Enable explicitly via TELEGRAM_RUHANA_ENABLED=true. Map private chat IDs to existing users. Requires existing AI endpoint and MongoDB client. One poller per bot.",
+    "x": 370,
+    "y": 50,
+    "wires": []
+  },
+  {
+    "id": "rx_tgra_alarm_link",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "link in",
+    "name": "Telegram alarm to approved user",
+    "links": [],
+    "x": 180,
+    "y": 800,
+    "wires": [
+      [
+        "rx_tgra_alarm_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_start",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Start approved Telegram alarm",
+    "func": "delete msg.req; delete msg.res; delete msg.tgAlarm; return msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_alarm_step"
+      ]
+    ],
+    "x": 450,
+    "y": 800
+  },
+  {
+    "id": "rx_tgra_alarm_step",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Check approval and send alarm",
+    "func": "try { return (function telegramAlarmStep(msg, env) {\n  const done = (ok, description) => [null, null, { payload: { ok, description, accepted: msg.tgAlarm?.accepted || 0, failed: msg.tgAlarm?.failed || 0 } }];\n  const db = (operation, args, stage) => { msg.tgAlarm.stage = stage; msg.tgAlarmDb = operation; msg.payload = args; delete msg.url; delete msg.headers; return [msg, null, null]; };\n  const token = String(env.get('TELEGRAM_BOT_TOKEN') || '');\n  if (!/^\\d+:[A-Za-z0-9_-]+$/.test(token)) return done(false, 'Configure TELEGRAM_BOT_TOKEN.');\n  if (!msg.tgAlarm) {\n    const text = typeof msg.payload === 'string' ? msg.payload : [msg.payload?.title, msg.payload?.body].filter(Boolean).join('\\n');\n    if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(msg.username || '') || !text || text.length > 4000) return done(false, 'Supply msg.username and an alarm message of at most 4000 characters.');\n    msg.tgAlarm = { username: msg.username, text, accepted: 0, failed: 0 };\n    return db('telegram.find', [{ approved: true, ruhanexUsername: msg.username }, { limit: 100 }], 'targets');\n  }\n  const state = msg.tgAlarm;\n  const next = () => {\n    if (!state.queue.length) return done(true, 'Approved Telegram alarm recipients processed.');\n    state.target = state.queue.shift();\n    return db('users.findOne', [{ _id: state.username }], 'account');\n  };\n  if (state.stage === 'targets') {\n    if (!Array.isArray(msg.payload)) return done(false, 'Unable to read Telegram recipients.');\n    state.queue = msg.payload; return next();\n  }\n  if (state.stage === 'account') {\n    const user = msg.payload;\n    if (!user || user.enabled !== true || user.mustChangePassword === true || !['Admin', 'Manager', 'Line Supervisor', 'JE'].includes(user.role) ||\n      (user.accountGeneration ?? null) !== state.target.ruhanexAccountGeneration) { state.failed++; return next(); }\n    return db('telegram.findOne', [{ _id: state.target._id, approved: true, ruhanexUsername: state.username,\n      approvalRevision: state.target.approvalRevision }], 'approval');\n  }\n  if (state.stage === 'approval') {\n    if (!msg.payload || !/^[1-9]\\d{0,19}$/.test(msg.payload._id) || typeof msg.payload.approvalRevision !== 'string') { state.failed++; return next(); }\n    msg.method = 'POST'; msg.url = `https://api.telegram.org/bot${token}/sendMessage`;\n    msg.headers = { 'Content-Type': 'application/json' }; msg.requestTimeout = 15000;\n    msg.payload = JSON.stringify({ chat_id: msg.payload._id, text: state.text });\n    state.stage = 'sent'; return [null, msg, null];\n  }\n  if (state.stage === 'sent') { if (msg.statusCode === 200 && msg.payload?.ok === true) state.accepted++; else state.failed++; return next(); }\n  return done(false, 'Unexpected alarm state.');\n})(msg, env); } catch { node.error('Telegram alarm failed.', msg); return; }",
+    "outputs": 3,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_alarm_router"
+      ],
+      [
+        "rx_tgra_alarm_http"
+      ],
+      [
+        "rx_tgra_debug"
+      ]
+    ],
+    "x": 740,
+    "y": 800
+  },
+  {
+    "id": "rx_tgra_alarm_router",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "switch",
+    "name": "Alarm database operation",
+    "property": "tgAlarmDb",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "telegram.find",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "users.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "telegram.findOne",
+        "vt": "str"
+      }
+    ],
+    "checkall": "true",
+    "outputs": 3,
+    "wires": [
+      [
+        "rx_tgra_alarm_db_0"
+      ],
+      [
+        "rx_tgra_alarm_db_1"
+      ],
+      [
+        "rx_tgra_alarm_delay"
+      ]
+    ],
+    "x": 1020,
+    "y": 800
+  },
+  {
+    "id": "rx_tgra_alarm_db_0",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Alarm telegram.find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1250,
+    "y": 780,
+    "wires": [
+      [
+        "rx_tgra_alarm_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_db_1",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Alarm users.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1250,
+    "y": 840,
+    "wires": [
+      [
+        "rx_tgra_alarm_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_db_2",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "mongodb4",
+    "name": "Alarm telegram.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1250,
+    "y": 900,
+    "wires": [
+      [
+        "rx_tgra_alarm_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_delay",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "delay",
+    "name": "Pace Telegram alarms before approval recheck",
+    "pauseType": "rate",
+    "timeout": "1",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 740,
+    "y": 920,
+    "wires": [
+      [
+        "rx_tgra_alarm_db_2"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_http",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "http request",
+    "name": "Send approved Telegram alarm",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1020,
+    "y": 920,
+    "wires": [
+      [
+        "rx_tgra_alarm_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_catch",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "catch",
+    "name": "Safe alarm errors",
+    "scope": [
+      "rx_tgra_alarm_step",
+      "rx_tgra_alarm_http",
+      "rx_tgra_alarm_db_0",
+      "rx_tgra_alarm_db_1",
+      "rx_tgra_alarm_db_2"
+    ],
+    "uncaught": false,
+    "x": 240,
+    "y": 1020,
+    "wires": [
+      [
+        "rx_tgra_alarm_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_tgra_alarm_error",
+    "z": "rx_telegram_ruhana_tab",
+    "type": "function",
+    "name": "Sanitize alarm errors",
+    "func": "return {payload:{ok:false,description:'Telegram alarm request failed. Check configuration and connectivity.'}};",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "wires": [
+      [
+        "rx_tgra_debug"
+      ]
+    ],
+    "x": 560,
+    "y": 1020
+  }
+]
