@@ -23,8 +23,10 @@ import {
   saveLineSettings,
 } from "../api/settingsApi";
 import { buildLineSettingsPayload } from "../utils/lineSettings";
-import { RATED_SPEED_TILE_SIZES, GLAZE_TILE_SIZES, KILN_TILE_SIZES, ratedSpeedFor, validateRatedSpeeds } from "../utils/ratedLineSpeeds";
+import { KEDA_TILE_SIZES, RATED_SPEED_TILE_SIZES, GLAZE_TILE_SIZES, KILN_TILE_SIZES, ratedSpeedFor, validateRatedSpeeds, validateTilesPerBox } from "../utils/ratedLineSpeeds";
 import DowntimeCodesAdmin from "../components/DowntimeCodesAdmin";
+import DesignGradesAdmin from "../components/DesignGradesAdmin";
+import DesignGradeAssignments from "../components/DesignGradeAssignments";
 import "./Settings.css";
 
 const { Title, Text } = Typography;
@@ -47,6 +49,11 @@ function LineSettingsForm({ line, administration }) {
   const [speedModalOpen, setSpeedModalOpen] = useState(false);
   const [speedSaving, setSpeedSaving] = useState(false);
   const [ratedSpeeds, setRatedSpeeds] = useState({});
+  const [boxForm] = Form.useForm();
+  const [boxModalOpen, setBoxModalOpen] = useState(false);
+  const [boxSaving, setBoxSaving] = useState(false);
+  const [boxPresets, setBoxPresets] = useState({});
+  const boxSizes = KEDA_TILE_SIZES[line];
   const sizes = RATED_SPEED_TILE_SIZES[line];
   const isGlaze = Boolean(GLAZE_TILE_SIZES[line]);
   const isKiln = Boolean(KILN_TILE_SIZES[line]);
@@ -75,6 +82,8 @@ function LineSettingsForm({ line, administration }) {
       }
       form.setFieldsValue({ ...DEFAULT_SETTINGS, ...settings });
       setRatedSpeeds(settings.savedSpeeds || {});
+      setBoxPresets(settings.savedTilesPerBox || {});
+      form.setFieldValue('TilesPerBox', settings.TilesPerBox === undefined ? settings.savedTilesPerBox?.[settings.tileSize] : settings.TilesPerBox);
       setUpdatedAt(settings.updatedAt || result?.updatedAt || null);
       setLoaded(true);
     } catch (err) {
@@ -88,7 +97,8 @@ function LineSettingsForm({ line, administration }) {
   }, [form, line]);
 
   useEffect(() => {
-    loadSettings();
+    const timer = window.setTimeout(loadSettings, 0);
+    return () => window.clearTimeout(timer);
   }, [loadSettings]);
 
   const searchDesignCodes = useCallback(
@@ -138,6 +148,7 @@ function LineSettingsForm({ line, administration }) {
   );
 
   const handleTileSizeChange = (tileSize) => {
+    if (boxSizes && boxPresets[tileSize] !== undefined) form.setFieldValue('TilesPerBox', boxPresets[tileSize]);
     if (sizes) {
       form.setFieldValue("lineSpeed", ratedSpeedFor(line, tileSize, ratedSpeeds));
     }
@@ -173,6 +184,22 @@ function LineSettingsForm({ line, administration }) {
     }
   };
 
+  const saveBoxPresets = async () => {
+    try {
+      const values = await boxForm.validateFields();
+      const presets = validateTilesPerBox(line, values.boxes || {});
+      setBoxSaving(true);
+      const result = await saveLineSettings({ line, settingsAction: 'saveTilesPerBox', savedTilesPerBox: presets });
+      const stored = result?.settings?.savedTilesPerBox;
+      if (result?.success === false) throw new Error(result.error || 'Unable to save tiles per box.');
+      if (!stored || JSON.stringify(validateTilesPerBox(line, stored)) !== JSON.stringify(presets)) throw new Error('The server did not confirm tiles per box. Deploy the updated Node-RED line settings patch.');
+      setBoxPresets(stored);
+      setUpdatedAt(result.settings.updatedAt); setBoxModalOpen(false);
+      message.success(`${line} tiles per box saved`);
+    } catch (err) { if (!err.errorFields) message.error(err.message || 'Unable to save tiles per box.'); }
+    finally { setBoxSaving(false); }
+  };
+
   const handleSave = async (values) => {
     setSaving(true);
     setError("");
@@ -186,11 +213,18 @@ function LineSettingsForm({ line, administration }) {
       if (!current || typeof current !== 'object' || Array.isArray(current)) {
         throw new Error('Unable to preserve the current line settings. Reload and try again.');
       }
-      const payload = buildLineSettingsPayload(line, current, { ...values, savedSpeeds: current.savedSpeeds }, administration);
+      const boxes = current.savedTilesPerBox;
+      const payload = buildLineSettingsPayload(line, current, { ...values, savedSpeeds: current.savedSpeeds, savedTilesPerBox: boxes }, administration);
 
       const result = await saveLineSettings(payload);
       if (result?.success === false) {
         throw new Error(result.error || `Unable to save ${line} settings.`);
+      }
+      if (boxSizes && !administration) {
+        const stored = result?.settings?.savedTilesPerBox;
+        if (!stored || JSON.stringify(validateTilesPerBox(line, stored)) !== JSON.stringify(boxes)) throw new Error('The server did not confirm tiles per box. Deploy the updated Node-RED line settings patch.');
+        setBoxPresets(stored);
+        form.setFieldValue('TilesPerBox', result.settings.TilesPerBox);
       }
 
       setUpdatedAt(
@@ -233,7 +267,7 @@ function LineSettingsForm({ line, administration }) {
         wrapperCol={{ xs: { span: 24 }, sm: { span: 16 }, md: { span: 12 } }}
         initialValues={DEFAULT_SETTINGS}
         onFinish={handleSave}
-        disabled={saving || speedSaving || loading || !loaded}
+        disabled={saving || speedSaving || boxSaving || loading || !loaded}
       >
         {!administration && <>
         <Form.Item
@@ -314,6 +348,15 @@ function LineSettingsForm({ line, administration }) {
           }}>Size speeds</Button>}
           </div>
         </Form.Item>
+
+        {boxSizes && <Form.Item label="Tiles per Box" extra="Active packing quantity. Editing this does not change size presets. Changing size loads its preset when available; otherwise the active quantity is kept.">
+          <div className="line-rated-speed-controls">
+            <Form.Item name="TilesPerBox" noStyle rules={[{ type: 'integer', min: 1, message: 'Enter a positive whole number.' }]}>
+              <InputNumber min={1} step={1} precision={0} placeholder="Not set" style={{ width: '100%', minWidth: 0, flex: 1 }} addonAfter="Tiles/box" />
+            </Form.Item>
+            <Button onClick={() => { boxForm.resetFields(); boxForm.setFieldsValue({ boxes: boxPresets }); setBoxModalOpen(true); }}>Size quantities</Button>
+          </div>
+        </Form.Item>}
 
         <Form.Item
           label="Planned Downtime"
@@ -407,6 +450,17 @@ function LineSettingsForm({ line, administration }) {
           </div>
         </Form.Item>
       </Form>
+      {boxSizes && !administration && <DesignGradeAssignments line={line} disabled={!loaded || loading || saving || speedSaving || boxSaving} />}
+      {boxSizes && !administration && <Modal title={`${line} — Tiles per box by tile size`} open={boxModalOpen}
+        onCancel={() => !boxSaving && setBoxModalOpen(false)} onOk={saveBoxPresets} okText="Save quantities" confirmLoading={boxSaving}
+        cancelButtonProps={{ disabled: boxSaving }} closable={!boxSaving} maskClosable={!boxSaving}>
+        <Typography.Paragraph type="secondary">Set the number of tiles packed in one box for each size. Leave blank when no packing quantity is configured. Other unsaved line settings are kept in the form.</Typography.Paragraph>
+        <Form form={boxForm} layout="horizontal" disabled={boxSaving}>
+          {boxSizes.map(size => <Form.Item key={size} label={size} name={['boxes', size]} rules={[{ type: 'integer', min: 1, message: 'Enter a positive whole number.' }]}>
+            <InputNumber min={1} step={1} precision={0} addonAfter="Tiles/box" style={{ width: '100%' }} />
+          </Form.Item>)}
+        </Form>
+      </Modal>}
       {sizes && !administration && <Modal
         title={`${line} — Rated speeds by tile size`}
         open={speedModalOpen}
@@ -487,7 +541,10 @@ export default function Settings({ administration = false }) {
             key: line,
             label: line,
             children: <LineSettingsForm key={`${administration ? "admin" : "production"}-${line}`} line={line} administration={administration} />,
-          })), ...(administration ? [{ key: "downtime_codes", label: "Downtime Codes", children: <DowntimeCodesAdmin /> }] : [])]}
+          })), ...(administration ? [
+            { key: "downtime_codes", label: "Downtime Codes", children: <DowntimeCodesAdmin /> },
+            { key: "design_grades", label: "Design Grades", children: <DesignGradesAdmin /> },
+          ] : [])]}
         />
       </Card>
     </div>

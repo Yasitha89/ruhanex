@@ -1,0 +1,15 @@
+[
+  {
+    "id": "rx_shift_report_after_save_link",
+    "z": "e5489573e203f3d0",
+    "type": "link out",
+    "name": "To Telegram shift summary (AFTER code-wise save)",
+    "mode": "link",
+    "links": [
+      "rx_shift_report_in"
+    ],
+    "x": 1710,
+    "y": 1150,
+    "wires": []
+  }
+]

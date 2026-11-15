@@ -1,4 +1,4 @@
-import { validateRatedSpeeds } from './ratedLineSpeeds.js';
+import { validateRatedSpeeds, validateTilesPerBox } from './ratedLineSpeeds.js';
 const PRODUCTION_FIELDS = ["tileSize", "designCode", "lineSpeed", "plannedDowntime"];
 const DETECTION_FIELDS = ["stopDelayMs", "maxPulseGapMs", "requiredRunTimeMs"];
 
@@ -21,5 +21,13 @@ export function buildLineSettingsPayload(line, current, values, administration) 
   }
   const speeds = validateRatedSpeeds(line, administration ? current.savedSpeeds : (values.savedSpeeds ?? current.savedSpeeds));
   if (speeds !== undefined) payload.savedSpeeds = speeds;
+  const boxes = validateTilesPerBox(line, administration ? current.savedTilesPerBox ?? {} : values.savedTilesPerBox ?? current.savedTilesPerBox ?? {});
+  if (boxes !== undefined) payload.savedTilesPerBox = boxes;
+  if (boxes !== undefined) {
+    const active = administration ? current.TilesPerBox : values.TilesPerBox;
+    const value = active === undefined ? current.TilesPerBox ?? boxes[payload.tileSize] ?? null : active;
+    if (value !== null && (!Number.isSafeInteger(value) || value < 1)) throw new Error('Tiles per box must be a positive whole number.');
+    payload.TilesPerBox = value;
+  }
   return payload;
 }

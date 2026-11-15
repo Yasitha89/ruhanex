@@ -1,5 +1,35 @@
 # Production line saved speeds
 
+## Keda sensor grade assignments
+
+The Keda production line settings now have **Assign design grades**, available to Admins/Managers. Its modal lists sensor numbers 1–16, each with a dropdown populated from the existing **Design Grades** catalogue. Clear a slot to leave it unassigned; multiple slots may represent the same grade. This is per line, not per tile size.
+
+Import the updated **keda-line-settings-save.patch.flow.json** replacing matching nodes, and the updated **design-grades.flow.json**. The latter allows Managers to read the catalogue, while only Admins may create/edit it. Keep existing MongoDB configuration and authenticated gateway. The partial-save preparation Function now has a third internal output to read line settings after validating the catalogue; import the full patch rather than only copying that Function's code.
+
+Saving sends `{line,settingsAction:"saveDesignGrades",designGrades:{"1":"First","2":"Second",...}}`. The backend validates every assignment against `ruhanex_config` document `_id:"designGrades"`, then atomically patches `settings.<Keda line>.designGrades` on document `_id:"lineSettings"`. All 16 keys are stored; unused slots are null. Ordinary line-settings/Admin saves preserve the mapping and cannot overwrite it through a submitted body. Speed, packing, detection and run settings are preserved by the dedicated action.
+
+```json
+{"settings":{"Keda 1":{"designGrades":{"1":"First","2":"Second","3":null,"4":null,"5":null,"6":null,"7":null,"8":null,"9":null,"10":null,"11":null,"12":null,"13":null,"14":null,"15":null,"16":"Reject"}}}}
+```
+
+The grade labels above are examples. Create your actual grades first in Admin → Design Grades. Future sensor events can resolve grade using `lineSettings[line].designGrades[String(sensorNumber)]`. Null means unassigned, not a default grade. Sensor ingestion, historical mapping snapshots and yield calculations are not introduced by this settings change. Test: `node node-red/test-design-grade-slots.mjs`.
+
+## Keda tiles per box
+
+Each Keda line also has an independent active **`TilesPerBox`** field next to `savedTilesPerBox`. For example: `{"TilesPerBox":6,"savedTilesPerBox":{"60x30":8,"60x60":4}}`. The normal line Save updates the active value without modifying presets. On a tile-size change, the server selects that size's preset if available; otherwise it retains the submitted/current active value. Saving **Size quantities** edits presets only, without changing the active quantity. Reloading uses the active field; legacy records without it initially display the selected size's preset. Blank active quantity is stored as null. These fields apply only to Keda lines.
+
+The production Line Settings page (Admin/Manager access) now includes **Tiles per Box** for the selected Keda size and **Size quantities** for configuring all supported sizes on that Keda line. Quantities must be positive whole numbers. Blank removes a preset; no packing counts are assumed. This is not shown for Glaze/Kiln lines or in the separate downtime-administration section.
+
+Import the updated **keda-line-settings-save.patch.flow.json**, replacing matching nodes and preserving existing MongoDB configuration/connections. It updates the existing partial-settings router and embedded preservation logic. No new HTTP endpoint is added. The router must handle partial `settingsAction` requests before the full-settings/detection validator, just as it does for rated-speed presets; Admin/Manager authorization remains enforced in the router. Use the existing authenticated Nginx gateway and keep Node-RED private.
+
+The size dialog POSTs `{line, settingsAction: "saveTilesPerBox", savedTilesPerBox: {"60x60": 4}}`. Only `settings.<Keda line>.savedTilesPerBox` and timestamps are patched in `ruhanex_config`, document `_id: "lineSettings"`. Ordinary line saves preserve every preset, rated speeds, run metadata and detection settings while saving the independent active `TilesPerBox`. Existing counts are preserved when saving the separate administration section.
+
+```json
+{"settings":{"Keda 1":{"savedTilesPerBox":{"40x40":6,"60x30":8,"60x60":4}}}}
+```
+
+The values above are illustrative; enter your actual packing quantities. The frontend verifies the server returned the saved map instead of reporting success against an older backend that ignores it. Tests: `node node-red/test-tiles-per-box.mjs` and `node node-red/test-keda-saved-speeds.mjs`.
+
 ## Kiln presets
 
 Each kiln size now takes one input: **standard output in m² per 24 hours**, at full operation without downtime allowances. The tile size is in centimetres and determines its nominal area. Kiln length, cycle time, tiles per row and shrinkage are no longer inputs to this calculation.

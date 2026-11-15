@@ -1,0 +1,255 @@
+[
+  {
+    "id": "rx_design_grades_tab",
+    "type": "tab",
+    "label": "Design Grades API",
+    "disabled": false,
+    "info": "Admin-only API via authenticated Nginx gateway. MongoDB ruhanex_config document _id designGrades. Reuse existing Mongo client. See design-grades.README.md."
+  },
+  {
+    "id": "rx_dg_read_http",
+    "z": "rx_design_grades_tab",
+    "type": "http in",
+    "name": "GET /api/design-grades",
+    "method": "get",
+    "url": "/api/design-grades",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 200,
+    "y": 120,
+    "wires": [
+      [
+        "rx_dg_read"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_read",
+    "z": "rx_design_grades_tab",
+    "type": "function",
+    "name": "read design grades",
+    "func": "msg.designGradeAction='read'; return (function designGradesStep(msg) {\n  const finish = (status, data) => { msg.statusCode = status; msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }; msg.payload = data; delete msg.designGradeState; return [null, msg]; };\n  const fail = (status, error) => finish(status, { success: false, error });\n  const db = (operation, payload, stage) => { msg.designGradeDb = operation; msg.payload = payload; msg.designGradeState.stage = stage; return [msg, null]; };\n  if (!msg.designGradeState) {\n    const action = msg.designGradeAction;\n    const role = msg.req?.headers?.['x-ruhanex-role'];\n    if (role !== 'Admin' && !(action === 'read' && role === 'Manager')) return fail(403, 'Administrator access required to edit grades; Manager access is required to read them.');\n    msg.designGradeState = { action };\n    if (action === 'read') return db('findOne', [{ _id: 'designGrades' }], 'read');\n    const b = msg.payload;\n    if (!b || typeof b.grade !== 'string' || !b.grade.trim() || b.grade.trim().length > 80 || /[\\u0000-\\u001f\\u007f]/.test(b.grade)) return fail(400, 'Grade is required, at most 80 characters without control characters.');\n    if (typeof b.description !== 'string' || !b.description.trim() || b.description.trim().length > 500) return fail(400, 'Description is required, at most 500 characters.');\n    if (b.category !== undefined && (typeof b.category !== 'string' || b.category.trim().length > 100 || /[\\u0000-\\u001f\\u007f]/.test(b.category))) return fail(400, 'Category must be text, at most 100 characters without control characters.');\n    const record = { grade: b.grade.trim(), gradeKey: b.grade.trim().toLowerCase(), description: b.description.trim(), updatedAt: new Date().toISOString() };\n    if (b.category !== undefined || action === 'create') record.category = (b.category || '').trim();\n    msg.designGradeState.record = record;\n    if (action === 'update') {\n      if (msg.req?.params?.grade !== record.grade) return fail(400, 'The grade identifier cannot be renamed.');\n      return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': record.gradeKey }, { $set: {\n        'grades.$.description': record.description, 'grades.$.updatedAt': record.updatedAt, updatedAt: record.updatedAt,\n        ...(record.category !== undefined ? { 'grades.$.category': record.category } : {}),\n      } }], 'updated');\n    }\n    if (action !== 'create') return fail(400, 'Unknown operation.');\n    return db('updateOne', [{ _id: 'designGrades' }, { $setOnInsert: { grades: [], createdAt: record.updatedAt } }, { upsert: true }], 'initialized');\n  }\n  const state = msg.designGradeState;\n  if (state.stage === 'read') {\n    if (msg.payload && !Array.isArray(msg.payload.grades)) return fail(500, 'Invalid saved design grades.');\n    const grades = (msg.payload?.grades || []).map(({ grade, description, category }) => ({ grade, description, category: category || '' })).sort((a, b) => a.grade.localeCompare(b.grade));\n    return finish(200, { success: true, grades });\n  }\n  if (msg.payload?.acknowledged !== true) return fail(500, 'Database did not confirm the write.');\n  if (state.stage === 'initialized') {\n    return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': { $ne: state.record.gradeKey } }, {\n      $push: { grades: { ...state.record, createdAt: state.record.updatedAt } }, $set: { updatedAt: state.record.updatedAt },\n    }], 'created');\n  }\n  if (msg.payload.matchedCount !== 1) return fail(state.stage === 'created' ? 409 : 404, state.stage === 'created' ? 'This grade already exists. Edit its description instead.' : 'Grade not found. Refresh the list.');\n  return finish(state.stage === 'created' ? 201 : 200, { success: true, grade: { grade: state.record.grade, description: state.record.description, ...(state.record.category !== undefined ? { category: state.record.category } : {}) } });\n})(msg);",
+    "outputs": 2,
+    "x": 510,
+    "y": 120,
+    "wires": [
+      [
+        "rx_dg_router"
+      ],
+      [
+        "rx_dg_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_create_http",
+    "z": "rx_design_grades_tab",
+    "type": "http in",
+    "name": "POST /api/design-grades",
+    "method": "post",
+    "url": "/api/design-grades",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 200,
+    "y": 200,
+    "wires": [
+      [
+        "rx_dg_create"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_create",
+    "z": "rx_design_grades_tab",
+    "type": "function",
+    "name": "create design grades",
+    "func": "msg.designGradeAction='create'; return (function designGradesStep(msg) {\n  const finish = (status, data) => { msg.statusCode = status; msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }; msg.payload = data; delete msg.designGradeState; return [null, msg]; };\n  const fail = (status, error) => finish(status, { success: false, error });\n  const db = (operation, payload, stage) => { msg.designGradeDb = operation; msg.payload = payload; msg.designGradeState.stage = stage; return [msg, null]; };\n  if (!msg.designGradeState) {\n    const action = msg.designGradeAction;\n    const role = msg.req?.headers?.['x-ruhanex-role'];\n    if (role !== 'Admin' && !(action === 'read' && role === 'Manager')) return fail(403, 'Administrator access required to edit grades; Manager access is required to read them.');\n    msg.designGradeState = { action };\n    if (action === 'read') return db('findOne', [{ _id: 'designGrades' }], 'read');\n    const b = msg.payload;\n    if (!b || typeof b.grade !== 'string' || !b.grade.trim() || b.grade.trim().length > 80 || /[\\u0000-\\u001f\\u007f]/.test(b.grade)) return fail(400, 'Grade is required, at most 80 characters without control characters.');\n    if (typeof b.description !== 'string' || !b.description.trim() || b.description.trim().length > 500) return fail(400, 'Description is required, at most 500 characters.');\n    if (b.category !== undefined && (typeof b.category !== 'string' || b.category.trim().length > 100 || /[\\u0000-\\u001f\\u007f]/.test(b.category))) return fail(400, 'Category must be text, at most 100 characters without control characters.');\n    const record = { grade: b.grade.trim(), gradeKey: b.grade.trim().toLowerCase(), description: b.description.trim(), updatedAt: new Date().toISOString() };\n    if (b.category !== undefined || action === 'create') record.category = (b.category || '').trim();\n    msg.designGradeState.record = record;\n    if (action === 'update') {\n      if (msg.req?.params?.grade !== record.grade) return fail(400, 'The grade identifier cannot be renamed.');\n      return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': record.gradeKey }, { $set: {\n        'grades.$.description': record.description, 'grades.$.updatedAt': record.updatedAt, updatedAt: record.updatedAt,\n        ...(record.category !== undefined ? { 'grades.$.category': record.category } : {}),\n      } }], 'updated');\n    }\n    if (action !== 'create') return fail(400, 'Unknown operation.');\n    return db('updateOne', [{ _id: 'designGrades' }, { $setOnInsert: { grades: [], createdAt: record.updatedAt } }, { upsert: true }], 'initialized');\n  }\n  const state = msg.designGradeState;\n  if (state.stage === 'read') {\n    if (msg.payload && !Array.isArray(msg.payload.grades)) return fail(500, 'Invalid saved design grades.');\n    const grades = (msg.payload?.grades || []).map(({ grade, description, category }) => ({ grade, description, category: category || '' })).sort((a, b) => a.grade.localeCompare(b.grade));\n    return finish(200, { success: true, grades });\n  }\n  if (msg.payload?.acknowledged !== true) return fail(500, 'Database did not confirm the write.');\n  if (state.stage === 'initialized') {\n    return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': { $ne: state.record.gradeKey } }, {\n      $push: { grades: { ...state.record, createdAt: state.record.updatedAt } }, $set: { updatedAt: state.record.updatedAt },\n    }], 'created');\n  }\n  if (msg.payload.matchedCount !== 1) return fail(state.stage === 'created' ? 409 : 404, state.stage === 'created' ? 'This grade already exists. Edit its description instead.' : 'Grade not found. Refresh the list.');\n  return finish(state.stage === 'created' ? 201 : 200, { success: true, grade: { grade: state.record.grade, description: state.record.description, ...(state.record.category !== undefined ? { category: state.record.category } : {}) } });\n})(msg);",
+    "outputs": 2,
+    "x": 510,
+    "y": 200,
+    "wires": [
+      [
+        "rx_dg_router"
+      ],
+      [
+        "rx_dg_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_update_http",
+    "z": "rx_design_grades_tab",
+    "type": "http in",
+    "name": "PUT /api/design-grades/:grade",
+    "method": "put",
+    "url": "/api/design-grades/:grade",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 200,
+    "y": 280,
+    "wires": [
+      [
+        "rx_dg_update"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_update",
+    "z": "rx_design_grades_tab",
+    "type": "function",
+    "name": "update design grades",
+    "func": "msg.designGradeAction='update'; return (function designGradesStep(msg) {\n  const finish = (status, data) => { msg.statusCode = status; msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }; msg.payload = data; delete msg.designGradeState; return [null, msg]; };\n  const fail = (status, error) => finish(status, { success: false, error });\n  const db = (operation, payload, stage) => { msg.designGradeDb = operation; msg.payload = payload; msg.designGradeState.stage = stage; return [msg, null]; };\n  if (!msg.designGradeState) {\n    const action = msg.designGradeAction;\n    const role = msg.req?.headers?.['x-ruhanex-role'];\n    if (role !== 'Admin' && !(action === 'read' && role === 'Manager')) return fail(403, 'Administrator access required to edit grades; Manager access is required to read them.');\n    msg.designGradeState = { action };\n    if (action === 'read') return db('findOne', [{ _id: 'designGrades' }], 'read');\n    const b = msg.payload;\n    if (!b || typeof b.grade !== 'string' || !b.grade.trim() || b.grade.trim().length > 80 || /[\\u0000-\\u001f\\u007f]/.test(b.grade)) return fail(400, 'Grade is required, at most 80 characters without control characters.');\n    if (typeof b.description !== 'string' || !b.description.trim() || b.description.trim().length > 500) return fail(400, 'Description is required, at most 500 characters.');\n    if (b.category !== undefined && (typeof b.category !== 'string' || b.category.trim().length > 100 || /[\\u0000-\\u001f\\u007f]/.test(b.category))) return fail(400, 'Category must be text, at most 100 characters without control characters.');\n    const record = { grade: b.grade.trim(), gradeKey: b.grade.trim().toLowerCase(), description: b.description.trim(), updatedAt: new Date().toISOString() };\n    if (b.category !== undefined || action === 'create') record.category = (b.category || '').trim();\n    msg.designGradeState.record = record;\n    if (action === 'update') {\n      if (msg.req?.params?.grade !== record.grade) return fail(400, 'The grade identifier cannot be renamed.');\n      return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': record.gradeKey }, { $set: {\n        'grades.$.description': record.description, 'grades.$.updatedAt': record.updatedAt, updatedAt: record.updatedAt,\n        ...(record.category !== undefined ? { 'grades.$.category': record.category } : {}),\n      } }], 'updated');\n    }\n    if (action !== 'create') return fail(400, 'Unknown operation.');\n    return db('updateOne', [{ _id: 'designGrades' }, { $setOnInsert: { grades: [], createdAt: record.updatedAt } }, { upsert: true }], 'initialized');\n  }\n  const state = msg.designGradeState;\n  if (state.stage === 'read') {\n    if (msg.payload && !Array.isArray(msg.payload.grades)) return fail(500, 'Invalid saved design grades.');\n    const grades = (msg.payload?.grades || []).map(({ grade, description, category }) => ({ grade, description, category: category || '' })).sort((a, b) => a.grade.localeCompare(b.grade));\n    return finish(200, { success: true, grades });\n  }\n  if (msg.payload?.acknowledged !== true) return fail(500, 'Database did not confirm the write.');\n  if (state.stage === 'initialized') {\n    return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': { $ne: state.record.gradeKey } }, {\n      $push: { grades: { ...state.record, createdAt: state.record.updatedAt } }, $set: { updatedAt: state.record.updatedAt },\n    }], 'created');\n  }\n  if (msg.payload.matchedCount !== 1) return fail(state.stage === 'created' ? 409 : 404, state.stage === 'created' ? 'This grade already exists. Edit its description instead.' : 'Grade not found. Refresh the list.');\n  return finish(state.stage === 'created' ? 201 : 200, { success: true, grade: { grade: state.record.grade, description: state.record.description, ...(state.record.category !== undefined ? { category: state.record.category } : {}) } });\n})(msg);",
+    "outputs": 2,
+    "x": 510,
+    "y": 280,
+    "wires": [
+      [
+        "rx_dg_router"
+      ],
+      [
+        "rx_dg_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_advance",
+    "z": "rx_design_grades_tab",
+    "type": "function",
+    "name": "Advance grade save",
+    "func": "return (function designGradesStep(msg) {\n  const finish = (status, data) => { msg.statusCode = status; msg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }; msg.payload = data; delete msg.designGradeState; return [null, msg]; };\n  const fail = (status, error) => finish(status, { success: false, error });\n  const db = (operation, payload, stage) => { msg.designGradeDb = operation; msg.payload = payload; msg.designGradeState.stage = stage; return [msg, null]; };\n  if (!msg.designGradeState) {\n    const action = msg.designGradeAction;\n    const role = msg.req?.headers?.['x-ruhanex-role'];\n    if (role !== 'Admin' && !(action === 'read' && role === 'Manager')) return fail(403, 'Administrator access required to edit grades; Manager access is required to read them.');\n    msg.designGradeState = { action };\n    if (action === 'read') return db('findOne', [{ _id: 'designGrades' }], 'read');\n    const b = msg.payload;\n    if (!b || typeof b.grade !== 'string' || !b.grade.trim() || b.grade.trim().length > 80 || /[\\u0000-\\u001f\\u007f]/.test(b.grade)) return fail(400, 'Grade is required, at most 80 characters without control characters.');\n    if (typeof b.description !== 'string' || !b.description.trim() || b.description.trim().length > 500) return fail(400, 'Description is required, at most 500 characters.');\n    if (b.category !== undefined && (typeof b.category !== 'string' || b.category.trim().length > 100 || /[\\u0000-\\u001f\\u007f]/.test(b.category))) return fail(400, 'Category must be text, at most 100 characters without control characters.');\n    const record = { grade: b.grade.trim(), gradeKey: b.grade.trim().toLowerCase(), description: b.description.trim(), updatedAt: new Date().toISOString() };\n    if (b.category !== undefined || action === 'create') record.category = (b.category || '').trim();\n    msg.designGradeState.record = record;\n    if (action === 'update') {\n      if (msg.req?.params?.grade !== record.grade) return fail(400, 'The grade identifier cannot be renamed.');\n      return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': record.gradeKey }, { $set: {\n        'grades.$.description': record.description, 'grades.$.updatedAt': record.updatedAt, updatedAt: record.updatedAt,\n        ...(record.category !== undefined ? { 'grades.$.category': record.category } : {}),\n      } }], 'updated');\n    }\n    if (action !== 'create') return fail(400, 'Unknown operation.');\n    return db('updateOne', [{ _id: 'designGrades' }, { $setOnInsert: { grades: [], createdAt: record.updatedAt } }, { upsert: true }], 'initialized');\n  }\n  const state = msg.designGradeState;\n  if (state.stage === 'read') {\n    if (msg.payload && !Array.isArray(msg.payload.grades)) return fail(500, 'Invalid saved design grades.');\n    const grades = (msg.payload?.grades || []).map(({ grade, description, category }) => ({ grade, description, category: category || '' })).sort((a, b) => a.grade.localeCompare(b.grade));\n    return finish(200, { success: true, grades });\n  }\n  if (msg.payload?.acknowledged !== true) return fail(500, 'Database did not confirm the write.');\n  if (state.stage === 'initialized') {\n    return db('updateOne', [{ _id: 'designGrades', 'grades.gradeKey': { $ne: state.record.gradeKey } }, {\n      $push: { grades: { ...state.record, createdAt: state.record.updatedAt } }, $set: { updatedAt: state.record.updatedAt },\n    }], 'created');\n  }\n  if (msg.payload.matchedCount !== 1) return fail(state.stage === 'created' ? 409 : 404, state.stage === 'created' ? 'This grade already exists. Edit its description instead.' : 'Grade not found. Refresh the list.');\n  return finish(state.stage === 'created' ? 201 : 200, { success: true, grade: { grade: state.record.grade, description: state.record.description, ...(state.record.category !== undefined ? { category: state.record.category } : {}) } });\n})(msg);",
+    "outputs": 2,
+    "x": 1090,
+    "y": 300,
+    "wires": [
+      [
+        "rx_dg_router"
+      ],
+      [
+        "rx_dg_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_router",
+    "z": "rx_design_grades_tab",
+    "type": "switch",
+    "name": "Grade database operation",
+    "property": "designGradeDb",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "updateOne",
+        "vt": "str"
+      }
+    ],
+    "checkall": "true",
+    "outputs": 2,
+    "x": 770,
+    "y": 160,
+    "wires": [
+      [
+        "rx_dg_findOne"
+      ],
+      [
+        "rx_dg_updateOne"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_findOne",
+    "z": "rx_design_grades_tab",
+    "type": "mongodb4",
+    "name": "findOne ruhanex_config.designGrades",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "handleDocId": false,
+    "maxTimeMS": "15000",
+    "x": 1090,
+    "y": 120,
+    "wires": [
+      [
+        "rx_dg_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_updateOne",
+    "z": "rx_design_grades_tab",
+    "type": "mongodb4",
+    "name": "updateOne ruhanex_config.designGrades",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "updateOne",
+    "output": "toArray",
+    "handleDocId": false,
+    "maxTimeMS": "15000",
+    "x": 1090,
+    "y": 200,
+    "wires": [
+      [
+        "rx_dg_advance"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_response",
+    "z": "rx_design_grades_tab",
+    "type": "http response",
+    "name": "Design grades JSON",
+    "statusCode": "",
+    "headers": {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store"
+    },
+    "x": 1100,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "rx_dg_catch",
+    "z": "rx_design_grades_tab",
+    "type": "catch",
+    "name": "Grade API errors",
+    "scope": [
+      "rx_dg_read",
+      "rx_dg_create",
+      "rx_dg_update",
+      "rx_dg_advance",
+      "rx_dg_findOne",
+      "rx_dg_updateOne"
+    ],
+    "uncaught": false,
+    "x": 210,
+    "y": 420,
+    "wires": [
+      [
+        "rx_dg_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dg_error",
+    "z": "rx_design_grades_tab",
+    "type": "function",
+    "name": "Safe grade error",
+    "func": "msg.statusCode=500; msg.payload={success:false,error:'Unable to process design grades. Please retry.'}; delete msg.error; delete msg.designGradeState; return msg;",
+    "outputs": 1,
+    "x": 520,
+    "y": 420,
+    "wires": [
+      [
+        "rx_dg_response"
+      ]
+    ]
+  }
+]

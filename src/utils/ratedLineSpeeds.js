@@ -4,6 +4,20 @@ export const KEDA_TILE_SIZES = {
   'Keda 3': ['60x30', '60x60', '90x45'],
 };
 
+export function validateTilesPerBox(line, values = {}) {
+  const sizes = KEDA_TILE_SIZES[line];
+  if (!sizes) return undefined;
+  if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('Tiles per box must be specified by tile size.');
+  const result = {};
+  for (const [size, count] of Object.entries(values)) {
+    if (!sizes.includes(size)) throw new Error(`Unsupported tile size ${size} for ${line}.`);
+    if (count == null || count === '') continue;
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error(`Enter a positive whole number of tiles per box for ${size}.`);
+    result[size] = count;
+  }
+  return result;
+}
+
 export const GLAZE_TILE_SIZES = {
   'Glaze Line 1': ['60x30', '60x60', '90x45', '120x60', '40x40'],
   'Glaze Line 2': ['40x40', '60x30', '60x60'],
