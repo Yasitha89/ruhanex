@@ -48,10 +48,13 @@ import {
 } from "../api/productionDashboardApi";
 import {
   getDesignCodes,
+  getLineSettings,
   updateLineTileSize,
   updateLineDesignCode,
 } from "../api/settingsApi";
 import { TILE_SIZE_OPTIONS } from "../utils/constants";
+import { KEDA_TILE_SIZES } from "../utils/ratedLineSpeeds";
+import { validateDesignGradeSlots } from "../utils/designGradeSlots";
 import { calculateTileSqm } from "../utils/shiftUtils";
 import { getSizeProduction } from "../utils/sizeProduction";
 import { isCommunicationAffected } from "../utils/stoppageCommunication";
@@ -130,6 +133,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
   const canDownloadExcel = canExportProduction(user?.role);
   const quality = SAMPLE_QUALITY[line];
   const [sizeModalOpen, setSizeModalOpen] = useState(false);
+  const [gradeReview, setGradeReview] = useState(null);
+  const [gradeReviewSaving, setGradeReviewSaving] = useState(false);
   const [selectedTileSize, setSelectedTileSize] = useState("");
   const [sizeSaving, setSizeSaving] = useState(false);
   const [designModalOpen, setDesignModalOpen] = useState(false);
@@ -742,12 +747,50 @@ export default function ProductionLineDashboard({ line, title = line }) {
     setSizeModalOpen(true);
   };
 
-  const saveProductionSize = async () => {
+  const requestGradeReview = useCallback(async (change, save, editor) => {
+    if (editor === 'size') setSizeModalOpen(false);
+    if (editor === 'design') setDesignModalOpen(false);
+    setGradeReview({ change, save, editor, loading: true });
+    try {
+      const result = await getLineSettings(line);
+      if (result?.success === false) throw new Error(result.error || 'Unable to load grade assignments.');
+      const settings = result?.settings || result?.data;
+      if (!settings) throw new Error('Current line settings are unavailable.');
+      const slots = validateDesignGradeSlots(settings.designGrades || {});
+      setGradeReview({ change, save, editor, slots, baseSize: settings.tileSize, baseDesign: settings.designCode, loading: false });
+    } catch (err) {
+      setGradeReview(null);
+      if (editor === 'size') setSizeModalOpen(true);
+      if (editor === 'design') setDesignModalOpen(true);
+      message.error(err.message || 'Unable to load grade assignments.');
+    }
+  }, [line]);
+
+  const confirmGradeReview = async () => {
+    setGradeReviewSaving(true);
+    try {
+      const result = await getLineSettings(line);
+      const settings = result?.settings || result?.data;
+      if (result?.success === false || !settings) throw new Error('Unable to verify current grade assignments.');
+      const slots = validateDesignGradeSlots(settings.designGrades || {});
+      if (JSON.stringify(slots) !== JSON.stringify(gradeReview.slots) || settings.tileSize !== gradeReview.baseSize || settings.designCode !== gradeReview.baseDesign) {
+        setGradeReview(previous => ({ ...previous, slots, baseSize: settings.tileSize, baseDesign: settings.designCode }));
+        message.warning('Line settings changed. Please review the current assignments again.'); return;
+      }
+      if (await gradeReview.save()) setGradeReview(null);
+    } catch (err) { message.error(err.response?.data?.error || err.message); }
+    finally { setGradeReviewSaving(false); }
+  };
+
+  const saveProductionSize = async (reviewed = false) => {
     if (!TILE_SIZE_OPTIONS.some((option) => option.value === selectedTileSize)) {
       message.warning("Please select a tile size.");
       return;
     }
 
+    if (KEDA_TILE_SIZES[line] && reviewed !== true) {
+      await requestGradeReview(`Tile size: ${selectedTileSize}`, () => saveProductionSize(true), 'size'); return;
+    }
     setSizeSaving(true);
     try {
       const response = await updateLineTileSize({
@@ -761,12 +804,14 @@ export default function ProductionLineDashboard({ line, title = line }) {
       setSizeModalOpen(false);
       message.success(`Tile size changed to ${selectedTileSize}`);
       await loadLive();
+      return true;
     } catch (error) {
       message.error(
         error?.response?.data?.error ||
           error?.message ||
           "Unable to update tile size.",
       );
+      return false;
     } finally {
       setSizeSaving(false);
     }
@@ -830,7 +875,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
     loadDesignOptions("");
   }, [live?.tileSize, live?.designCode, loadDesignOptions]);
 
-  const saveProductionDesign = useCallback(async () => {
+  const saveProductionDesign = useCallback(async function saveDesign(reviewed = false) {
     const tileSize = String(live?.tileSize || "").trim();
     const designCode = String(selectedDesignCode || "").trim();
 
@@ -839,6 +884,9 @@ export default function ProductionLineDashboard({ line, title = line }) {
       return;
     }
 
+    if (KEDA_TILE_SIZES[line] && reviewed !== true) {
+      await requestGradeReview(`Design code: ${designCode} · Tile size: ${tileSize}`, () => saveDesign(true), 'design'); return;
+    }
     setDesignSaving(true);
     try {
       const response = await updateLineDesignCode({
@@ -866,6 +914,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
 
       message.success(`Design changed to ${canonicalDesign}`);
       setDesignModalOpen(false);
+      return true;
     } catch (error) {
       console.error(`[${line}] design-code update failed`, error);
       message.error(
@@ -873,10 +922,11 @@ export default function ProductionLineDashboard({ line, title = line }) {
           error?.message ||
           "Unable to update design code.",
       );
+      return false;
     } finally {
       setDesignSaving(false);
     }
-  }, [line, live?.tileSize, selectedDesignCode]);
+  }, [line, live?.tileSize, selectedDesignCode, requestGradeReview]);
 
   const tableColumns = [
     { title: "#", width: 48, render: (_, __, i) => i + 1 },
@@ -1383,7 +1433,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         title="Change Production Tile Size"
         open={sizeModalOpen}
         onCancel={() => { if (!sizeSaving) setSizeModalOpen(false); }}
-        onOk={saveProductionSize}
+        onOk={() => saveProductionSize()}
         okText="Update Size"
         confirmLoading={sizeSaving}
         cancelButtonProps={{ disabled: sizeSaving }}
@@ -1412,11 +1462,29 @@ export default function ProductionLineDashboard({ line, title = line }) {
         </Text>
       </Modal>
 
+      <Modal title={`${line} — Confirm design grade assignments`} open={Boolean(gradeReview)}
+        onCancel={() => {
+          if (gradeReviewSaving || gradeReview?.loading) return;
+          if (gradeReview?.editor === 'size') setSizeModalOpen(true);
+          if (gradeReview?.editor === 'design') setDesignModalOpen(true);
+          setGradeReview(null);
+        }}
+        onOk={confirmGradeReview} okText="Assignments are correct — save change" confirmLoading={gradeReviewSaving}
+        okButtonProps={{ disabled: gradeReview?.loading }} cancelButtonProps={{ disabled: gradeReviewSaving || gradeReview?.loading }}
+        closable={!gradeReviewSaving && !gradeReview?.loading} maskClosable={!gradeReviewSaving && !gradeReview?.loading}>
+        <Typography.Paragraph><strong>{gradeReview?.change}</strong></Typography.Paragraph>
+        <Typography.Paragraph>Are these grade assignments correct for this change? If they are incorrect, cancel and ask a Manager or Admin to update them in Line Settings.</Typography.Paragraph>
+        {gradeReview?.loading ? <Typography.Paragraph>Loading current assignments…</Typography.Paragraph> :
+          <Descriptions column={1} bordered size="small" items={Array.from({ length: 16 }, (_, i) => ({
+            key: String(i + 1), label: `Grade number ${i + 1}`, children: gradeReview?.slots?.[i + 1] || 'Unassigned',
+          }))} />}
+      </Modal>
+
       <Modal
         title="Change Production Design"
         open={designModalOpen}
         onCancel={() => setDesignModalOpen(false)}
-        onOk={saveProductionDesign}
+        onOk={() => saveProductionDesign()}
         okText="Update Design"
         confirmLoading={designSaving}
         destroyOnHidden

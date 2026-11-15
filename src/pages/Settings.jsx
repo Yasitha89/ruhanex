@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Divider,
+  Descriptions,
   Form,
   InputNumber,
   Modal,
@@ -23,6 +24,7 @@ import {
   saveLineSettings,
 } from "../api/settingsApi";
 import { buildLineSettingsPayload } from "../utils/lineSettings";
+import { validateDesignGradeSlots } from "../utils/designGradeSlots";
 import { KEDA_TILE_SIZES, RATED_SPEED_TILE_SIZES, GLAZE_TILE_SIZES, KILN_TILE_SIZES, ratedSpeedFor, validateRatedSpeeds, validateTilesPerBox } from "../utils/ratedLineSpeeds";
 import DowntimeCodesAdmin from "../components/DowntimeCodesAdmin";
 import DesignGradesAdmin from "../components/DesignGradesAdmin";
@@ -53,6 +55,7 @@ function LineSettingsForm({ line, administration }) {
   const [boxModalOpen, setBoxModalOpen] = useState(false);
   const [boxSaving, setBoxSaving] = useState(false);
   const [boxPresets, setBoxPresets] = useState({});
+  const [gradeReview, setGradeReview] = useState(null);
   const boxSizes = KEDA_TILE_SIZES[line];
   const sizes = RATED_SPEED_TILE_SIZES[line];
   const isGlaze = Boolean(GLAZE_TILE_SIZES[line]);
@@ -200,7 +203,7 @@ function LineSettingsForm({ line, administration }) {
     finally { setBoxSaving(false); }
   };
 
-  const handleSave = async (values) => {
+  const handleSave = async (values, reviewed = null) => {
     setSaving(true);
     setError("");
 
@@ -212,6 +215,16 @@ function LineSettingsForm({ line, administration }) {
       const current = latest?.settings || latest?.data;
       if (!current || typeof current !== 'object' || Array.isArray(current)) {
         throw new Error('Unable to preserve the current line settings. Reload and try again.');
+      }
+      if (boxSizes && !administration) {
+        const slots = validateDesignGradeSlots(current.designGrades || {});
+        const changed = values.tileSize !== current.tileSize || String(values.designCode || '').trim() !== String(current.designCode || '').trim();
+        const snapshot = JSON.stringify({ tileSize: current.tileSize, designCode: current.designCode, slots });
+        if ((!reviewed && changed) || (reviewed && reviewed.snapshot !== snapshot)) {
+          setGradeReview({ values: { ...values }, slots, snapshot });
+          if (reviewed) message.warning('Line settings changed. Please review the current grade assignments again.');
+          return;
+        }
       }
       const boxes = current.savedTilesPerBox;
       const payload = buildLineSettingsPayload(line, current, { ...values, savedSpeeds: current.savedSpeeds, savedTilesPerBox: boxes }, administration);
@@ -233,6 +246,7 @@ function LineSettingsForm({ line, administration }) {
           new Date().toISOString(),
       );
       message.success(`${line} settings saved successfully`);
+      setGradeReview(null);
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : "Unable to save settings.";
@@ -267,7 +281,7 @@ function LineSettingsForm({ line, administration }) {
         wrapperCol={{ xs: { span: 24 }, sm: { span: 16 }, md: { span: 12 } }}
         initialValues={DEFAULT_SETTINGS}
         onFinish={handleSave}
-        disabled={saving || speedSaving || boxSaving || loading || !loaded}
+        disabled={saving || speedSaving || boxSaving || loading || !loaded || Boolean(gradeReview)}
       >
         {!administration && <>
         <Form.Item
@@ -450,7 +464,14 @@ function LineSettingsForm({ line, administration }) {
           </div>
         </Form.Item>
       </Form>
-      {boxSizes && !administration && <DesignGradeAssignments line={line} disabled={!loaded || loading || saving || speedSaving || boxSaving} />}
+      {boxSizes && !administration && <Modal title={`${line} — Confirm design grade assignments`} open={Boolean(gradeReview)}
+        onOk={() => handleSave(gradeReview.values, gradeReview)} okText="Assignments are correct — save settings" confirmLoading={saving}
+        onCancel={() => { if (!saving) setGradeReview(null); }} closable={!saving} maskClosable={!saving} cancelButtonProps={{ disabled: saving }}>
+        <Typography.Paragraph>Tile size: <strong>{gradeReview?.values.tileSize}</strong> · Design code: <strong>{gradeReview?.values.designCode || 'Unassigned'}</strong></Typography.Paragraph>
+        <Typography.Paragraph>Are these grade assignments correct for the new size and design? Cancel to update assignments before saving.</Typography.Paragraph>
+        <Descriptions size="small" column={1} bordered items={Array.from({ length: 16 }, (_, i) => ({ key: String(i + 1), label: `Grade number ${i + 1}`, children: gradeReview?.slots[i + 1] || 'Unassigned' }))} />
+      </Modal>}
+      {boxSizes && !administration && <DesignGradeAssignments line={line} disabled={!loaded || loading || saving || speedSaving || boxSaving || Boolean(gradeReview)} />}
       {boxSizes && !administration && <Modal title={`${line} — Tiles per box by tile size`} open={boxModalOpen}
         onCancel={() => !boxSaving && setBoxModalOpen(false)} onOk={saveBoxPresets} okText="Save quantities" confirmLoading={boxSaving}
         cancelButtonProps={{ disabled: boxSaving }} closable={!boxSaving} maskClosable={!boxSaving}>

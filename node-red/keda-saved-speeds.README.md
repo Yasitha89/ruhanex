@@ -2,6 +2,8 @@
 
 ## Keda sensor grade assignments
 
+Keda dashboard **Shift Production** tile size/design-code updates now open a grade confirmation dialog before the update request is sent. This includes Line Supervisor changes. The dialog displays all 16 current saved assignments as a read-only review; Cancel leaves the change unsaved. Managers/Admins correct assignments through Line Settings. Before confirmation, the frontend reloads the line settings and asks for another review if assignments, size or design changed while the dialog was open. This uses the existing authorized GET line-settings and dashboard update APIs; no new Supervisor write permission is added. It is a frontend confirmation, not an atomic server-side grade/settings transaction. Other line dashboards do not show the dialog.
+
 The Keda production line settings now have **Assign design grades**, available to Admins/Managers. Its modal lists sensor numbers 1–16, each with a dropdown populated from the existing **Design Grades** catalogue. Clear a slot to leave it unassigned; multiple slots may represent the same grade. This is per line, not per tile size.
 
 Import the updated **keda-line-settings-save.patch.flow.json** replacing matching nodes, and the updated **design-grades.flow.json**. The latter allows Managers to read the catalogue, while only Admins may create/edit it. Keep existing MongoDB configuration and authenticated gateway. The partial-save preparation Function now has a third internal output to read line settings after validating the catalogue; import the full patch rather than only copying that Function's code.
