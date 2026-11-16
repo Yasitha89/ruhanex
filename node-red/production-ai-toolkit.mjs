@@ -12,6 +12,18 @@ export function productionToolkit() {
     const device = enumeration(['1', '2', '3', '4', '5'], 'ATS1 meter: 1 ATS CEB, 2 ATS Generator, 3 MSB CEB, 4 MSB Generator, 5 ATS KEDA 2 (CEB).');
     const times = { fromTime: text('Inclusive ISO timestamp with Z or explicit UTC offset. Interpret user dates in Asia/Colombo.'), toTime: text('Exclusive ISO timestamp with Z or explicit UTC offset.') };
     return {
+      get_latest_temperature: spec('/api/getTemperatureData', { slaveId: enumeration(['3', '4'], 'Spray Dryer 2: 3=inside temperature, 4=output temperature.') }, 'Latest Spray Dryer 2 measured process temperature PV, set point SV and recorded delta in degrees Celsius. API searches last 30 minutes; check timestamps, STALE/controller status and gateway status. PV is measured, SV is configured. Not a command endpoint.', { slaveId: 'slave_id' }),
+      get_temperature_history: spec('/api/getHistoricalTemperatureData', {
+        slaveId: enumeration(['3', '4'], 'Spray Dryer 2: 3=inside, 4=output.'), ...times,
+        interval: enumeration(['5s', '10s', '30s', '1m', '5m', '15m', '1h', '6h', '1d'], 'Mean aggregation window. At most 5000 windows and 366 days. Use a coarser interval for long periods.'),
+        metric: enumeration(['all', 'pv', 'sv', 'delta'], 'pv=measured Celsius; sv=set point; delta=recorded deviation. all returns available fields.'),
+      }, 'Historical Spray Dryer 2 temperature time series in Celsius for one controller. Window means, not instantaneous extrema. Missing samples are unknown, not zero; do not sum temperatures. For shifts use exact Asia/Colombo start/end times.', { slaveId: 'slave_id', fromTime: 'from_time', toTime: 'to_time' }),
+      get_live_temperature_series: spec('/api/getLiveTemperatureData', {
+        slaveIds: text('Comma-separated Spray Dryer 2 controllers: 3=inside and 4=output. Use 3,4 to compare.'),
+        metric: enumeration(['pv', 'sv', 'delta'], 'Measured temperature, set point or recorded deviation in Celsius.'),
+        range: enumeration(['1m', '5m', '15m', '30m', '1h', '3h', '6h', '12h', '24h'], 'Recent rolling window; server returns mean buckets.'),
+      }, 'Recent Spray Dryer 2 temperature trends for inside/output controllers. Returned rows identify controller and timestamp. Use for recent trend charts; no writes.', { slaveIds: 'slave_ids' }),
+      get_temperature_status: spec('/api/getTemperatureGatewayStatus', {}, 'Current temperature gateway and controller communication observations. Communication problems alone do not diagnose heater, sensor, Wi-Fi or machine failure. Not historical availability.'),
       get_production_breakdown_report: spec('/api/production/breakdown-report', {
         category: enumeration(['green', 'sorted', 'kiln'], 'Production stage: green=Glaze Line 1/2/3; sorted=Keda 1/2/3; kiln=Kiln 1/2/3.'),
         lines: text('Comma-separated canonical line names within that category. Empty string selects all three lines.'),
@@ -62,10 +74,16 @@ export function productionToolkit() {
     if (args.fromDate && (args.fromDate > args.toDate || Date.parse(args.toDate) - Date.parse(args.fromDate) > 3660 * 86400000)) throw new Error('Invalid date range; request at most ten years per call.');
     const duration = args.fromTime ? Date.parse(args.toTime) - Date.parse(args.fromTime) : 0;
     if (args.fromTime && (duration <= 0 || duration > 3660 * 86400000)) throw new Error('Invalid time range; request at most ten years per call.');
-    const windows = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '6h': 21600000, '1d': 86400000, '1mo': 28 * 86400000, '1y': 365 * 86400000 };
+    const windows = { '5s': 5000, '10s': 10000, '30s': 30000, '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '6h': 21600000, '1d': 86400000, '1mo': 28 * 86400000, '1y': 365 * 86400000 };
     if (args.interval && duration / windows[args.interval] > 5000) throw new Error('Too many sample buckets. Use a coarser interval.');
     const query = {};
+    if (name === 'get_temperature_history' && duration > 366 * 86400000) throw new Error('Temperature history supports at most 366 days.');
     for (const key of keys) query[route.query[key] || key] = args[key];
+    if (name === 'get_live_temperature_series') {
+      const controllers = args.slaveIds.split(',').map(value => value.trim());
+      if (!controllers.length || controllers.length > 2 || controllers.some(id => !['3', '4'].includes(id))) throw new Error('Select Spray Dryer 2 temperature controllers 3 and/or 4.');
+      query.slave_ids = [...new Set(controllers)].join(',');
+    }
     if (name === 'get_production_breakdown_report') {
       const categories = { green: ['Glaze Line 1', 'Glaze Line 2', 'Glaze Line 3'], sorted: ['Keda 1', 'Keda 2', 'Keda 3'], kiln: ['Kiln 1', 'Kiln 2', 'Kiln 3'] };
       const selected = args.lines.trim() ? [...new Set(args.lines.split(',').map(line => line.trim()).filter(Boolean))] : categories[args.category];
@@ -104,6 +122,31 @@ export function productionToolkit() {
     const warnings = Array.isArray(data?.warnings) ? [...data.warnings] : [];
     const add = (note) => { if (!warnings.includes(note)) warnings.push(note); };
     if (data?.success === false) return data;
+    if (['get_latest_temperature', 'get_temperature_status'].includes(name)) {
+      if (!Array.isArray(data?.controllers)) return { success: false, error: 'Invalid temperature controller response.' };
+      const controllers = data.controllers.filter(row => ['3', '4'].includes(String(row.slave_id))).map(row => {
+        const result = pick(row, ['slave_id', 'device_label', 'timestamp', 'status', 'last_communication', 'received_at', 'stale']);
+        result.location = String(row.slave_id) === '3' ? 'Spray Dryer 2 inside' : 'Spray Dryer 2 output';
+        if (name === 'get_latest_temperature') for (const field of ['pv', 'sv', 'delta']) result[field] = numeric(row[field]);
+        return result;
+      });
+      const gateway = data.gateway ? pick(data.gateway, ['status', 'seen_at']) : undefined;
+      return { success: true, unit: '°C', gateway_status: data.gateway_status, gateway, controllers, warnings };
+    }
+    if (['get_temperature_history', 'get_live_temperature_series'].includes(name)) {
+      if (!Array.isArray(data?.data)) return { success: false, error: 'Invalid temperature series response.' };
+      const isLive = name === 'get_live_temperature_series';
+      const rows = data.data.filter(row => row?.timestamp && Number.isFinite(Date.parse(row.timestamp)) && (!isLive || ['3', '4'].includes(String(row.slave_id))))
+        .map(row => ({ timestamp: row.timestamp, ...(isLive ? { slave_id: row.slave_id, value: numeric(row.value) } : { pv: numeric(row.pv), sv: numeric(row.sv), delta: numeric(row.delta) }) }));
+      const statistics = [];
+      const ids = isLive ? [...new Set(rows.map(row => String(row.slave_id)))] : [args.slaveId];
+      for (const id of ids) for (const field of isLive ? ['value'] : ['pv', 'sv', 'delta']) {
+        const values = rows.filter(row => !isLive || String(row.slave_id) === id).map(row => row[field]).filter(value => value !== null);
+        if (values.length) statistics.push({ slave_id: id, metric: isLive ? args.metric : field, availableWindows: values.length,
+          minWindowMean: Math.min(...values), maxWindowMean: Math.max(...values), meanOfAvailableWindows: values.reduce((sum, value) => sum + value, 0) / values.length });
+      }
+      return { ...pick(data, ['success', 'slave_id', 'slave_ids', 'fromTime', 'toTime', 'range', 'aggregationWindow', 'metric']), unit: '°C', count: rows.length, data: rows, statistics, warnings };
+    }
     if (name === 'get_production_breakdown_report') {
       const rows = args.breakdown === 'design' ? data.rowsByDesign : data.rowsBySize;
       if (!Array.isArray(rows)) return { success: false, error: 'Production report breakdown missing.' };

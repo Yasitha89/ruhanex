@@ -13,7 +13,7 @@ const env = { get: key => vars[key] };
 const values = new Map(); const flow = { get: key => values.get(key), set: (key, value) => values.set(key, value) };
 let clock = 1800000000000;
 const accounts = {
-  supervisor: { _id: 'supervisor', role: 'Line Supervisor', enabled: true, authVersion: 1, accountGeneration: 'a' },
+  supervisor: { _id: 'supervisor', role: 'Manager', enabled: true, authVersion: 1, accountGeneration: 'a' },
   manager: { _id: 'manager', role: 'Manager', enabled: true, authVersion: 1, accountGeneration: 'b' },
 };
 const registrations = new Map([
@@ -66,7 +66,7 @@ assert.equal(registrations.get('999').approved, false);
 assert.equal(registrations.get('123').approved, true); // Registration refresh cannot overwrite approval.
 clock += 15000;
 await batch([update(4, 123, 'How is production?')]);
-assert.equal(aiRequests[0].headers['X-Ruhanex-Role'], 'Line Supervisor');
+assert.equal(aiRequests[0].headers['X-Ruhanex-Role'], 'Manager');
 assert.equal(aiRequests[0].headers.Authorization, 'Bearer private-ai-secret');
 assert.equal(aiRequests[0].body.history.length, 0);
 assert.equal(replies.at(-1).chat_id, '123');
@@ -114,6 +114,15 @@ assert.equal(values.get('tgRuhana.backoffUntil'), clock + 30000);
 assert.equal(values.get('tgRuhana.lock'), null);
 telegramFailure = false; clock += 31000;
 await batch([update(16, 123, '/help')]);
+for (const role of ['Line Supervisor', 'JE']) {
+  accounts.supervisor.role = role;
+  clock += 15000; const countBefore = aiRequests.length;
+  await batch([update(160, 123, 'How is production?')]);
+  assert.equal(aiRequests.length, countBefore);
+  assert.match(replies.at(-1).text, /AI questions are not available/);
+  assert.equal(values.get('tgRuhana.history.123'), null);
+}
+accounts.supervisor.role = 'Manager';
 registrations.get('123').approved = false; clock += 15000;
 const requestsBeforeRevoke = aiRequests.length; await batch([update(17, 123, 'Not authorized')]);
 assert.equal(aiRequests.length, requestsBeforeRevoke); assert.match(replies.at(-1).text, /Waiting for administrator approval/);

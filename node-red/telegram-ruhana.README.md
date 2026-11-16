@@ -1,5 +1,7 @@
 # Telegram conversations with Ruhana
 
+Approved **Line Supervisor / legacy JE** accounts are notification-only on Telegram. They can receive approved alarms and shift reports, but every incoming question or command receives a polite notice without calling the AI or starting the typing indicator. Their stored chat history is cleared. Admin/Manager AI conversations remain available. This restriction applies only to Telegram; in-app AI access is unchanged.
+
 Import `telegram-ruhana.flow.json` alongside your existing Production AI chat and user flows. When upgrading, **replace the existing Telegram bridge**, keeping its tab environment variables. Also replace the user/VAPID section using the updated `user-auth-vapid.flow.json`; it adds authenticated Admin approval APIs. Deploy the updated frontend to expose **Admin → My Profile → Telegram users**. No new npm or palette packages are needed beyond the existing MongoDB node.
 
 New senders are automatically stored in **ruhanex_telegram_users** as pending registrations. They receive a waiting-for-approval reply. Only an Admin can assign a Ruhanex user and approve a registration. That same approval gates AI conversations and Telegram alarms. Your existing Production AI chat tab and browser push subscriptions remain in use.

@@ -43,6 +43,7 @@ function initialise(msg, env) {
     maxRounds: limit('AI_MAX_TOOL_ROUNDS', 10, 30), maxCalls: limit('AI_MAX_TOOL_CALLS', 50, 100), forceFinal: false,
     input: [...history.map(({ role, content }) => ({ role, content })), { role: 'user', content: body.message.trim() }],
     instructions: [
+      'Spray Dryer 2 milling temperature is available through temperature tools: controller 3 is inside temperature; controller 4 is output temperature. PV is measured temperature, SV is set point, delta is the recorded deviation, all in Celsius. For current questions use latest plus status when needed; for historical periods use temperature history with explicit Asia/Colombo times; for recent comparisons use live temperature series. Temperature series contain window means: never sum temperatures, call their maxima instantaneous peaks, or assume missing readings are zero. Do not invent mappings for other spray dryers/controllers; ask for clarification. Make numerical temperature claims only after retrieving data. Current status is not historical outage evidence. No sensor controls or temperature writes are available.',
       'You are Ruhana, the AI assistant for Ruhanex. You analyse factory production and energy data using read-only tools. Identify yourself as Ruhana when asked.',
       'When asked who created or developed you, answer: "I was created by Yasitha, Senior Electrical Engineer at Royal Ceramics Lanka PLC, for the Ruhanex platform." This identifies the creator of the Ruhana assistant, not the underlying AI model. No data tools are needed for this question.',
       `Current time: ${new Date().toISOString()}. Interpret dates in Asia/Colombo (UTC+05:30).`,
@@ -75,6 +76,7 @@ function initialise(msg, env) {
     ].join('\n'),
     tools: kit.tools(lines).filter((tool) => !['Line Supervisor', 'JE'].includes(msg.req?.headers?.['x-ruhanex-role']) || ![
       'get_current_energy', 'get_energy_usage', 'get_energy_time_window', 'get_electricity_history', 'get_live_energy_series',
+      'get_latest_temperature', 'get_temperature_history', 'get_live_temperature_series', 'get_temperature_status',
       'get_device_inventory', 'get_line_settings', 'get_design_codes', 'get_machines',
       'get_production_breakdown_report',
     ].includes(tool.name)),

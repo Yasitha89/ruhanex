@@ -163,7 +163,7 @@ export function shiftReportStep(msg, env, flow, tools, now = Date.now()) {
   }
   if (s.stage === 'manager') {
     const user = msg.payload;
-    if (!user || user.enabled !== true || user.mustChangePassword === true || user.role !== 'Manager' ||
+    if (!user || user.enabled !== true || user.mustChangePassword === true || !['Manager', 'Admin', 'Line Supervisor', 'JE'].includes(user.role) ||
       (user.accountGeneration ?? null) !== s.target.ruhanexAccountGeneration) { s.part = s.report.parts.length; return checkpoint(); }
     // Pace BEFORE this final approval/account check, not after it.
     msg.method = 'POST'; msg.url = `https://api.telegram.org/bot${token}/sendMessage`;
@@ -183,7 +183,7 @@ export function shiftReportStep(msg, env, flow, tools, now = Date.now()) {
     if (s.part >= s.report.parts.length) s.index++;
     return recipient();
   }
-  if (s.stage === 'finished') return msg.payload?.acknowledged === true && msg.payload.matchedCount === 1 ? finish(true, 'Completed shift report delivery to approved Managers.', true) : finish(false, 'Unable to mark report delivery complete.');
+  if (s.stage === 'finished') return msg.payload?.acknowledged === true && msg.payload.matchedCount === 1 ? finish(true, 'Completed shift report delivery to approved recipients.', true) : finish(false, 'Unable to mark report delivery complete.');
   return finish(false, 'Unexpected report stage.');
 }
 

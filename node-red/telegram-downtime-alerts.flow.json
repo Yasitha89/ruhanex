@@ -1,0 +1,398 @@
+[
+  {
+    "id": "rx_telegram_downtime_tab",
+    "type": "tab",
+    "label": "Telegram continuous downtime alerts",
+    "disabled": false,
+    "env": [],
+    "info": "Requires snapshot connector on the actual downtime timer tab. Set DOWNTIME_ALERT_ENABLED=true and TELEGRAM_BOT_TOKEN. Managers only. Read telegram-downtime-alerts.README.md."
+  },
+  {
+    "id": "rx_dt_in",
+    "z": "rx_telegram_downtime_tab",
+    "type": "link in",
+    "name": "Confirmed downtime runtime snapshots",
+    "links": [],
+    "x": 140,
+    "y": 120,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_step",
+    "z": "rx_telegram_downtime_tab",
+    "type": "function",
+    "name": "Continuous stop + interval/recovery alerts",
+    "func": "const tools=(function downtimeAlertTools() {\n  const boundary = ts => {\n    const d = new Date(ts + 330 * 60000);\n    return [6, 14, 22].includes(d.getUTCHours()) && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;\n  };\n  const chain = records => {\n    const rows = records.filter(r => Number.isFinite(Number(r.stopStart_ts)) && Number(r.stopStart_ts) > 0)\n      .sort((a, b) => Number(b.stopStart_ts) - Number(a.stopStart_ts));\n    if (!rows.length) return null;\n    const newest = rows[0]; let start = Number(newest.stopStart_ts);\n    const linked = [newest];\n    for (const row of rows.slice(1)) {\n      if (Number(row.stopStart_ts) === start) continue;\n      if (boundary(start) && row.stopStop_ts != null && Number(row.stopStop_ts) === start && Number(row.stopStart_ts) < start) {\n        linked.push(row); start = Number(row.stopStart_ts);\n      } else if (Number(row.stopStart_ts) < start) break;\n    }\n    const reason = linked.map(r => String(r.reason || r.downtimeReason || r.downtimeCode || '').trim()).find(Boolean) || 'Reason not assigned yet';\n    return { start, end: newest.stopStop_ts == null ? null : Number(newest.stopStop_ts), reason,\n      incomplete: rows.length >= 1000 && start === Number(rows.at(-1).stopStart_ts) && boundary(start) };\n  };\n  const time = ts => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Colombo', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(ts));\n  const text = (device, episode, bucket) => {\n    const recovered = bucket === 'running';\n    const mins = Math.floor(((recovered ? episode.end : episode.observedAt) - episode.start) / 60000);\n    return [recovered ? '✅ LINE RUNNING AGAIN' : '🚨 DOWNTIME ALERT', `Line: ${device.line}`,\n      `Stopped at: ${time(episode.start)}`, `${recovered ? 'Total downtime' : 'Downtime'}: ${mins} minutes`,\n      ...(recovered ? [`Running from: ${time(episode.end)}`] : []), `Reason: ${episode.reason.slice(0, 1000)}`].join('\\n');\n  };\n  return { boundary, chain, text };\n})();\ntry{return (function downtimeAlertStep(msg, env, flow, tools, now = Date.now()) {\n  const token = String(env.get('TELEGRAM_BOT_TOKEN') || '');\n  const store = env.get('DOWNTIME_ALERT_CONTEXT_STORE') || undefined;\n  const lock = () => flow.get('telegramDowntimeAlertLock', store);\n  const setLock = value => flow.set('telegramDowntimeAlertLock', value, store);\n  const finish = (ok, description) => {\n    if (lock()?.id === msg.dt?.id) setLock(null);\n    return [null, null, { payload: { ok, description } }];\n  };\n  if (!msg.dt) {\n    if (String(env.get('DOWNTIME_ALERT_ENABLED')).toLowerCase() !== 'true') return null;\n    if (!/^\\d+:[A-Za-z0-9_-]+$/.test(token)) return finish(false, 'Set TELEGRAM_BOT_TOKEN on the alert tab.');\n    if (!Array.isArray(msg.downtimeSnapshot?.devices) || now - msg.downtimeSnapshot.at > 60000) return finish(false, 'Missing or stale runtime snapshot.');\n    if (lock()?.until > now) return null;\n    msg.dt = { id: msg._msgid || String(now), queue: msg.downtimeSnapshot.devices, at: msg.downtimeSnapshot.at };\n  }\n  const s = msg.dt;\n  if (lock() && lock().id !== s.id) return null;\n  setLock({ id: s.id, until: now + 300000 });\n  const db = (operation, args, stage) => { s.stage = stage; msg.dtDb = operation; msg.payload = args; delete msg.url; delete msg.headers; return [msg, null, null]; };\n  const next = () => {\n    while (s.queue.length) {\n      s.device = s.queue.shift();\n      if (s.device.pending) continue;\n      if (s.device.status === 'Running' && !(s.device.event > 0)) continue;\n      return db('stops.find', [{ device: s.device.device }, { sort: { stopStart_ts: -1 }, limit: 1000 }], 'stops');\n    }\n    return finish(true, 'Downtime alert poll complete.');\n  };\n  const checkpoint = () => db('events.updateOne', [{ _id: s.eventKey, runId: s.id, status: 'sending' }, {\n    $set: { [`processed.${s.target._id}`]: true, leaseUntil: new Date(now + 300000) },\n  }], 'checkpoint');\n  const recipient = () => {\n    while (s.recipientIndex < s.delivery.recipients.length) {\n      s.target = s.delivery.recipients[s.recipientIndex++];\n      if (s.delivery.processed?.[s.target._id]) continue;\n      return db('telegram.findOne', [{ _id: s.target._id, approved: true, ruhanexUsername: s.target.ruhanexUsername,\n        approvalRevision: s.target.approvalRevision }], 'approval');\n    }\n    return db('events.updateOne', [{ _id: s.eventKey, runId: s.id, status: 'sending' }, { $set: { status: 'sent', leaseUntil: new Date(0), completedAt: new Date(now) } }], 'completed');\n  };\n  if (!s.stage) return next();\n  if (s.stage === 'stops') {\n    if (!Array.isArray(msg.payload)) return finish(false, 'Invalid stoppages query response.');\n    s.episode = tools.chain(msg.payload.filter(row => row.device === s.device.device));\n    if (!s.episode || s.episode.incomplete || s.episode.start > s.at) return next();\n    if (s.device.status === 'Stopped' && s.episode.end !== null) return next(); // Wait for boundary reopen write.\n    if (s.device.status === 'Running' && (s.episode.end === null || s.episode.end !== s.device.event)) return next(); // DB must agree with confirmed recovery.\n    s.episode.observedAt = s.at;\n    s.episodeKey = `${s.device.device}|${s.episode.start}`;\n    return db('episodes.findOne', [{ _id: s.episodeKey }], 'episode');\n  }\n  if (s.stage === 'episode') {\n    const saved = msg.payload;\n    if (s.device.status === 'Running') {\n      if (!saved?.alertSent || saved.recovered) return next();\n      s.bucket = 'running';\n    } else {\n      const bucket = Math.floor((s.at - s.episode.start) / 1800000);\n      if (bucket < 1 || saved?.recovered || Number(saved?.lastBucket || 0) >= bucket) return next();\n      s.bucket = bucket;\n    }\n    s.eventKey = `${s.episodeKey}|${s.bucket}`;\n    s.text = tools.text(s.device, s.episode, s.bucket);\n    return db('telegram.find', [{ approved: true }, { limit: 501 }], 'recipients');\n  }\n  if (s.stage === 'recipients') {\n    if (!Array.isArray(msg.payload) || msg.payload.length > 500) return finish(false, 'Expected at most 500 approved registrations.');\n    const recipients = msg.payload.filter(r => /^[1-9]\\d{0,19}$/.test(r._id) && typeof r.ruhanexUsername === 'string' && typeof r.approvalRevision === 'string')\n      .map(({ _id, ruhanexUsername, ruhanexAccountGeneration, approvalRevision }) => ({ _id, ruhanexUsername, ruhanexAccountGeneration, approvalRevision }));\n    return db('events.updateOne', [{ _id: s.eventKey }, { $setOnInsert: { text: s.text, recipients, processed: {}, status: 'pending',\n      leaseUntil: new Date(0), createdAt: new Date(now), device: s.device.device, episodeStart: s.episode.start, bucket: s.bucket } }, { upsert: true }], 'ensured');\n  }\n  if (s.stage === 'ensured') {\n    if (msg.payload?.acknowledged !== true) return finish(false, 'Could not initialize alert delivery.');\n    return db('events.updateOne', [{ _id: s.eventKey, status: { $ne: 'sent' }, leaseUntil: { $lte: new Date(now) } },\n      { $set: { runId: s.id, status: 'sending', leaseUntil: new Date(now + 300000) } }], 'claimed');\n  }\n  if (s.stage === 'claimed') {\n    s.claimed = msg.payload?.acknowledged === true && msg.payload.matchedCount === 1;\n    return db('events.findOne', [{ _id: s.eventKey }], 'delivery');\n  }\n  if (s.stage === 'delivery') {\n    if (msg.payload?.status === 'sent') return next();\n    if (!s.claimed || msg.payload?.runId !== s.id) return next();\n    s.delivery = msg.payload; s.recipientIndex = 0; return recipient();\n  }\n  if (s.stage === 'approval') {\n    if (!msg.payload) return checkpoint();\n    return db('users.findOne', [{ _id: s.target.ruhanexUsername }], 'manager');\n  }\n  if (s.stage === 'manager') {\n    const user = msg.payload;\n    if (!user || user.role !== 'Manager' || user.enabled !== true || user.mustChangePassword === true ||\n      (user.accountGeneration ?? null) !== s.target.ruhanexAccountGeneration) return checkpoint();\n    msg.method = 'POST'; msg.url = `https://api.telegram.org/bot${token}/sendMessage`;\n    msg.headers = { 'Content-Type': 'application/json' }; msg.requestTimeout = 15000;\n    msg.payload = JSON.stringify({ chat_id: s.target._id, text: s.delivery.text });\n    s.stage = 'sent'; return [null, msg, null];\n  }\n  if (s.stage === 'sent') {\n    if (msg.statusCode === 200 && msg.payload?.ok === true) {\n      // Persist evidence that at least one Manager received an alert before allowing recovery notices.\n      return db('episodes.updateOne', [{ _id: s.episodeKey }, { $set: { alertSent: true, updatedAt: new Date(now) },\n        $setOnInsert: { device: s.device.device, start: s.episode.start } }, { upsert: true }], 'accepted');\n    }\n    if ([400, 403].includes(msg.payload?.error_code)) return checkpoint();\n    return finish(false, 'Telegram delivery failed; unprocessed recipients retry after the five-minute lease.');\n  }\n  if (s.stage === 'accepted') {\n    if (msg.payload?.acknowledged !== true) return finish(false, 'Cannot save accepted alert state.');\n    return checkpoint();\n  }\n  if (s.stage === 'checkpoint') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return finish(false, 'Cannot checkpoint recipient delivery.');\n    s.delivery.processed[s.target._id] = true; return recipient();\n  }\n  if (s.stage === 'completed') {\n    if (msg.payload?.acknowledged !== true || msg.payload.matchedCount !== 1) return finish(false, 'Cannot complete downtime delivery.');\n    return db('episodes.updateOne', [{ _id: s.episodeKey }, { $set: { ...(s.bucket === 'running' ? { recovered: true, recoveryTime: s.episode.end } : { lastBucket: s.bucket }), updatedAt: new Date(now) },\n      $setOnInsert: { device: s.device.device, start: s.episode.start } }, { upsert: true }], 'recorded');\n  }\n  if (s.stage === 'recorded') return msg.payload?.acknowledged === true ? next() : finish(false, 'Could not save downtime episode progress.');\n  return finish(false, 'Unexpected downtime alert stage.');\n})(msg,env,flow,tools);}catch{node.error('Downtime alert failed.',msg);return;}",
+    "outputs": 3,
+    "wires": [
+      [
+        "rx_dt_router"
+      ],
+      [
+        "rx_dt_http"
+      ],
+      [
+        "rx_dt_debug"
+      ]
+    ],
+    "x": 470,
+    "y": 120,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "noerr": 0
+  },
+  {
+    "id": "rx_dt_router",
+    "z": "rx_telegram_downtime_tab",
+    "type": "switch",
+    "name": "Downtime alert database operation",
+    "property": "dtDb",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "eq",
+        "v": "stops.find",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "episodes.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "episodes.updateOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "telegram.find",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "events.updateOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "events.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "telegram.findOne",
+        "vt": "str"
+      },
+      {
+        "t": "eq",
+        "v": "users.findOne",
+        "vt": "str"
+      }
+    ],
+    "outputs": 8,
+    "checkall": "true",
+    "wires": [
+      [
+        "rx_dt_db_0"
+      ],
+      [
+        "rx_dt_db_1"
+      ],
+      [
+        "rx_dt_db_2"
+      ],
+      [
+        "rx_dt_db_3"
+      ],
+      [
+        "rx_dt_db_4"
+      ],
+      [
+        "rx_dt_db_5"
+      ],
+      [
+        "rx_dt_pace"
+      ],
+      [
+        "rx_dt_db_7"
+      ]
+    ],
+    "x": 780,
+    "y": 120
+  },
+  {
+    "id": "rx_dt_db_0",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "stops.find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 80,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_1",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "episodes.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_downtime_episodes",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 145,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_2",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "episodes.updateOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_downtime_episodes",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 210,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_3",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "telegram.find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 275,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_4",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "events.updateOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_downtime_events",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 340,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_5",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "events.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_downtime_events",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 405,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_6",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "telegram.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_telegram_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 470,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_db_7",
+    "z": "rx_telegram_downtime_tab",
+    "type": "mongodb4",
+    "name": "users.findOne",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_users",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1100,
+    "y": 535,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_pace",
+    "z": "rx_telegram_downtime_tab",
+    "type": "delay",
+    "name": "Pace before approval recheck",
+    "pauseType": "rate",
+    "timeout": "1",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 770,
+    "y": 650,
+    "wires": [
+      [
+        "rx_dt_db_6"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_http",
+    "z": "rx_telegram_downtime_tab",
+    "type": "http request",
+    "name": "Telegram downtime alert",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 780,
+    "y": 740,
+    "wires": [
+      [
+        "rx_dt_step"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_debug",
+    "z": "rx_telegram_downtime_tab",
+    "type": "debug",
+    "name": "Downtime alert safe result",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 790,
+    "y": 820,
+    "wires": []
+  },
+  {
+    "id": "rx_dt_catch",
+    "z": "rx_telegram_downtime_tab",
+    "type": "catch",
+    "name": "Downtime alert errors",
+    "scope": [
+      "rx_dt_step",
+      "rx_dt_http",
+      "rx_dt_db_0",
+      "rx_dt_db_1",
+      "rx_dt_db_2",
+      "rx_dt_db_3",
+      "rx_dt_db_4",
+      "rx_dt_db_5",
+      "rx_dt_db_6",
+      "rx_dt_db_7"
+    ],
+    "uncaught": false,
+    "x": 190,
+    "y": 820,
+    "wires": [
+      [
+        "rx_dt_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_error",
+    "z": "rx_telegram_downtime_tab",
+    "type": "function",
+    "name": "Safe error and unlock",
+    "func": "const store=env.get('DOWNTIME_ALERT_CONTEXT_STORE')||undefined; if(flow.get('telegramDowntimeAlertLock',store)?.id===msg.dt?.id)flow.set('telegramDowntimeAlertLock',null,store);return {payload:{ok:false,description:'Downtime alert request failed. Check MongoDB, bot token and connectivity. Delivery lease expires in five minutes.'}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dt_debug"
+      ]
+    ],
+    "x": 470,
+    "y": 820,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "noerr": 0
+  }
+]

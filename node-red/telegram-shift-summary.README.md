@@ -1,6 +1,6 @@
-# Automatic completed-shift Telegram summary for Managers
+# Automatic completed-shift Telegram summary
 
-This add-on reads **saved MongoDB documents**, formats them directly (no AI/model call), and sends the completed shift to approved Telegram chats assigned to enabled **Manager** accounts. Admin and Line Supervisor roles are not recipients. Existing Telegram approval remains authoritative; no chat-ID list is required.
+This add-on reads **saved MongoDB documents**, formats them directly (no AI/model call), and sends the completed shift to approved Telegram chats assigned to enabled **Manager, Admin or Line Supervisor** accounts (including legacy JE). Existing Telegram approval remains authoritative; no chat-ID list is required.
 
 Included lines, in report order:
 
@@ -86,7 +86,7 @@ Telegram HTML bold formatting highlights headings and main values. Special chara
 The report snapshots approved Telegram registrations once when all seven summaries are ready. Before **each message part**, it paces delivery, rechecks the registration approval/revision, and looks up the current linked Ruhanex account. It sends only when:
 
 - The Telegram registration is still approved and assigned to the same account/revision.
-- The Ruhanex account is enabled, has completed its initial password change, and has role exactly `Manager`.
+- The Ruhanex account is enabled, has completed its initial password change, and has role `Manager`, `Admin`, `Line Supervisor` or legacy `JE`.
 - The account generation matches the registration (deleted/recreated usernames cannot inherit approval).
 
 Multiple approved Telegram chats belonging to a Manager can receive the report. No login session is required. Approval added after a report's recipients have been snapshotted applies to subsequent shifts, not that existing report. A report with no eligible Managers sends no messages and is still marked complete. The approved-registration read is capped at 500; exceeding that fails explicitly rather than silently dropping recipients.

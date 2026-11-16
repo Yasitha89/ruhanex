@@ -7,6 +7,10 @@ const kit = productionToolkit();
 const lines = ['Keda 1', 'Keda 2', 'Keda 3', 'Glaze Line 1', 'Glaze Line 2', 'Glaze Line 3', 'Kiln 1', 'Kiln 2', 'Kiln 3'];
 const time = { fromTime: '2026-10-01T00:00:00+05:30', toTime: '2026-11-01T00:00:00+05:30' };
 const cases = {
+  get_latest_temperature: { slaveId: '3' },
+  get_temperature_history: { slaveId: '4', ...time, interval: '1h', metric: 'all' },
+  get_live_temperature_series: { slaveIds: '3,4', metric: 'pv', range: '1h' },
+  get_temperature_status: {},
   get_production_breakdown_report: { category: 'green', lines: '', ...time, breakdown: 'design' },
   get_monthly_production: { line: 'Keda 1', month: '2026-10' },
   get_daily_production: { line: 'Keda 1', date: new Date(Date.now() + 330 * 60000 - 6 * 3600000).toISOString().slice(0, 10) },
@@ -88,5 +92,5 @@ assert.equal(msg.aiChat.input.filter((item) => item.type === 'function_call_outp
 // without imports, URL globals or access to the generator's lexical variables.
 const sandbox = { msg: { req: { headers: { authorization: 'Bearer t' } }, payload: { message: 'Test' } }, env };
 const initial = vm.runInNewContext(nodes.find((n) => n.id === 'ai_chat_init').func.replace(/^/, '(function(){\n') + '\n})()', sandbox);
-assert.equal(initial[0].aiChat.tools.length, 19);
-console.log('PASS: all 19 schemas/routes, energy parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, energy and downtime rollups, stock warnings, request cache, exported sandbox execution.');
+assert.equal(initial[0].aiChat.tools.length, 23);
+console.log('PASS: all 23 schemas/routes, parameter mapping, invalid inputs, historical deduplication/weighted totals/missing values, device redaction, rollups, stock warnings, request cache, exported sandbox execution.');

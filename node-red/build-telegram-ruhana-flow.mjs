@@ -131,6 +131,10 @@ export function bridgeStep(msg, env, flow, now = Date.now()) {
     const user = msg.payload;
     if (!validUser(user) || (user.accountGeneration ?? null) !== msg.tg.binding.ruhanexAccountGeneration) { set('history.' + msg.tg.chatId, null); return reply('Your Ruhanex account is unavailable. Contact your administrator or complete your initial password change in the app.'); }
     msg.tg.account = identity(user);
+    if (['Line Supervisor', 'JE'].includes(user.role)) {
+      set('history.' + msg.tg.chatId, null);
+      return reply('Thank you for your message. This Telegram chat provides notifications and shift reports for Supervisor accounts. AI questions are not available for your account here. Please contact your Manager if you need assistance.');
+    }
     const command = msg.tg.question.toLowerCase();
     if (command === '/reset') { set('history.' + msg.tg.chatId, null); return reply('Conversation cleared. What would you like to ask Ruhana?'); }
     if (command === '/start' || command === '/help') return reply('Hi, I am Ruhana. Ask about production, downtime or energy. Your Ruhanex account permissions apply. Use /reset to clear this conversation.');

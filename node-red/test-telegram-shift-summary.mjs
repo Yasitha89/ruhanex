@@ -84,17 +84,17 @@ assert.match((await run(event())).payload.description, /Waiting for completed/);
 assert.equal(sends.length, 0);
 docs[1].lineStats.codeWiseUpdatedAt = missingCode; now += 31000;
 await run({ shiftReportEvent: 'tick' });
-assert.equal(sends.length, 1); assert.equal(sends[0].chat_id, '100'); assert.equal(sends[0].parse_mode, 'HTML');
+assert.equal(sends.length, 3); assert.deepEqual(sends.map(s => s.chat_id), ['100', '101', '102']); assert.equal(sends[0].parse_mode, 'HTML');
 assert.match(sends[0].text, /2,000 m²/); assert.match(sends[0].text, /90% of target/); assert.match(sends[0].text, /75%/); assert.match(sends[0].text, /200 min/);
 assert.ok(!sends[0].text.includes('Glaze Line 2') && !sends[0].text.includes('Kiln 3') && !sends[0].text.includes('Never sum timeline'));
 assert.equal((sends[0].text.match(/Yk,pl — 1,000 m²/g) || []).length, 7);
-await run(event()); assert.equal(sends.length, 1);
-context = new Map(); await run(event()); assert.equal(sends.length, 1); // Mongo dedup survives local context reset.
+await run(event()); assert.equal(sends.length, 3);
+context = new Map(); await run(event()); assert.equal(sends.length, 3); // Mongo dedup survives local context reset.
 reports.clear(); context = new Map(); failSend = true;
 await run(event()); assert.equal(reports.values().next().value.status, 'sending');
 now += 301000; failSend = false; await run({}); assert.equal(reports.values().next().value.status, 'sent');
 reports.clear(); context = new Map(); revoke = true; const before = sends.length;
-await run(event()); assert.equal(sends.length, before); revoke = false;
+await run(event()); assert.equal(sends.length, before + 2); revoke = false;
 // Long reports remain valid HTML messages; escape untrusted design labels.
 const many = tools.select(docs);
 many.get('Glaze Line 1').stats.codeWiseProduction = Array.from({ length: 200 }, (_, i) => ({ designCode: 'Code <&> ' + i, production: i }));
@@ -102,4 +102,4 @@ many.get('Kiln 1').stats.targetProduction = 0;
 const parts = tools.format('2026-11-14', '06-14', many);
 assert.ok(parts.length > 1 && parts.every(p => p.length < 4096));
 assert.ok(parts.join('').includes('Code &lt;&amp;&gt;') && !parts.join('').includes('Infinity'));
-console.log('PASS: Colombo shift boundaries, complete enrichment gate, duplicate document selection, seven-line/code formatting, excluded lines, Manager-only approved recipients, Mongo delivery dedup/retry, revocation, HTML escaping and message lengths. No live messages sent.');
+console.log('PASS: Colombo shift boundaries, enrichment gate, seven-line/code formatting, approved Manager/Admin/Supervisor delivery, Mongo dedup/retry, revocation and safe message lengths. No live messages sent.');

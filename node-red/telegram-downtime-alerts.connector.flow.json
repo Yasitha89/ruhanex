@@ -1,0 +1,57 @@
+[
+  {
+    "id": "rx_dt_snapshot_timer",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Downtime alert snapshot every 15 seconds",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "repeat": "15",
+    "once": true,
+    "onceDelay": 30,
+    "crontab": "",
+    "x": 300,
+    "y": 2500,
+    "wires": [
+      [
+        "rx_dt_snapshot"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_snapshot",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Snapshot confirmed Running / Stopped status",
+    "func": "return (function runtimeSnapshot(msg, flow, global, now = Date.now()) {\n  if (flow.get('counterRestoreReady') !== true || flow.get('downtimeRestoreReady') !== true) return null;\n  const config = global.get('counterConfig') || {}, states = flow.get('downtimeStates') || {};\n  const devices = [];\n  for (const [id, cfg] of Object.entries(config)) {\n    const down = states[id];\n    if (!cfg.enabled || !down || !['Running', 'Stopped'].includes(down.status)) continue;\n    const event = Number(down.lastEventTs || 0);\n    devices.push({ device: id, line: String(cfg.line || id), status: down.status, event,\n      pending: Boolean(down.pendingShiftRecovery) });\n  }\n  return { downtimeSnapshot: { at: now, devices } };\n})(msg,flow,global);",
+    "outputs": 1,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 650,
+    "y": 2500,
+    "wires": [
+      [
+        "rx_dt_snapshot_out"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_snapshot_out",
+    "z": "e5489573e203f3d0",
+    "type": "link out",
+    "name": "To Telegram continuous downtime alerts",
+    "mode": "link",
+    "links": [
+      "rx_dt_in"
+    ],
+    "x": 940,
+    "y": 2500,
+    "wires": []
+  }
+]
