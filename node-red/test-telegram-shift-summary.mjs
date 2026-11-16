@@ -85,7 +85,7 @@ assert.equal(sends.length, 0);
 docs[1].lineStats.codeWiseUpdatedAt = missingCode; now += 31000;
 await run({ shiftReportEvent: 'tick' });
 assert.equal(sends.length, 3); assert.deepEqual(sends.map(s => s.chat_id), ['100', '101', '102']); assert.equal(sends[0].parse_mode, 'HTML');
-assert.match(sends[0].text, /2,000 m²/); assert.match(sends[0].text, /90% of target/); assert.match(sends[0].text, /75%/); assert.match(sends[0].text, /200 min/);
+assert.match(sends[0].text, /2,000 m²/); assert.ok(!sends[0].text.includes("of target")); assert.match(sends[0].text, /75%/); assert.match(sends[0].text, /200 min/);
 assert.ok(!sends[0].text.includes('Glaze Line 2') && !sends[0].text.includes('Kiln 3') && !sends[0].text.includes('Never sum timeline'));
 assert.equal((sends[0].text.match(/Yk,pl — 1,000 m²/g) || []).length, 7);
 await run(event()); assert.equal(sends.length, 3);

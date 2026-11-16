@@ -38,9 +38,8 @@ export function shiftReportTools() {
     const blocks = [];
     for (const line of lines) {
       const s = chosen.get(line).stats;
-      const production = number(s.production), target = number(s.targetProduction), ole = number(s.ole);
-      const percent = target > 0 && production !== null ? fmt(production / target * 100) + '% of target' : 'target N/A';
-      const rows = [`<b>${escape(line)}</b>`, `<b>${fmt(production)} m²</b> (${percent}) · OLE <b>${ole === null ? 'N/A' : fmt(ole) + '%'}</b>`];
+      const production = number(s.production), ole = number(s.ole);
+      const rows = [`<b>${escape(line)}</b>`, `<b>${fmt(production)} m²</b> · OLE <b>${ole === null ? 'N/A' : fmt(ole) + '%'}</b>`];
       const codes = new Map();
       // Use the aggregate array only, never add the timeline to it.
       for (const row of s.codeWiseProduction) {

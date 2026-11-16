@@ -1463,6 +1463,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
       </Modal>
 
       <Modal title={`${line} — Confirm design grade assignments`} open={Boolean(gradeReview)}
+        className="production-grade-confirmation"
         onCancel={() => {
           if (gradeReviewSaving || gradeReview?.loading) return;
           if (gradeReview?.editor === 'size') setSizeModalOpen(true);

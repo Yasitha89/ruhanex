@@ -42,6 +42,7 @@ const WINDOWS = {
 const display = (value) =>
   temperatureNumber(value) === null ? "—" : `${Number(value).toFixed(1)} °C`;
 const EMPTY_ROWS = [];
+const isTimeout = error => ['ECONNABORTED', 'ETIMEDOUT'].includes(error?.code) || /timeout of \d+ms exceeded/i.test(error?.message || '');
 
 // ECharts retains zoom internally; omit start/end so data refreshes cannot reset it.
 const DryerGraph = memo(function DryerGraph({ rows, range }) {
@@ -163,7 +164,7 @@ function SprayDryerCard({ dryer, latest, communication, checkedAt }) {
         if (abort.signal.aborted) return;
         setView((previousView) => ({
           ...previousView,
-          error: error.response?.data?.error || error.message,
+          error: isTimeout(error) ? '' : error.response?.data?.error || error.message,
         }));
       }
       timer = setTimeout(poll, 5000);
@@ -285,7 +286,7 @@ export default function MillingTemperature() {
             : previous.latest,
         status: results[1].status === "fulfilled" ? results[1].value : null,
         error: results
-          .filter((result) => result.status === "rejected")
+          .filter((result) => result.status === "rejected" && !isTimeout(result.reason))
           .map(
             (result) =>
               result.reason.response?.data?.error || result.reason.message,

@@ -1,5 +1,22 @@
 // Self-contained so the generator can embed this code in core Function nodes.
 export function productionToolkit() {
+  function shiftContext(now = Date.now()) {
+    const offset = 330 * 60000;
+    const local = new Date(now + offset);
+    const hour = local.getUTCHours();
+    const calendarDate = local.toISOString().slice(0, 10);
+    const startHour = hour >= 22 ? 22 : hour >= 14 ? 14 : hour >= 6 ? 6 : -2;
+    const midnight = Date.parse(calendarDate + 'T00:00:00+05:30');
+    const start = midnight + startHour * 3600000;
+    const iso = ts => new Date(ts + offset).toISOString().replace('Z', '+05:30');
+    const scope = ts => {
+      const d = new Date(ts + offset);
+      return { shift: ({ 6: '06-14', 14: '14-22', 22: '22-06' })[d.getUTCHours()],
+        shiftDate: d.toISOString().slice(0, 10), fromTime: iso(ts), toTime: iso(ts + 8 * 3600000) };
+    };
+    return { timezone: 'Asia/Colombo', now: iso(now), calendarDate,
+      productionDate: scope(start).shiftDate, currentShift: scope(start), previousShift: scope(start - 8 * 3600000) };
+  }
   const shifts = ['06-14', '14-22', '22-06'];
   const metrics = ['current_l1_a', 'current_l2_a', 'current_l3_a', 'current_avg_a', 'voltage_l1_l2_v', 'voltage_l2_l3_v', 'voltage_l3_l1_v', 'voltage_ll_avg_v', 'voltage_l1_n_v', 'voltage_l2_n_v', 'voltage_l3_n_v', 'voltage_ln_avg_v', 'active_power_kw', 'reactive_power_kvar', 'apparent_power_kva', 'power_factor', 'frequency_hz'];
   const spec = (path, properties, description, query = {}) => ({ path, properties, description, query });
@@ -291,5 +308,5 @@ export function productionToolkit() {
     if (['get_floor_stocks', 'get_car_stocks'].includes(name) && data.stocks?.some((row) => row.clampedToZero)) add('Some raw balances are negative and displayed as zero. Report the raw balance and reconciliation need; zero-clamping does not establish a verified physical balance.');
     return Array.isArray(data) ? data : { ...data, warnings };
   }
-  return { tools, specs, plan, normalise };
+  return { tools, specs, plan, normalise, shiftContext };
 }
