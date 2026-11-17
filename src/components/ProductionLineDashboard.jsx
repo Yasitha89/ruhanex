@@ -35,6 +35,7 @@ import ProductionMonthlyPanel, {
   exportProductionWorkbook,
 } from "./ProductionMonthlyPanel";
 import ShiftDowntimeBarChart from "./ShiftDowntimeBarChart";
+import CommunicationDot from "./CommunicationDot";
 import ShiftTileCountChart from "./ShiftTileCountChart";
 import ShiftGradeChart from "./ShiftGradeChart";
 import {
@@ -965,8 +966,8 @@ export default function ProductionLineDashboard({ line, title = line }) {
       title: "Reason",
       dataIndex: "reason",
       render: (v, row) => <>
-        {isCommunicationAffected(row) && <Tag color="purple">Communication affected</Tag>}
         {v || <Text type="secondary">Not specified</Text>}
+        {isCommunicationAffected(row) && <CommunicationDot />}
       </>,
     },
   ];
@@ -1532,7 +1533,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
       </Modal>
 
       <Modal
-        title="Downtime Details"
+        title={<span>Downtime Details{isCommunicationAffected(selectedDowntime) && <CommunicationDot />}</span>}
         open={downtimeModalOpen}
         onCancel={() => setDowntimeModalOpen(false)}
         onOk={saveDowntimeReason}

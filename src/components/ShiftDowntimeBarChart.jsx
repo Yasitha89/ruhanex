@@ -39,11 +39,10 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
 
           return `
             <div style="min-width:210px">
-              <div style="font-weight:700;margin-bottom:7px">Downtime ${params.dataIndex + 1}</div>
+              <div style="font-weight:700;margin-bottom:7px">Downtime ${params.dataIndex + 1}${isCommunicationAffected(row) ? ' <span style="color:#8b5cf6;margin-left:6px" title="Communication affected">●</span>' : ''}</div>
               <div>Start: <strong>${dayjs(Number(row.stopStart_ts)).format("HH:mm:ss")}</strong></div>
               <div>End: <strong>${end}</strong></div>
               <div>Duration: <strong>${formatMinutes(row.durationMinutes)}</strong></div>
-              ${isCommunicationAffected(row) ? '<div style="color:#8b5cf6;font-weight:600">Communication affected — machine state uncertain</div>' : ''}
               <div>Machine: <strong>${row.machine || "-"}</strong></div>
               <div>Reason: <strong>${row.reason || "Not specified"}</strong></div>
             </div>
@@ -107,9 +106,6 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
 
   return (
     <div>
-      {rows.some(isCommunicationAffected) && <div style={{ color: '#8b5cf6', fontSize: 12, marginBottom: 6 }}>
-        <span aria-hidden="true">● </span>Communication affected (machine state uncertain)
-      </div>}
     <ZoomableShiftChart
       option={option}
       lazyUpdate

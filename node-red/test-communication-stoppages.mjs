@@ -13,7 +13,7 @@ assert.equal(row.communicationAffected,true);
 assert.equal(row.communicationEvidence,'telemetry_timeout');
 assert.equal(result[0][1].operation,'updateMany');
 assert.equal(result[0][1].payload[0].device,id);
-assert.equal(stoppageBarColor(row),'#8b5cf6');
+assert.equal(stoppageBarColor(row),'#ff4d4f');
 assert.equal(stoppageBarColor({isOpen:true}),'#ff7a45');
 assert.equal(stoppageBarColor({isOpen:false}),'#ff4d4f');
 assert.equal(isCommunicationAffected({reason:'WiFi'}),false); // never infer from free text
