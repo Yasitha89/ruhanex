@@ -4,7 +4,7 @@ This patch updates only the supplied **ALL Lines: Downtime + Shift Change** Func
 
 ## Changed areas
 
-1. Added `sensorBootId(id)` immediately before `mongoStart()`. It reads `counters[id].bootId`, with `boot_id` as a fallback. String IDs are preserved (trimmed); finite numbers are stored as strings, including zero. Unknown/invalid values become null.
+1. Added `sensorBootId(id)` immediately before `mongoStart()`. It reads **`counters[id].previousBootId`**, the field used by your actual Process ALL Counters function, then falls back to `bootId` and `boot_id`. String IDs are preserved (trimmed); finite numbers are stored as strings, including zero. Unknown/invalid values become null.
 2. **mongoStart() / STOP_START insert:** adds `bootIdAtStopStart` and `bootIdStartObservedAt`, and initializes `bootIdAtStopEnd`/`bootIdEndObservedAt` to null.
 3. **mongoEnd() / STOP_END update:** adds `bootIdAtStopEnd` and `bootIdEndObservedAt`. The original start boot ID is never overwritten during closure.
 
@@ -34,6 +34,14 @@ db.stoppages.find({
 ```
 
 The original sensor telemetry flow must already populate the counter's boot ID. If these fields are null, inspect that ingestion state instead of treating null as no reboot.
+
+### Counter-field compatibility fix
+
+The supplied Process ALL Counters function stores the live boot identity in `state.previousBootId`, not `state.bootId`. It also already sends the value to InfluxDB as `boot_id`. This field-name mismatch caused the first downtime patch to write null IDs even when telemetry contained them. The updated downtime patch recognizes the correct field directly.
+
+An optional companion **counter-boot-id-alias.patch.flow.json** updates only Process ALL Counters (ID `5b2940b2f4f1eace`) by adding `state.bootId = boot` immediately after `state.previousBootId = boot`. Its counting, baseline/reboot/rollback logic and Influx output are unchanged. Replace that node or paste counter-boot-id-alias.function.txt into it. The alias fills on the next valid telemetry packet, not at deploy time. Existing null MongoDB history cannot be accurately backfilled from the current boot ID.
+
+Additional verification: `node node-red/test-counter-boot-id-alias.mjs`.
 
 ## Observation limits
 

@@ -1,0 +1,10 @@
+const counters = flow.get("counters") || {};
+
+msg.payload = Object.entries(counters).map(([device, state]) => ({
+    device,
+    previousBootId: state.previousBootId ?? null,
+    bootId: state.bootId ?? null,
+    boot_id: state.boot_id ?? null
+}));
+
+return msg;

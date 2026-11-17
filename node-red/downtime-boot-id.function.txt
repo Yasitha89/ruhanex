@@ -307,7 +307,9 @@ function getShiftRange(
 // Boot identity is observed when this timer processes the event. Event timestamps
 // can be backdated, so observation times are stored separately.
 function sensorBootId(id) {
-    const value = counters[id]?.bootId ?? counters[id]?.boot_id;
+    // Process ALL Counters uses previousBootId as its live counting baseline.
+    // Prefer it over a legacy bootId field that may be null or stale.
+    const value = counters[id]?.previousBootId ?? counters[id]?.bootId ?? counters[id]?.boot_id;
     if (typeof value === "string") return value.trim() || null;
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
     return null;

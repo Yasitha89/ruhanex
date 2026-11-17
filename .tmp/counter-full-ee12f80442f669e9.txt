@@ -1,0 +1,131 @@
+const body = msg.payload || {};
+const deviceId = String(body.deviceId || "").trim();
+const newShiftCount = body.shiftCount;
+
+if (!deviceId) {
+    node.status({ fill: "red", shape: "ring", text: "Missing deviceId" });
+    node.warn("[MANUAL CORRECTION] deviceId is required.");
+    return [null, null];
+}
+
+if (
+    newShiftCount === null ||
+    newShiftCount === undefined ||
+    newShiftCount === "" ||
+    !Number.isInteger(Number(newShiftCount)) ||
+    Number(newShiftCount) < 0
+) {
+    node.status({ fill: "red", shape: "ring", text: "Invalid shiftCount" });
+    node.warn(`[MANUAL CORRECTION] Invalid shiftCount for ${deviceId}. Enter a whole number >= 0.`);
+    return [null, null];
+}
+
+if (
+    flow.get("counterRestoreReady") !== true ||
+    flow.get("downtimeRestoreReady") !== true
+) {
+    node.status({ fill: "yellow", shape: "ring", text: "Restore not ready" });
+    node.warn("[MANUAL CORRECTION] Counter restore is not complete. Wait until normal counters are running, then inject again.");
+    return [null, null];
+}
+
+let counters = flow.get("counters") || {};
+let state = counters[deviceId];
+
+if (!state) {
+    node.status({ fill: "red", shape: "ring", text: `${deviceId} not found` });
+    node.warn(`[MANUAL CORRECTION] Runtime counter state not found for ${deviceId}.`);
+    return [null, null];
+}
+
+const allCfg = global.get("counterConfig") || {};
+const cfg = allCfg[deviceId];
+
+if (!cfg || cfg.enabled !== true) {
+    node.status({ fill: "red", shape: "ring", text: `${deviceId} disabled/unknown` });
+    node.warn(`[MANUAL CORRECTION] ${deviceId} is not configured or is disabled.`);
+    return [null, null];
+}
+
+if (!state.shiftName || !state.shiftDate) {
+    node.status({ fill: "red", shape: "ring", text: "Shift state missing" });
+    node.warn(`[MANUAL CORRECTION] ${deviceId} has no active shiftName/shiftDate.`);
+    return [null, null];
+}
+
+const oldShiftCount = Number(state.shiftCount || 0);
+const correctedShiftCount = Number(newShiftCount);
+
+// IMPORTANT: change ONLY shiftCount.
+state.shiftCount = correctedShiftCount;
+
+counters[deviceId] = state;
+flow.set("counters", counters);
+
+const allLineSettings = global.get("lineSettings") || {};
+
+const lineSettings =
+    allLineSettings[cfg.line] ||
+    allLineSettings[String(cfg.line || "").toLowerCase()] ||
+    {};
+
+const tileSize = lineSettings.tileSize ?? "unknown";
+
+const display = {
+    topic: cfg.displayTopic || `display/${deviceId}/shiftCount`,
+    payload: JSON.stringify({
+        device: deviceId,
+        line: cfg.line,
+        shift: state.shiftName,
+        shiftDate: state.shiftDate,
+        shiftCount: correctedShiftCount
+    })
+};
+
+const rawCount =
+    state.previousRaw !== null &&
+    state.previousRaw !== undefined
+        ? Number(state.previousRaw)
+        : 0;
+
+const bootId =
+    state.previousBootId !== null &&
+    state.previousBootId !== undefined
+        ? String(state.previousBootId)
+        : "";
+
+const influx = {
+    payload: [
+        {
+            shift_count: correctedShiftCount,
+            device_count: Number(state.deviceCount || 0),
+            raw_count: rawCount,
+            count_delta: 0,
+            boot_id: bootId,
+            last_signal: Number(state.lastSignal || 0)
+        },
+        {
+            device: deviceId,
+            line: String(cfg.line || deviceId),
+            shift: String(state.shiftName || ""),
+            shiftDate: String(state.shiftDate || ""),
+            tileSize: String(tileSize),
+            eventType: "manual_correction"
+        }
+    ]
+};
+
+node.status({
+    fill: "green",
+    shape: "dot",
+    text: `${deviceId}: ${oldShiftCount} → ${correctedShiftCount}`
+});
+
+node.warn(
+    `[MANUAL CORRECTION] ${deviceId} shiftCount corrected ` +
+    `${oldShiftCount} -> ${correctedShiftCount} ` +
+    `(${state.shiftDate} ${state.shiftName}). ` +
+    `raw=${rawCount} preserved.`
+);
+
+return [display, influx];

@@ -40,6 +40,7 @@ const { Title, Text } = Typography;
 
 const DEVICE_TYPES = [
   { value: "counter", label: "Counter" },
+  { value: "quality_sensor", label: "Quality Sensor" },
   { value: "energy_gateway", label: "Energy Gateway" },
   { value: "temperature_gateway", label: "Temperature Gateway" },
 ];
@@ -127,7 +128,7 @@ export default function DeviceAdministration() {
 
       const shortId = String(values.shortId || "").trim();
       const prefix =
-        values.deviceType === "temperature_gateway" ? "RX-TEMP" : values.deviceType === "energy_gateway" ? "RX-ENM" : "RX-CNT";
+        values.deviceType === "quality_sensor" ? "RX-QLT" : values.deviceType === "temperature_gateway" ? "RX-TEMP" : values.deviceType === "energy_gateway" ? "RX-ENM" : "RX-CNT";
       const deviceKey = editingKey || `${prefix}-${shortId}`;
 
       const payload = {
@@ -139,7 +140,9 @@ export default function DeviceAdministration() {
         deviceLabel: values.deviceLabel || "",
       };
 
-      if (values.deviceType === "counter") {
+      if (values.deviceType === "quality_sensor") {
+        payload.line = values.line || "";
+      } else if (values.deviceType === "counter") {
         Object.assign(payload, {
           line: values.line || "",
           machine: values.machine || "",
@@ -372,7 +375,7 @@ export default function DeviceAdministration() {
               >
                 <Input
                   placeholder={
-                    deviceType === "temperature_gateway" ? "3000" : deviceType === "energy_gateway" ? "2000" : "1002"
+                    deviceType === "quality_sensor" ? "4000" : deviceType === "temperature_gateway" ? "3000" : deviceType === "energy_gateway" ? "2000" : "1002"
                   }
                   disabled={Boolean(editingKey)}
                 />
@@ -385,7 +388,7 @@ export default function DeviceAdministration() {
             </Col>
           </Row>
 
-          {deviceType === "counter" ? (
+          {["counter", "quality_sensor"].includes(deviceType) ? (
             <Row gutter={16}>
               <Col xs={24} md={8}>
                 <Form.Item
@@ -396,16 +399,16 @@ export default function DeviceAdministration() {
                   <Select options={PRODUCTION_LINE_OPTIONS} />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={8}>
+              {deviceType === "counter" && <Col xs={24} md={8}>
                 <Form.Item name="machine" label="Machine">
                   <Input />
                 </Form.Item>
-              </Col>
-              <Col xs={24} md={8}>
+              </Col>}
+              {deviceType === "counter" && <Col xs={24} md={8}>
                 <Form.Item name="displayTopic" label="Display Topic">
                   <Input placeholder="display/line3/shiftCount" />
                 </Form.Item>
-              </Col>
+              </Col>}
             </Row>
           ) : (
             <>

@@ -1,0 +1,120 @@
+[
+  {
+    "id": "rx_quality_v2",
+    "type": "tab",
+    "label": "Quality telemetry — step 1",
+    "disabled": false,
+    "info": "See quality-telemetry.README.md. Existing Influx config; raw box snapshots only."
+  },
+  {
+    "id": "qv2_mqtt",
+    "z": "rx_quality_v2",
+    "type": "mqtt in",
+    "name": "Quality box telemetry",
+    "topic": "RX-QLT/+/telemetry",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "qv2_broker",
+    "inputs": 0,
+    "x": 180,
+    "y": 100,
+    "wires": [
+      [
+        "qv2_capture"
+      ]
+    ]
+  },
+  {
+    "id": "qv2_capture",
+    "z": "rx_quality_v2",
+    "type": "function",
+    "name": "Validate + capture registered line settings",
+    "outputs": 1,
+    "x": 550,
+    "y": 100,
+    "wires": [
+      [
+        "qv2_write"
+      ]
+    ],
+    "func": "function qualitySnapshot(msg, devices, lineSettings, now) {\n  const match = /^RX-QLT\\/([A-Za-z0-9_-]+)\\/telemetry$/.exec(msg.topic || '');\n  if (!match) throw Error('Invalid quality telemetry topic.');\n  const id = `RX-QLT-${match[1]}`;\n  const p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n  const uint = n => Number.isSafeInteger(n) && n >= 0 && n <= 4294967295;\n  if (!p || p.device !== id) throw Error('Payload device must match MQTT topic.');\n  const cfg = devices?.[id];\n  if (!cfg || cfg.enabled !== true) throw Error(`Quality device ${id} is not registered and enabled.`);\n  if (!/^Keda [123]$/.test(cfg.line || '')) throw Error('Quality sensor must be assigned to a Keda line.');\n  const settings = lineSettings?.[cfg.line];\n  if (!settings || !settings.designCode || !settings.tileSize) throw Error('Current line design code / size is unavailable.');\n  if (!Number.isSafeInteger(settings.TilesPerBox) || settings.TilesPerBox <= 0) throw Error('Current TilesPerBox must be a positive integer.');\n  if (!Array.isArray(p.grade_counts) || p.grade_counts.length !== 16 || !p.grade_counts.every(uint)) throw Error('grade_counts must contain 16 uint32 box counters.');\n  if (!Number.isInteger(p.grade) || p.grade < 0 || p.grade > 15 || !uint(p.grade_count) || p.grade_count !== p.grade_counts[p.grade]) throw Error('grade_count must match the firmware grade (0–15) array position.');\n  const hasTotal = Object.prototype.hasOwnProperty.call(p, 'total_count');\n  const hasCount = Object.prototype.hasOwnProperty.call(p, 'count');\n  if (hasTotal && hasCount && p.total_count !== p.count) throw Error('count and total_count must match when both are provided.');\n  const totalCount = hasTotal ? p.total_count : p.count;\n  if (!uint(totalCount)) throw Error('A numeric uint32 count or total_count is required.');\n  if (p.grade_counts.reduce((a, b) => a + b, 0) !== totalCount) throw Error('count / total_count must equal the sum of grade_counts.');\n  if (!uint(p.boot_id) || !uint(p.sequence) || !uint(p.dropped_events)) throw Error('boot_id, sequence and dropped_events must be uint32 values.');\n  const assignments = {};\n  for (let slot = 1; slot <= 16; slot++) {\n    const value = settings.designGrades?.[String(slot)];\n    if (value != null && typeof value !== 'string') throw Error('Invalid line designGrades assignment.');\n    assignments[slot] = value || null;\n  }\n  const local = new Date(now + 330 * 60000);\n  const hour = local.getUTCHours();\n  const shift = hour >= 6 && hour < 14 ? 'A' : hour >= 14 && hour < 22 ? 'B' : 'C';\n  if (hour < 6) local.setUTCDate(local.getUTCDate() - 1);\n  return {\n    schema: 3, receivedAt: now, device: id, line: cfg.line,\n    tenantId: cfg.tenantId || '', siteId: cfg.siteId || '',\n    shift, shiftDate: local.toISOString().slice(0, 10),\n    designCode: String(settings.designCode), tileSize: String(settings.tileSize),\n    tilesPerBox: settings.TilesPerBox, designGrades: assignments,\n    productionRunId: String(settings.productionRunId || ''),\n    totalCount, firmwareGrade: p.grade, gradeCount: p.grade_count,\n    gradeCounts: [...p.grade_counts], bootId: String(p.boot_id),\n    sequence: p.sequence, droppedEvents: p.dropped_events,\n  };\n}\nfunction qualityInfluxPayload(s) {\n  const fields = {\n    time:s.receivedAt, total_count:`${s.totalCount}i`, grade:`${s.firmwareGrade}i`, grade_count:`${s.gradeCount}i`,\n    sequence:`${s.sequence}i`, dropped_events:`${s.droppedEvents}i`, boot_id:s.bootId,\n    tiles_per_box:`${s.tilesPerBox}i`, design_code:s.designCode, tile_size:s.tileSize,\n    production_run_id:s.productionRunId, shift:s.shift, shift_date:s.shiftDate,\n    grade_counts_json:JSON.stringify(s.gradeCounts), design_grades_json:JSON.stringify(s.designGrades),\n    received_at_ms:`${s.receivedAt}i`, schema:'3i', undetected_boxes:`${s.gradeCounts[0]}i`,\n  };\n  for(let grade=0;grade<16;grade++) {\n    fields[`grade_${grade}_boxes`]=`${s.gradeCounts[grade]}i`;\n    fields[`grade_${grade}_assignment`]=grade===0?'':s.designGrades[grade]||'';\n  }\n  return [fields,{device:s.device,line:s.line,tenant:s.tenantId,site:s.siteId}];\n}\ntry {\n    const previous=flow.get('qualityV2Clock')||0;\n    const snapshot=qualitySnapshot(msg,global.get('devices'),global.get('lineSettings'),Math.max(Date.now(),previous+1));\n    flow.set('qualityV2Clock',snapshot.receivedAt);\n    return {payload:qualityInfluxPayload(snapshot)};\n  } catch(e) {node.error(e.message);return null;}"
+  },
+  {
+    "id": "qv2_write",
+    "z": "rx_quality_v2",
+    "type": "influxdb out",
+    "influxdb": "eef122fda5340dac",
+    "name": "Save quality box snapshots",
+    "measurement": "quality_events",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "RCLH",
+    "x": 940,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "qv2_catch_write",
+    "z": "rx_quality_v2",
+    "type": "catch",
+    "name": "Quality Influx write errors",
+    "scope": [
+      "qv2_write"
+    ],
+    "uncaught": false,
+    "x": 230,
+    "y": 220,
+    "wires": [
+      [
+        "qv2_error"
+      ]
+    ]
+  },
+  {
+    "id": "qv2_error",
+    "z": "rx_quality_v2",
+    "type": "function",
+    "name": "Safe error details",
+    "outputs": 1,
+    "x": 550,
+    "y": 220,
+    "wires": [
+      [
+        "qv2_debug"
+      ]
+    ],
+    "func": "return {payload:{saved:false,message:msg.error?.message||'Quality Influx write failed'}};"
+  },
+  {
+    "id": "qv2_debug",
+    "z": "rx_quality_v2",
+    "type": "debug",
+    "name": "Quality write errors",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 930,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "qv2_broker",
+    "type": "mqtt-broker",
+    "name": "QUALITY — SELECT EXISTING BROKER",
+    "broker": "",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true
+  }
+]

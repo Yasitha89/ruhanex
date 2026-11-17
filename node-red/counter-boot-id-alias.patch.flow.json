@@ -1,0 +1,25 @@
+[
+  {
+    "id": "5b2940b2f4f1eace",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Process ALL Counters",
+    "func": "const m = String(msg.topic || \"\").match(/^RX-CNT\\/([^/]+)\\/telemetry$/);\nif (!m) return [null, null];\n\nconst deviceId = \"RX-CNT-\" + m[1];\nconst allCfg = global.get(\"counterConfig\") || {};\nconst cfg = allCfg[deviceId];\nif (!cfg || cfg.enabled !== true) return [null, null];\n\nlet data;\ntry {\n    data = typeof msg.payload === \"string\" ? JSON.parse(msg.payload) : msg.payload;\n} catch (e) {\n    node.warn(`${deviceId}: invalid JSON`);\n    return [null, null];\n}\n\nconst raw = Number(data?.count);\nif (\n    !Number.isInteger(raw) ||\n    raw < 0 ||\n    raw > 4294967295 ||\n    data?.boot_id === undefined ||\n    data?.boot_id === null\n) {\n    node.warn(`${deviceId}: invalid payload`);\n    return [null, null];\n}\n\nconst boot = String(data.boot_id);\n\nlet counters = flow.get(\"counters\") || {};\nlet state = counters[deviceId];\nif (!state) return [null, null];\n\nconst now = Date.now();\nstate.lastSeen = now;\n\nlet delta = 0;\nlet eventType = \"heartbeat\";\n\n// previousRaw + previousBootId are restored ONLY from the current shift.\n// If there is no trustworthy current-shift baseline, the first MQTT\n// message becomes a baseline and is not added to the shift count.\nif (\n    state.previousRaw === null ||\n    state.previousRaw === undefined ||\n    state.previousBootId === null ||\n    state.previousBootId === undefined\n) {\n    delta = 0;\n    eventType = \"initial_sync\";\n}\nelse if (boot !== String(state.previousBootId)) {\n    // A valid current-shift state existed, but the ESP rebooted.\n    // The new raw counter started from zero, therefore its current raw\n    // value represents counts after that reboot.\n    delta = raw;\n    eventType = \"new_boot\";\n}\nelse if (raw >= Number(state.previousRaw)) {\n    delta = raw - Number(state.previousRaw);\n    eventType = delta > 0 ? \"count\" : \"heartbeat\";\n}\nelse {\n    delta = 0;\n    eventType = \"counter_rollback\";\n}\n\nif (!Number.isFinite(delta) || delta < 0 || delta > 10000) {\n    delta = 0;\n    eventType = \"rejected_delta\";\n}\n\nif (delta > 0) {\n    state.shiftCount = Number(state.shiftCount || 0) + delta;\n    state.deviceCount = Number(state.deviceCount || 0) + delta;\n    state.lastSignal = now;\n}\n\nstate.previousRaw = raw;\nstate.previousBootId = boot;\n// Alias for consumers of the current sensor boot identity (e.g. downtime records).\nstate.bootId = boot;\n\ncounters[deviceId] = state;\nflow.set(\"counters\", counters);\n\nconst allLineSettings = global.get(\"lineSettings\") || {};\nconst lineSettings =\n    allLineSettings[cfg.line] ||\n    allLineSettings[String(cfg.line).toLowerCase()] ||\n    {};\n\nconst tileSize = lineSettings.tileSize ?? \"unknown\";\nconst designCode = lineSettings.designCode ?? \"Not Assigned\";\nconst tileCode = lineSettings.tileCode ?? \"unknown\";\nconst productionRunId = String(lineSettings.productionRunId || \"\");\n\nconst display = {\n    topic: cfg.displayTopic || `display/${deviceId}/shiftCount`,\n    payload: JSON.stringify({\n        device: deviceId,\n        line: cfg.line,\n        shift: state.shiftName,\n        shiftDate: state.shiftDate,\n        count: state.shiftCount\n    })\n};\n\nconst influx = {\n    payload: [\n        {\n            shift_count: Number(state.shiftCount || 0),\n            device_count: Number(state.deviceCount || 0),\n            raw_count: Number(raw),\n            count_delta: Number(delta),\n            boot_id: String(boot),\n            last_signal: Number(state.lastSignal || 0)\n        },\n        {\n            device: deviceId,\n            line: String(cfg.line || deviceId),\n            shift: String(state.shiftName || \"\"),\n            shiftDate: String(state.shiftDate || \"\"),\n            tileSize: String(tileSize),\n            designCode: String(designCode),\n            productionRunId: productionRunId,\n            tileCode: String(tileCode),\n            eventType: String(eventType)\n        }\n    ]\n};\n\nnode.status({\n    fill: delta > 0 ? \"green\" : \"blue\",\n    shape: delta > 0 ? \"dot\" : \"ring\",\n    text: `${deviceId} +${delta} shift=${state.shiftCount} raw=${raw}`\n});\n\nreturn [display, influx];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 820,
+    "y": 360,
+    "wires": [
+      [
+        "8a925c249dd7c218"
+      ],
+      [
+        "d5a9fa13dd63d83c"
+      ]
+    ]
+  }
+]
