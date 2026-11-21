@@ -1,0 +1,261 @@
+[
+  {
+    "id": "7576a63b5a4da426",
+    "type": "mqtt in",
+    "z": "e5489573e203f3d0",
+    "name": "Quality box telemetry",
+    "topic": "RX-QLT/+/telemetry",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "mqtt_broker_aws",
+    "nl": false,
+    "rap": false,
+    "inputs": 0,
+    "x": 360,
+    "y": 1680,
+    "wires": [
+      [
+        "47f5060cde6f1579"
+      ]
+    ]
+  },
+  {
+    "id": "47f5060cde6f1579",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Validate + capture registered line settings",
+    "func": "function qualitySnapshot(msg, devices, lineSettings, now) {\n  const match = /^RX-QLT\\/([A-Za-z0-9_-]+)\\/telemetry$/.exec(msg.topic || '');\n  if (!match) throw Error('Invalid quality telemetry topic.');\n  const id = `RX-QLT-${match[1]}`;\n  const p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n  const uint = n => Number.isSafeInteger(n) && n >= 0 && n <= 4294967295;\n  if (!p || p.device !== id) throw Error('Payload device must match MQTT topic.');\n  const cfg = devices?.[id];\n  if (!cfg || cfg.enabled !== true) throw Error(`Quality device ${id} is not registered and enabled.`);\n  if (!/^Keda [123]$/.test(cfg.line || '')) throw Error('Quality sensor must be assigned to a Keda line.');\n  const settings = lineSettings?.[cfg.line];\n  if (!settings || !settings.designCode || !settings.tileSize) throw Error('Current line design code / size is unavailable.');\n  if (!Number.isSafeInteger(settings.TilesPerBox) || settings.TilesPerBox <= 0) throw Error('Current TilesPerBox must be a positive integer.');\n  if (!Array.isArray(p.grade_counts) || p.grade_counts.length !== 16 || !p.grade_counts.every(uint)) throw Error('grade_counts must contain 16 uint32 box counters.');\n  if (!Number.isInteger(p.grade) || p.grade < 0 || p.grade > 15 || !uint(p.grade_count) || p.grade_count !== p.grade_counts[p.grade]) throw Error('grade_count must match the firmware grade (0–15) array position.');\n  const hasTotal = Object.prototype.hasOwnProperty.call(p, 'total_count');\n  const hasCount = Object.prototype.hasOwnProperty.call(p, 'count');\n  if (hasTotal && hasCount && p.total_count !== p.count) throw Error('count and total_count must match when both are provided.');\n  const totalCount = hasTotal ? p.total_count : p.count;\n  if (!uint(totalCount)) throw Error('A numeric uint32 count or total_count is required.');\n  if (p.grade_counts.reduce((a, b) => a + b, 0) !== totalCount) throw Error('count / total_count must equal the sum of grade_counts.');\n  if (!uint(p.boot_id) || !uint(p.sequence) || !uint(p.dropped_events)) throw Error('boot_id, sequence and dropped_events must be uint32 values.');\n  const assignments = {};\n  for (let slot = 1; slot <= 16; slot++) {\n    const value = settings.designGrades?.[String(slot)];\n    if (value != null && typeof value !== 'string') throw Error('Invalid line designGrades assignment.');\n    assignments[slot] = value || null;\n  }\n  const local = new Date(now + 330 * 60000);\n  const hour = local.getUTCHours();\n  const shift = hour >= 6 && hour < 14 ? 'A' : hour >= 14 && hour < 22 ? 'B' : 'C';\n  if (hour < 6) local.setUTCDate(local.getUTCDate() - 1);\n  return {\n    schema: 3, receivedAt: now, device: id, line: cfg.line,\n    tenantId: cfg.tenantId || '', siteId: cfg.siteId || '',\n    shift, shiftDate: local.toISOString().slice(0, 10),\n    designCode: String(settings.designCode), tileSize: String(settings.tileSize),\n    tilesPerBox: settings.TilesPerBox, designGrades: assignments,\n    productionRunId: String(settings.productionRunId || ''),\n    totalCount, firmwareGrade: p.grade, gradeCount: p.grade_count,\n    gradeCounts: [...p.grade_counts], bootId: String(p.boot_id),\n    sequence: p.sequence, droppedEvents: p.dropped_events,\n  };\n}\nfunction qualityInfluxPayload(s) {\n  const fields = {\n    time:s.receivedAt, total_count:`${s.totalCount}i`, grade:`${s.firmwareGrade}i`, grade_count:`${s.gradeCount}i`,\n    sequence:`${s.sequence}i`, dropped_events:`${s.droppedEvents}i`, boot_id:s.bootId,\n    tiles_per_box:`${s.tilesPerBox}i`, design_code:s.designCode, tile_size:s.tileSize,\n    production_run_id:s.productionRunId, shift:s.shift, shift_date:s.shiftDate,\n    grade_counts_json:JSON.stringify(s.gradeCounts), design_grades_json:JSON.stringify(s.designGrades),\n    received_at_ms:`${s.receivedAt}i`, schema:'3i', undetected_boxes:`${s.gradeCounts[0]}i`,\n  };\n  for(let grade=0;grade<16;grade++) {\n    fields[`grade_${grade}_boxes`]=`${s.gradeCounts[grade]}i`;\n    fields[`grade_${grade}_assignment`]=grade===0?'':s.designGrades[grade]||'';\n  }\n  return [fields,{device:s.device,line:s.line,tenant:s.tenantId,site:s.siteId}];\n}\ntry {\n    const previous=flow.get('qualityV2Clock')||0;\n    const snapshot=qualitySnapshot(msg,global.get('devices'),global.get('lineSettings'),Math.max(Date.now(),previous+1));\n    flow.set('qualityV2Clock',snapshot.receivedAt);\n    return {payload:qualityInfluxPayload(snapshot)};\n  } catch(e) {node.error(e.message);return null;}",
+    "outputs": 1,
+    "x": 850,
+    "y": 1680,
+    "wires": [
+      [
+        "rx_qr_engine",
+        "089a1f6028bc8524"
+      ]
+    ]
+  },
+  {
+    "id": "5192007de14ed9bf",
+    "type": "influxdb out",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Save quality box snapshots",
+    "measurement": "quality_events",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "RCLH",
+    "x": 1240,
+    "y": 1680,
+    "wires": []
+  },
+  {
+    "id": "089a1f6028bc8524",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "debug 3",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1200,
+    "y": 1640,
+    "wires": []
+  },
+  {
+    "id": "rx_qr_engine",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Quality ONLY: restore gate + reboot-safe counts",
+    "func": "function qualityPeriod(timestamp) {\n  const d=new Date(timestamp+330*60000),h=d.getUTCHours();\n  const shift=h>=6&&h<14?'06-14':h>=14&&h<22?'14-22':'22-06';\n  if(h<6)d.setUTCDate(d.getUTCDate()-1);\n  return {shift,shiftDate:d.toISOString().slice(0,10)};\n}\nfunction decodeQualityPoint(payload) {\n  if(!Array.isArray(payload)||payload.length!==2)throw Error('Expected existing validated quality [fields,tags] payload.');\n  const [f,t]=payload;\n  const numeric=v=>typeof v==='string'&&/^\\d+i$/.test(v)?Number(v.slice(0,-1)):v;\n  const raw=JSON.parse(f.grade_counts_json);\n  const total=numeric(f.total_count),sequence=numeric(f.sequence),time=Number(f.time);\n  if(!/^RX-QLT-/.test(t?.device||'')||!Number.isSafeInteger(time)||time<0||!Array.isArray(raw)||raw.length!==16||!raw.every(v=>Number.isSafeInteger(v)&&v>=0&&v<=4294967295)||raw.reduce((a,b)=>a+b,0)!==total||!Number.isSafeInteger(sequence)||sequence<0||!/^\\d+$/.test(String(f.boot_id)))throw Error('Invalid quality restore input.');\n  return {device:t.device,line:t.line,raw,total,sequence,boot:String(f.boot_id),time};\n}\nfunction nextQualityState(previous,point,period,maxDelta=10000) {\n  const zeros=()=>Array(16).fill(0);\n  const s=previous?JSON.parse(JSON.stringify(previous)):null;\n  let delta=zeros(),eventType='initial_sync';\n  if(s) {\n    if(s.bootId===point.boot) {\n      if(point.sequence<s.sequence)return null;\n      if(point.sequence===s.sequence) {\n        if(JSON.stringify(point.raw)!==JSON.stringify(s.previousRaw))throw Error('Same quality sequence has different counts.');\n        return null;\n      }\n      delta=point.raw.map((n,i)=>n-s.previousRaw[i]);\n      if(delta.some(n=>n<0))throw Error('Quality counter rollback without a new boot ID; baseline unchanged.');\n      eventType=delta.some(n=>n>0)?'count':'heartbeat';\n    } else {\n      if(s.retiredBoots.includes(point.boot))return null;\n      if(s.retiredBoots.length>=128)throw Error('Quality reboot history full; review before commissioning a new device identity.');\n      s.retiredBoots.push(s.bootId);delta=[...point.raw];eventType='new_boot';\n    }\n  }\n  if(delta.reduce((a,b)=>a+b,0)>maxDelta)throw Error('Quality box delta exceeds QUALITY_MAX_BOX_DELTA; baseline unchanged.');\n  const state=s||{version:1,device:point.device,deviceCount:0,deviceGrades:zeros(),shiftCount:0,shiftGrades:zeros(),retiredBoots:[],baselineOnly:true,seed:'first_snapshot'};\n  const changedPeriod=state.shift!==period.shift||state.shiftDate!==period.shiftDate||state.line!==point.line;\n  if(changedPeriod){state.shiftCount=0;state.shiftGrades=zeros();state.baselineOnly=!s;}\n  state.deviceCount+=delta.reduce((a,b)=>a+b,0);\n  state.shiftCount+=delta.reduce((a,b)=>a+b,0);\n  state.deviceGrades=state.deviceGrades.map((n,i)=>n+delta[i]);\n  state.shiftGrades=state.shiftGrades.map((n,i)=>n+delta[i]);\n  if(!Number.isSafeInteger(state.deviceCount)||!Number.isSafeInteger(state.shiftCount))throw Error('Quality total exceeds safe integer range.');\n  Object.assign(state,{...period,line:point.line,bootId:point.boot,sequence:point.sequence,previousRaw:[...point.raw],lastSeen:point.time,lastEventType:eventType});\n  return {state,delta,eventType};\n}\nfunction restoredQualityStates(rows) {\n  if(!Array.isArray(rows))throw Error('Quality restore did not return an array.');\n  const result={};\n  for(const row of rows) {\n    if(!/^RX-QLT-/.test(row.device||'')||result[row.device])throw Error('Invalid or duplicate restored quality device.');\n    let s;\n    if(row.quality_state_json) {\n      s=JSON.parse(row.quality_state_json);\n      const valid=a=>Array.isArray(a)&&a.length===16&&a.every(n=>Number.isSafeInteger(n)&&n>=0);\n      if(s.version!==1||s.device!==row.device||!valid(s.previousRaw)||!valid(s.deviceGrades)||!valid(s.shiftGrades)||!Number.isSafeInteger(s.sequence)||s.sequence<0||!Number.isSafeInteger(s.deviceCount)||s.deviceCount<0||!Number.isSafeInteger(s.shiftCount)||s.shiftCount<0||!Number.isSafeInteger(s.lastSeen)||!Array.isArray(s.retiredBoots)||!/^\\d+$/.test(s.bootId)||s.deviceGrades.reduce((a,b)=>a+b,0)!==s.deviceCount||s.shiftGrades.reduce((a,b)=>a+b,0)!==s.shiftCount)throw Error('Invalid quality checkpoint; restore gate remains closed.');\n    } else {\n      // Legacy points contain raw counters only, not accumulated lifetime/shift totals.\n      const raw=JSON.parse(row.grade_counts_json);\n      if(!Array.isArray(raw)||raw.length!==16||!raw.every(n=>Number.isSafeInteger(n)&&n>=0)||!/^\\d+$/.test(String(row.boot_id))||!Number.isSafeInteger(Number(row.sequence)))throw Error('Invalid legacy quality baseline.');\n      const time=Date.parse(row._time);\n      if(!Number.isFinite(time))throw Error('Invalid legacy quality timestamp.');\n      s={version:1,device:row.device,line:row.line,bootId:String(row.boot_id),sequence:Number(row.sequence),previousRaw:raw,\n        deviceCount:0,deviceGrades:Array(16).fill(0),shiftCount:0,shiftGrades:Array(16).fill(0),\n        ...qualityPeriod(time),lastSeen:time,retiredBoots:[],baselineOnly:true,seed:'legacy_baseline'};\n    }\n    result[row.device]=s;\n  }\n  return result;\n}\nfunction qualityCurrentShiftView(states,now,statuses={}) {\n  const current=qualityPeriod(now),view=JSON.parse(JSON.stringify(states));\n  for(const state of Object.values(view)) {\n    const status=statuses[state.device];\n    if(status)Object.assign(state,{sensorStatus:status.sensorStatus,statusObservedAt:status.lastStatusSeen,lastCommunicationSeen:status.lastSeen});\n    if(state.shift!==current.shift||state.shiftDate!==current.shiftDate) {\n      state.shift=current.shift;state.shiftDate=current.shiftDate;\n      state.shiftCount=0;state.shiftGrades=Array(16).fill(0);\n      state.baselineOnly=false;state.shiftViewReset=true;\n    } else state.shiftViewReset=false;\n  }\n  return view;\n}\nfunction qualityRestoreEngine(msg,flow,global,node,env) {\n  let states=flow.get('qualityCommittedStates')||{};\n  // Publish the current shift even if no telemetry arrives or a previous-shift write is pending.\n  // Keep committed/checkpoint baselines unchanged so buffered old readings remain correctly counted.\n  if(flow.get('qualityRestoreReady')===true)flow.set('qualityCounters',qualityCurrentShiftView(states,Date.now(),flow.get('qualitySensorStatus')||{}));\n  const action=msg.qualityAction;\n  const enabled=id=>global.get('devices')?.[id]?.enabled===true;\n  const queue=flow.get('qualityRestoreQueue')||[];\n  if(!action) {\n    const payload=JSON.parse(JSON.stringify(msg.payload));\n    const p=decodeQualityPoint(payload);\n    if(!enabled(p.device))return null;\n    if(queue.length>=5000)throw Error('Quality restore queue full; reading was not accepted.');\n    queue.push(payload);flow.set('qualityRestoreQueue',queue);\n  }\n  if(action==='restored') {\n    if(msg.qualityEpoch!==flow.get('qualityRestoreEpoch'))return null;\n    states=restoredQualityStates(msg.payload);\n    flow.set('qualityCommittedStates',states);flow.set('qualityCounters',qualityCurrentShiftView(states,Date.now(),flow.get('qualitySensorStatus')||{}));flow.set('qualityRestoreBusy',false);flow.set('qualityRestoreReady',true);\n  }\n  if(action==='restore_failed') {\n    if(msg.qualityEpoch!==flow.get('qualityRestoreEpoch'))return null;\n    flow.set('qualityRestoreBusy',false);node.warn('Quality restore failed; telemetry remains buffered.');return null;\n  }\n  let candidate=flow.get('qualityWriteCandidate');\n  if(action==='saved'||action==='write_failed') {\n    if(!candidate||msg.qualityWriteId!==candidate.id)return null;\n    flow.set('qualityWriteBusy',false);\n    if(action==='write_failed'){node.warn('Quality write failed; same point/checkpoint will retry.');return null;}\n    states[candidate.device]=candidate.state;\n    flow.set('qualityCommittedStates',states);flow.set('qualityCounters',qualityCurrentShiftView(states,Date.now(),flow.get('qualitySensorStatus')||{}));flow.set('qualityWriteCandidate',null);\n    queue.shift();flow.set('qualityRestoreQueue',queue);\n    node.send([null,null,{payload:{saved:true,device:candidate.device,deviceCount:candidate.state.deviceCount,shiftCount:candidate.state.shiftCount,eventType:candidate.state.lastEventType}}]);\n    candidate=null;\n  }\n  if(flow.get('qualityRestoreReady')!==true) {\n    if(flow.get('qualityRestoreBusy'))return null;\n    if(global.get('devicesReady')!==true||global.get('settingsReady')!==true){node.status({fill:'yellow',shape:'ring',text:'quality: waiting for configuration'});return null;}\n    flow.set('qualityRestoreBusy',true);\n    const bucket=JSON.stringify(env.get('QUALITY_RESTORE_BUCKET')||'RCLH');\n    // Normalize _value BEFORE regrouping: sequence is integer, while JSON/boot fields are strings.\n    // Without this, Flux cannot merge the heterogeneous tables for pivot.\n    const query=`from(bucket:${bucket}) |> range(start:1970-01-01T00:00:00Z) |> filter(fn:(r)=>r._measurement==\"quality_events\" and (r._field==\"quality_state_json\" or r._field==\"grade_counts_json\" or r._field==\"boot_id\" or r._field==\"sequence\")) |> toString() |> group(columns:[\"device\",\"_field\"]) |> last() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> sort(columns:[\"_time\"]) |> last(column:\"grade_counts_json\")`;\n    return [null,{query,qualityEpoch:flow.get('qualityRestoreEpoch')},null];\n  }\n  if(flow.get('qualityWriteBusy'))return null;\n  if(!candidate) {\n    while(queue.length) {\n      const payload=queue[0],p=decodeQualityPoint(payload);\n      if(!enabled(p.device)){queue.shift();continue;}\n      const period=qualityPeriod(p.time);\n      const max=Number(env.get('QUALITY_MAX_BOX_DELTA')||10000);\n      if(!Number.isSafeInteger(max)||max<1)throw Error('QUALITY_MAX_BOX_DELTA must be a positive integer.');\n      let next;\n      try{next=nextQualityState(states[p.device],p,period,max);}catch(e){queue.shift();flow.set('qualityRestoreQueue',queue);node.warn(e.message);continue;}\n      if(!next){queue.shift();continue;}\n      const time=Math.max(p.time,(states[p.device]?.lastSeen||0)+1);\n      next.state.lastSeen=time;payload[0].time=time;\n      Object.assign(payload[0],{\n        device_count:`${next.state.deviceCount}i`,shift_count:`${next.state.shiftCount}i`,\n        box_delta:`${next.delta.reduce((a,b)=>a+b,0)}i`,event_type:next.eventType,\n        quality_shift:period.shift,quality_shift_date:period.shiftDate,\n        quality_state_json:JSON.stringify(next.state),\n      });\n      for(let grade=0;grade<16;grade++)Object.assign(payload[0],{\n        [`grade_${grade}_delta`]:`${next.delta[grade]}i`,\n        [`grade_${grade}_device_count`]:`${next.state.deviceGrades[grade]}i`,\n        [`grade_${grade}_shift_count`]:`${next.state.shiftGrades[grade]}i`,\n      });\n      candidate={id:flow.get('qualityRestoreEpoch')+':'+time+':'+p.device,device:p.device,state:next.state,payload};\n      flow.set('qualityWriteCandidate',candidate);break;\n    }\n    flow.set('qualityRestoreQueue',queue);\n  }\n  if(!candidate){node.status({fill:'green',shape:'dot',text:'quality restored / ready'});return null;}\n  flow.set('qualityWriteBusy',true);\n  node.status({fill:'blue',shape:'dot',text:'quality: saving '+candidate.device});\n  return [{payload:JSON.parse(JSON.stringify(candidate.payload)),qualityWriteId:candidate.id},null,null];\n}\ntry{return qualityRestoreEngine(msg,flow,global,node,env);}catch(e){node.error(e.message);return null;}",
+    "outputs": 3,
+    "wires": [
+      [
+        "5192007de14ed9bf"
+      ],
+      [
+        "rx_qr_read"
+      ],
+      [
+        "rx_qr_debug"
+      ]
+    ],
+    "x": 660,
+    "y": 1720,
+    "initialize": "flow.set('qualityRestoreReady',false);flow.set('qualityRestoreBusy',false);flow.set('qualityWriteBusy',false);flow.set('qualityWriteCandidate',null);flow.set('qualityRestoreQueue',[]);flow.set('qualityRestoreEpoch',Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));"
+  },
+  {
+    "id": "rx_qr_tick",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Quality startup / retry every 5 seconds",
+    "props": [
+      {
+        "p": "qualityAction",
+        "v": "tick",
+        "vt": "str"
+      }
+    ],
+    "repeat": "5",
+    "once": true,
+    "onceDelay": 1,
+    "x": 260,
+    "y": 1800,
+    "wires": [
+      [
+        "rx_qr_engine"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qr_read",
+    "z": "e5489573e203f3d0",
+    "type": "influxdb in",
+    "influxdb": "eef122fda5340dac",
+    "name": "Quality ONLY: restore latest quality_events",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 1090,
+    "y": 1800,
+    "wires": [
+      [
+        "rx_qr_restored"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qr_restored",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Quality restore finished",
+    "func": "msg.qualityAction='restored';return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qr_engine"
+      ]
+    ],
+    "x": 1480,
+    "y": 1800
+  },
+  {
+    "id": "rx_qr_complete",
+    "z": "e5489573e203f3d0",
+    "type": "complete",
+    "name": "Quality Influx write completed successfully",
+    "scope": [
+      "5192007de14ed9bf"
+    ],
+    "uncaught": false,
+    "x": 280,
+    "y": 1900,
+    "wires": [
+      [
+        "rx_qr_saved"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qr_saved",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Commit quality counts only after save",
+    "func": "return {qualityAction:'saved',qualityWriteId:msg.qualityWriteId};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qr_engine"
+      ]
+    ],
+    "x": 720,
+    "y": 1900
+  },
+  {
+    "id": "rx_qr_catch_write",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Quality write failed → retain candidate",
+    "scope": [
+      "5192007de14ed9bf"
+    ],
+    "uncaught": false,
+    "x": 280,
+    "y": 1980,
+    "wires": [
+      [
+        "rx_qr_write_failed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qr_write_failed",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Retry same quality point on next tick",
+    "func": "return {qualityAction:'write_failed',qualityWriteId:msg.qualityWriteId};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qr_engine"
+      ]
+    ],
+    "x": 720,
+    "y": 1980
+  },
+  {
+    "id": "rx_qr_catch_restore",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Quality restore failed → keep gate closed",
+    "scope": [
+      "rx_qr_read"
+    ],
+    "uncaught": false,
+    "x": 1100,
+    "y": 1980,
+    "wires": [
+      [
+        "rx_qr_restore_failed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qr_restore_failed",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Retry quality restore on next tick",
+    "func": "return {qualityAction:'restore_failed',qualityEpoch:msg.qualityEpoch};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qr_engine"
+      ]
+    ],
+    "x": 1500,
+    "y": 1980
+  },
+  {
+    "id": "rx_qr_debug",
+    "z": "e5489573e203f3d0",
+    "type": "debug",
+    "name": "Quality committed counts",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1080,
+    "y": 1720,
+    "wires": []
+  }
+]

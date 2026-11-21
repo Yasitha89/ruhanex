@@ -102,7 +102,7 @@
 .production-sensor-signal {
   position: absolute;
   top: 8px;
-  right: 10px;
+  right: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -116,6 +116,18 @@
 
 .production-sensor-signal.is-offline {
   color: #ff4d4f;
+}
+
+.production-quality-sensor-signal {
+  top: 34px;
+}
+
+.production-quality-sensor-label {
+  position: absolute;
+  left: 21px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .production-live-warning {

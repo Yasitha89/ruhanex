@@ -1,0 +1,338 @@
+[
+  {
+    "id": "rx_eq_initial",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Shift quality: mark measured / assumed / pending",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction markInitialShiftQuality(msg,global) {\n  const stats=msg.payload?.lineStats;\n  if(!stats?.device||!stats.lineName||!stats.shiftDate||!stats.shift)throw Error('Missing shift identity for quality integration.');\n  const target=shiftQualityTarget(stats,global);\n  msg.shiftQualityTarget=target;\n  Object.assign(stats,savedShiftQualityFields(target,null,Date.now()));\n  return msg;\n}\nreturn markInitialShiftQuality(msg,global);",
+    "outputs": 1,
+    "wires": [
+      [
+        "94b054dbc6125d09"
+      ]
+    ],
+    "x": 650,
+    "y": 2140
+  },
+  {
+    "id": "rx_eq_prepare",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Final code-wise save: read matching quality",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction prepareFinalShiftQuality(msg) {\n  const target=msg.shiftQualityTarget;\n  if(!target||!Array.isArray(msg.payload)||!msg.payload[1]?.$set)throw Error('Missing quality target / final code-wise update.');\n  msg.shiftQualityOriginalUpdate=msg.payload;\n  if(!target.qualityDocumentId) {\n    const fields=savedShiftQualityFields(target,null,Date.now());\n    for(const [k,v] of Object.entries(fields))msg.payload[1].$set['lineStats.'+k]=v;\n    delete msg.shiftQualityOriginalUpdate;\n    return [null,msg];\n  }\n  msg.payload=[{_id:target.qualityDocumentId,status:'complete'}];\n  msg.collection='quality';msg.operation='findOne';return [msg,null];\n}\nreturn prepareFinalShiftQuality(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_eq_quality"
+      ],
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 650,
+    "y": 2240
+  },
+  {
+    "id": "rx_eq_quality",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read completed quality for this sensor/shift",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2240,
+    "wires": [
+      [
+        "rx_eq_attach"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_attach",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Attach category quality + OLE / OEE",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction attachFinalShiftQuality(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  const original=msg.shiftQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original code-wise update.');\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  delete msg.shiftQualityOriginalUpdate;\n  return msg;\n}\nreturn attachFinalShiftQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1560,
+    "y": 2240
+  },
+  {
+    "id": "rx_eq_read_catch",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Quality read error: save production as pending",
+    "scope": [
+      "rx_eq_quality"
+    ],
+    "uncaught": false,
+    "x": 1110,
+    "y": 2340,
+    "wires": [
+      [
+        "rx_eq_read_failed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_read_failed",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Keep production update; quality retries later",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction attachFinalShiftQuality(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  const original=msg.shiftQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original code-wise update.');\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  delete msg.shiftQualityOriginalUpdate;\n  return msg;\n}\nnode.warn('Quality read failed; preserving production save with pending quality.');delete msg.error;msg.payload=null;return attachFinalShiftQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1580,
+    "y": 2340
+  },
+  {
+    "id": "rx_eq_queue",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "After confirmed code-wise save: queue quality storage",
+    "func": "const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;if(r?.acknowledged!==true||Number(r.matchedCount||0)<1||!msg.codeWiseTarget)return null;const t=msg.codeWiseTarget;return {qualityShift:{line:t.line,date:t.shiftDate,shift:t.shift}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_storage_link"
+      ]
+    ],
+    "x": 650,
+    "y": 2440
+  },
+  {
+    "id": "rx_eq_storage_link",
+    "z": "e5489573e203f3d0",
+    "type": "link out",
+    "name": "Queue separate quality collection shift job",
+    "mode": "link",
+    "links": [
+      "rx_qs_link"
+    ],
+    "x": 1000,
+    "y": 2440,
+    "wires": []
+  },
+  {
+    "id": "rx_eq_tick",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Reconcile pending shift quality every 60 sec",
+    "props": [],
+    "repeat": "60",
+    "once": true,
+    "onceDelay": 15,
+    "x": 250,
+    "y": 2560,
+    "wires": [
+      [
+        "rx_eq_find"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_find",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Read saved production shifts awaiting quality",
+    "func": "return {payload:[{'lineStats.qualityStatus':'pending'},{sort:{'lineStats.qualityLastCheckedAt':1,'lineStats.shiftDate':1},limit:100}]};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_pending_db"
+      ]
+    ],
+    "x": 650,
+    "y": 2560
+  },
+  {
+    "id": "rx_eq_pending_db",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Pending shifts (durable recovery)",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1110,
+    "y": 2560,
+    "wires": [
+      [
+        "rx_eq_each"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_each",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Each pending production shift",
+    "func": "if(!Array.isArray(msg.payload))throw Error('Pending shift query must return an array.');const messages=msg.payload.map(doc=>({shiftQualityProduction:doc}));return messages.length?[messages]:null;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_pending_prepare"
+      ]
+    ],
+    "x": 1550,
+    "y": 2560
+  },
+  {
+    "id": "rx_eq_pending_prepare",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Pending shift: use captured sensor identity",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction preparePendingShiftQuality(msg,global) {\n  const production=msg.shiftQualityProduction;\n  const stats=production.lineStats;\n  let target;\n  if(stats.qualitySensorDevice&&stats.qualityDocumentId)target={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance,sensor:stats.qualitySensorDevice,qualityDocumentId:stats.qualityDocumentId,status:'pending'};\n  else target=shiftQualityTarget(stats,global);\n  msg.shiftQualityTarget=target;\n  if(!target.qualityDocumentId)return [null,msg];\n  msg.payload=[{_id:target.qualityDocumentId,status:'complete'}];return [msg,null];\n}\nreturn preparePendingShiftQuality(msg,global);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_eq_pending_quality"
+      ],
+      [
+        "rx_eq_pending_build"
+      ]
+    ],
+    "x": 650,
+    "y": 2680
+  },
+  {
+    "id": "rx_eq_pending_quality",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read pending shift quality result",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2680,
+    "wires": [
+      [
+        "rx_eq_pending_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_pending_build",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Recalculate pending OLE; preserve other shift fields",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction buildPendingShiftQualityUpdate(msg) {\n  const production=msg.shiftQualityProduction,stats=production.lineStats;\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  if(fields.qualityStatus==='pending') {\n    msg.shiftQualityCheckOnly=true;\n    msg.payload=[{_id:production._id,'lineStats.qualityStatus':'pending'},{$set:{'lineStats.qualityLastCheckedAt':new Date()}}];\n    return msg;\n  }\n  const set={};for(const [k,v] of Object.entries(fields))set['lineStats.'+k]=v;\n  msg.payload=[{_id:production._id,'lineStats.qualityStatus':'pending','lineStats.availability':stats.availability,'lineStats.performance':stats.performance},{$set:set}];\n  return msg;\n}\nreturn buildPendingShiftQualityUpdate(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_update"
+      ]
+    ],
+    "x": 1570,
+    "y": 2680
+  },
+  {
+    "id": "rx_eq_update",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Update only shift quality fields",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2800,
+    "wires": [
+      [
+        "rx_eq_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_result",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Shift quality update confirmed",
+    "func": "const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;if(r?.acknowledged!==true)throw Error('Shift quality update was not acknowledged.');if(r.matchedCount!==1||msg.shiftQualityCheckOnly)return null;return {payload:{updated:true,shiftId:String(msg.shiftQualityProduction._id),qualityDocumentId:msg.shiftQualityTarget.qualityDocumentId||null}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_debug"
+      ]
+    ],
+    "x": 1570,
+    "y": 2800
+  },
+  {
+    "id": "rx_eq_catch",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Pending quality integration error",
+    "scope": [
+      "rx_eq_find",
+      "rx_eq_pending_db",
+      "rx_eq_each",
+      "rx_eq_pending_prepare",
+      "rx_eq_pending_quality",
+      "rx_eq_pending_build",
+      "rx_eq_update",
+      "rx_eq_result"
+    ],
+    "uncaught": false,
+    "x": 650,
+    "y": 2920,
+    "wires": [
+      [
+        "rx_eq_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_error",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Safe quality retry notice",
+    "func": "return {payload:{updated:false,message:'Pending shift quality could not be reconciled; will retry.',phase:msg.error?.source?.name||'unknown'}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_debug"
+      ]
+    ],
+    "x": 1120,
+    "y": 2920
+  },
+  {
+    "id": "rx_eq_debug",
+    "z": "e5489573e203f3d0",
+    "type": "debug",
+    "name": "Saved production shift quality result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1550,
+    "y": 2920,
+    "wires": []
+  }
+]

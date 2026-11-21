@@ -1,0 +1,147 @@
+[
+  {
+    "id": "rx_da_prepare",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: capture verified user + read old values",
+    "func": "return (function prepareDowntimeAudit(msg) {\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  const headers=msg.req?.headers||{};\n  const username=headers['x-ruhanex-user'],role=headers['x-ruhanex-role'];\n  if(typeof username!=='string'||!username.trim()||username.length>100||!['Admin','Manager','Line Supervisor','JE'].includes(role))return fail(401,'Authenticated user identity is required for this change.');\n  const args=msg.payload;\n  if(!Array.isArray(args)||!args[0]||!args[1]?.$set||!msg._msgid)return fail(500,'Unable to prepare downtime audit.');\n  msg.downtimeAudit={id:'downtime:'+msg._msgid,username,role,filter:args[0],update:args[1]};\n  msg.payload=[args[0]];msg.operation='findOne';msg.collection='stoppages';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_da_read"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 460,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_read",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: read stoppage before edit",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_da_before"
+      ]
+    ],
+    "x": 840,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_before",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: previous values + concurrent edit guard",
+    "func": "return (function captureDowntimeBefore(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  if(!doc)return fail(404,'Downtime record was not found.');\n  const a=msg.downtimeAudit;\n  const fields=['reason','machine','machineCode','downtimeType','plannedCategory','downtimeCode'];\n  a.before={};a.after={};const conditions=[];\n  for(const field of [...fields,'updatedAt']) {\n    const exists=Object.prototype.hasOwnProperty.call(doc,field);\n    conditions.push(exists?{[field]:{$eq:doc[field],$exists:true}}:{[field]:{$exists:false}});\n    if(fields.includes(field)){a.before[field]=exists?doc[field]:null;a.after[field]=a.update.$set[field]??null;}\n  }\n  a.stoppageId=String(doc._id);\n  a.timestamp=a.update.$set.updatedAt||new Date().toISOString();\n  const filter={...a.filter,_id:doc._id,$and:conditions};\n  msg.payload=[filter,a.update];msg.operation='updateOne';msg.collection='stoppages';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "1dca19134e960bb9"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 1220,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_build",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: acknowledged update → log",
+    "func": "return (function buildDowntimeAuditWrite(msg) {\n  const result=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  if(result?.acknowledged!==true)return fail(500,'Downtime update was not acknowledged.');\n  if(Number(result.matchedCount||0)!==1)return fail(409,'Downtime changed or was removed by another process. Refresh and try again.');\n  const a=msg.downtimeAudit;\n  a.updateResult=result;\n  const d=msg.downtimeUpdate||{};\n  const record={timestamp:new Date(a.timestamp),username:a.username,role:a.role,\n    action:'downtime.details.updated',result:'success',source:'ruhanex-api',\n    endpoint:'/api/update-downtime-reason',requestId:msg._msgid,\n    line:d.line,date:d.date,shift:d.shift,stopStart_ts:d.stopStart_ts,stoppageId:a.stoppageId,\n    before:a.before,after:a.after,\n    changedFields:Object.keys(a.after).filter(k=>JSON.stringify(a.before[k])!==JSON.stringify(a.after[k])),\n    scope:'stoppage-update-only'};\n  msg.payload=[{_id:a.id},{$setOnInsert:record},{upsert:true}];\n  msg.operation='updateOne';msg.collection='ruhanex_audit_logs';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_da_save"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 460,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_save",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "name": "Save ruhanex_audit_logs",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_audit_logs",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_da_finish"
+      ]
+    ],
+    "x": 840,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_finish",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit saved → existing shift recalculation",
+    "func": "return (function finishDowntimeAudit(msg) {\n  const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(r?.acknowledged!==true) {\n    msg.statusCode=500;msg.payload={success:false,downtimeUpdated:true,auditSaved:false,shiftSummaryUpdated:false,error:'Downtime updated, but the audit log could not be confirmed. Contact an administrator.'};\n    return [null,msg];\n  }\n  msg.payload=msg.downtimeAudit.updateResult;\n  delete msg.downtimeAudit;\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "940c7e9bf259add4"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 1220,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_catch",
+    "type": "catch",
+    "z": "b490c7cde81b738c",
+    "name": "Audit database errors",
+    "scope": [
+      "rx_da_read",
+      "rx_da_save"
+    ],
+    "uncaught": false,
+    "x": 450,
+    "y": 1240,
+    "wires": [
+      [
+        "rx_da_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_da_error",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit error: explicit partial result",
+    "outputs": 1,
+    "x": 850,
+    "y": 1240,
+    "wires": [
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "func": "const updated=!!msg.downtimeAudit?.updateResult; node.warn(updated?'Downtime saved but audit database write failed.':'Downtime audit pre-read failed; no update performed.'); msg.statusCode=500;msg.payload={success:false,downtimeUpdated:updated,auditSaved:false,shiftSummaryUpdated:false,error:updated?'Downtime updated, but audit logging failed. Contact an administrator.':'Unable to read downtime for audit. No change was made.'};return msg;"
+  }
+]

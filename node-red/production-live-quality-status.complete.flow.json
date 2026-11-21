@@ -1,0 +1,353 @@
+[
+  {
+    "id": "de46e5f3a4fdc627",
+    "type": "http in",
+    "z": "e5489573e203f3d0",
+    "name": "GET Production Live Summary",
+    "url": "/api/production/live-summary",
+    "method": "get",
+    "upload": false,
+    "skipBodyParsing": false,
+    "swaggerDoc": "",
+    "x": 530,
+    "y": 3800,
+    "wires": [
+      [
+        "f4d32fdfead0ecfd",
+        "5d4e245ecfb443f6"
+      ]
+    ]
+  },
+  {
+    "id": "f4d32fdfead0ecfd",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build Live Summary Influx + Mongo Queries",
+    "func": "\nfunction norm(v){return String(v||\"\").toLowerCase().replace(/[^a-z0-9]/g,\"\");}\nfunction escapeFlux(v){return String(v||\"\").replace(/\\\\/g,\"\\\\\\\\\").replace(/\"/g,'\\\\\"');}\nfunction resolveDevice(q){\n  const cfg=global.get(\"counterConfig\")||{};\n  const requested=String(q.device||\"\").trim();\n  if(requested && cfg[requested]) return requested;\n  const line=String(q.line||q.lineName||\"\").trim();\n  if(!line) return \"\";\n  const n=norm(line);\n  return Object.keys(cfg).find(id=>cfg[id]?.enabled!==false && (norm(cfg[id]?.line)===n || norm(cfg[id]?.shortId)===n || norm(id)===n))||\"\";\n}\nfunction addDays(ds,days){const [y,m,d]=ds.split(\"-\").map(Number);const x=new Date(Date.UTC(y,m-1,d));x.setUTCDate(x.getUTCDate()+days);return x.toISOString().slice(0,10);}\nfunction shiftRange(shift,date){\n  if(shift===\"06-14\") return {from:`${date}T06:00:00+05:30`,to:`${date}T14:00:00+05:30`};\n  if(shift===\"14-22\") return {from:`${date}T14:00:00+05:30`,to:`${date}T22:00:00+05:30`};\n  if(shift===\"22-06\") return {from:`${date}T22:00:00+05:30`,to:`${addDays(date,1)}T06:00:00+05:30`};\n  return null;\n}\nfunction currentShiftInfo(ts=Date.now()){\n  const p={};\n  for(const part of new Intl.DateTimeFormat(\"en-CA\",{timeZone:\"Asia/Colombo\",year:\"numeric\",month:\"2-digit\",day:\"2-digit\",hour:\"2-digit\",hourCycle:\"h23\"}).formatToParts(new Date(ts))){if(part.type!==\"literal\")p[part.type]=part.value;}\n  const date=`${p.year}-${p.month}-${p.day}`; const h=Number(p.hour||0);\n  if(h>=6&&h<14) return {shift:\"06-14\",date,...shiftRange(\"06-14\",date)};\n  if(h>=14&&h<22) return {shift:\"14-22\",date,...shiftRange(\"14-22\",date)};\n  if(h>=22) return {shift:\"22-06\",date,...shiftRange(\"22-06\",date)};\n  const prev=addDays(date,-1); return {shift:\"22-06\",date:prev,...shiftRange(\"22-06\",prev)};\n}\n\nconst q=msg.req?.query||{}; const cfgAll=global.get(\"counterConfig\")||{}; const device=resolveDevice(q);\nif(!device||!cfgAll[device]){msg.statusCode=400;msg.payload={success:false,error:\"Valid line/device is required\"};return [null,null,msg];}\nconst cfg=cfgAll[device]; const line=String(cfg.line||device); const allSettings=global.get(\"lineSettings\")||{}; const ls=allSettings[line]||allSettings[line.toLowerCase()]||{}; const s=currentShiftInfo();\nconst requestId=`${msg._msgid||\"live\"}-${Date.now()}-${Math.random().toString(16).slice(2)}`;\nmsg.live={requestId,device,line,shift:s.shift,date:s.date,from:s.from,to:s.to,tileSize:String(ls.tileSize??cfg.tileSize??\"\"),designCode: String(\n        ls.designCode ??\n        cfg.designCode ??\n        \"\"\n    ),configuredLineSpeed:Number(ls.lineSpeed??cfg.lineSpeed??0),plannedDowntime:Number(ls.plannedDowntime??cfg.plannedDowntime??0),stopDelayMs:Number(ls.stopDelayMs??cfg.stopDelayMs??60000)};\nconst d=escapeFlux(device), sh=escapeFlux(s.shift), dt=escapeFlux(s.date);\n\n/*\n * IMPORTANT PERFORMANCE OPTIMIZATION\n *\n * The live dashboard only needs the latest shift_count and last_signal.\n * Do NOT scan the complete 8-hour shift every 5 seconds.\n *\n * Counter telemetry is published every few seconds, so a 5-minute\n * lookback gives a large safety margin while keeping the query small.\n */\nmsg.query=`\nfrom(bucket:\"RCLH\")\n    |> range(start:-60s)\n    |> filter(fn:(r)=>\n        r._measurement==\"tile_events\" and\n        r.device==\"${d}\" and\n        r.shift==\"${sh}\" and\n        r.shiftDate==\"${dt}\" and\n        r._field==\"shift_count\"\n    )\n    |> group(columns:[\"device\",\"_field\"])\n    |> sort(columns:[\"_time\"])\n    |> map(fn:(r)=>({r with metric:\"speedSample\"}))\n`;\n\nconst influxMsg=RED.util.cloneMessage(msg);\nconst mongoMsg=RED.util.cloneMessage(msg);\nmongoMsg.collection=\"stoppages\";\nmongoMsg.operation=\"find\";\nmongoMsg.payload=[\n  {device,date:s.date,shift:s.shift},\n  {sort:{stopStart_ts:1}}\n];\nreturn [influxMsg,mongoMsg,null];\n",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 890,
+    "y": 3800,
+    "wires": [
+      [
+        "069c67030141dec7"
+      ],
+      [
+        "4efddb59e1041d2c"
+      ],
+      [
+        "6be39d6f304874f2"
+      ]
+    ]
+  },
+  {
+    "id": "069c67030141dec7",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Live Summary Influx",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 1190,
+    "y": 3780,
+    "wires": [
+      [
+        "bb7c7785c2abaf94"
+      ]
+    ]
+  },
+  {
+    "id": "bb7c7785c2abaf94",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Mark Live Influx Data",
+    "func": "msg.livePart=\"influx\";\nmsg.livePartPayload=Array.isArray(msg.payload)?msg.payload:[];\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1470,
+    "y": 3780,
+    "wires": [
+      [
+        "fdf765c33b6dcbfa"
+      ]
+    ]
+  },
+  {
+    "id": "8df03ed03548ae40",
+    "type": "http response",
+    "z": "e5489573e203f3d0",
+    "name": "Return Live Summary",
+    "statusCode": "",
+    "headers": {},
+    "x": 3180,
+    "y": 4020,
+    "wires": []
+  },
+  {
+    "id": "6be39d6f304874f2",
+    "type": "http response",
+    "z": "e5489573e203f3d0",
+    "name": "Live Summary Error",
+    "statusCode": "",
+    "headers": {},
+    "x": 1190,
+    "y": 3840,
+    "wires": []
+  },
+  {
+    "id": "88e2ad91a91fe5bd",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Catch Live Influx Error",
+    "scope": [
+      "069c67030141dec7"
+    ],
+    "uncaught": false,
+    "x": 1250,
+    "y": 3880,
+    "wires": [
+      [
+        "6fc6f60047ee801f"
+      ]
+    ]
+  },
+  {
+    "id": "6fc6f60047ee801f",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live Influx Error Response",
+    "func": "msg.statusCode=500;msg.payload={success:false,error:msg.error?.message||\"InfluxDB live query failed\"};return msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1530,
+    "y": 3860,
+    "wires": [
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  },
+  {
+    "id": "4efddb59e1041d2c",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Live Summary Stoppages MongoDB",
+    "x": 1180,
+    "y": 3940,
+    "wires": [
+      [
+        "6735fc8bbf612b31"
+      ]
+    ]
+  },
+  {
+    "id": "6735fc8bbf612b31",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Mark Live Mongo Stoppages",
+    "func": "msg.livePart=\"stops\";\nmsg.livePartPayload=Array.isArray(msg.payload)?msg.payload:[];\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1490,
+    "y": 3940,
+    "wires": [
+      [
+        "fdf765c33b6dcbfa"
+      ]
+    ]
+  },
+  {
+    "id": "fdf765c33b6dcbfa",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Merge Live Influx + Mongo / Calculate KPI",
+    "func": "const meta=msg.live||{};\nconst requestId=String(meta.requestId||\"\");\nif(!requestId){msg.statusCode=500;msg.payload={success:false,error:\"Live summary request ID is missing\"};return msg;}\nlet pending=context.get(\"liveSummaryPending\")||{};\nconst now=Date.now();\nfor(const id of Object.keys(pending)){if(now-Number(pending[id]?.createdAt||0)>30000) delete pending[id];}\nif(!pending[requestId]) pending[requestId]={createdAt:now,meta,influx:null,stops:null};\nconst e=pending[requestId]; e.meta=meta;\nif(msg.livePart===\"influx\") e.influx=msg.livePartPayload||[];\nelse if(msg.livePart===\"stops\") e.stops=msg.livePartPayload||[];\nelse return null;\npending[requestId]=e; context.set(\"liveSummaryPending\",pending);\nif(e.influx===null||e.stops===null) return null;\ndelete pending[requestId]; context.set(\"liveSummaryPending\",pending);\nconst rows=e.influx||[], stops=e.stops||[], c=e.meta||{};\n\n// ============================================================\n// AUTHORITATIVE LIVE RUNTIME STATE\n// ============================================================\n// The central counter flow already maintains the current state.\n// Do not re-derive these values from the latest Influx point.\nconst counters=flow.get(\"counters\")||{};\nconst downtimeStates=flow.get(\"downtimeStates\")||{};\nconst runtime=counters[c.device]||{};\nconst runtimeDown=downtimeStates[c.device]||{};\n\nconst shiftCount=Math.max(0,Number(runtime.shiftCount||0));\nconst lastSeen=Number(runtime.lastSeen||0)||null;\nconst lastSignal=Number(runtime.lastSignal||0)||null;\n\nconst sensorStatus=String(runtime.sensorStatus||\"Unknown\");\nconst shiftStatus=String(runtimeDown.status||\"Unknown\");\n\nlet speed=0;\nconst speedSamples=[];\nfor(const r of rows){\n if(r.metric===\"speedSample\") speedSamples.push(r);\n}\nspeedSamples.sort((a,b)=>new Date(a._time).getTime()-new Date(b._time).getTime());\nif(speedSamples.length>=2){const first=speedSamples[0],last=speedSamples[speedSamples.length-1];const dc=Number(last._value)-Number(first._value);const sec=(new Date(last._time).getTime()-new Date(first._time).getTime())/1000;if(Number.isFinite(dc)&&sec>0)speed=Math.max(0,dc/sec*60);}\nfunction tileArea(size){const d=String(size||\"\").toLowerCase().replace(/\\s+/g,\"\").split(\"x\").map(Number);return d.length===2&&d.every(v=>Number.isFinite(v)&&v>0)?d[0]*d[1]/10000:0;}\nfunction classify(stops,from,to,allowance,nowMs){\n const start=new Date(from).getTime(), end=new Date(to).getTime(), calcEnd=Math.min(Math.max(nowMs,start),end);\n const full=Math.max(0,(end-start)/60000), elapsed=Math.max(0,(calcEnd-start)/60000);\n let standardActual=0,additional=0,explicitUnplanned=0,total=0,completed=0,open=false,maximum=0;\n for(const row of stops){\n  const st=Math.max(start,Number(row.stopStart_ts)); if(!Number.isFinite(st))continue;\n  const isOpen=row.stopStop_ts==null; const en=Math.min(calcEnd,isOpen?calcEnd:Number(row.stopStop_ts)); if(!Number.isFinite(en)||en<=st)continue;\n  const d=(en-st)/60000; total+=d; maximum=Math.max(maximum,d);\n  const type=String(row.downtimeType||\"unplanned\").toLowerCase(); const cat=String(row.plannedCategory||\"\").toLowerCase();\n  if(type===\"planned\"&&cat===\"standard\") standardActual+=d;\n  else if(type===\"planned\"&&cat===\"additional\") additional+=d;\n  else explicitUnplanned+=d;\n  if(isOpen)open=true; else completed++;\n }\n const A=Math.max(0,Number(allowance||0));\n const standardUsed=A>0?Math.min(standardActual,A):standardActual;\n const remaining=A>0?Math.max(0,A-standardUsed):0;\n const excess=A>0?Math.max(0,standardActual-A):0;\n // No proportional/distributed planned downtime.\n // Only explicitly assigned Standard Planned stoppages consume the configured allowance.\n // When allowance is 0 there is no cap; all explicitly assigned Standard Planned downtime remains planned.\n // When allowance is > 0, Standard Planned duration above the allowance becomes unplanned.\n const standardApplied=standardUsed;\n const planned=standardApplied+additional;\n const unplanned=explicitUnplanned+excess;\n return {full,elapsed,total,standardActual,standardUsed,remaining,excess,standardApplied,additional,planned,unplanned,completed,open,maximum};\n}\nconst dt=classify(stops,c.from,c.to,c.plannedDowntime,now);\n\nconst cfgAll =\n    global.get(\"counterConfig\") || {};\n\nconst cfg =\n    cfgAll[c.device] || {};\n\nconst allSettings =\n    global.get(\"lineSettings\") || {};\n\nconst ls =\n    allSettings[c.line] ||\n    allSettings[String(c.line || \"\").toLowerCase()] ||\n    {};\n\nconst requiredRunTimeMs =\n    Math.max(\n        0,\n        Number(\n            ls.requiredRunTimeMs ??\n            cfg.requiredRunTimeMs ??\n            60000\n        )\n    );\n\nconst runConfirmationMinutes =\n    requiredRunTimeMs / 60000;\n\nconst recoveryCorrectionMinutes =\n    dt.completed *\n    runConfirmationMinutes;\n\n\n// // const runConfirmationMinutes = 1; // 60 seconds\n\n// // const recoveryCorrectionMinutes = dt.completed * runConfirmationMinutes;\n\n// const plannedProductionMinutes = Math.max(0, dt.elapsed - dt.planned + recoveryCorrectionMinutes);\n\n// const operatingMinutes=Math.max(0,dt.elapsed-dt.total+recoveryCorrectionMinutes);\n// const availability=plannedProductionMinutes>0?operatingMinutes/plannedProductionMinutes*100:0;\n\nconst plannedProductionMinutes =\n    Math.max(0, dt.elapsed - dt.planned);\n\nconst operatingMinutes =\n    Math.max(0, dt.elapsed - dt.total);\n\nconst availability =\n    plannedProductionMinutes > 0\n        ? operatingMinutes / plannedProductionMinutes * 100\n        : 0;\n\n\nconst rated=Math.max(0,Number(c.configuredLineSpeed||0));\n// Performance target uses actual running time only: elapsed shift time - TOTAL downtime.\nconst targetTiles=rated*operatingMinutes;\nconst performance=targetTiles>0?shiftCount/targetTiles*100:0;\n// No reject/quality counter is currently available, so Quality = 100%.\n// OLE = Availability x Performance x Quality / 10000.\nconst quality=100;\nconst ole=(availability*performance*quality)/10000;\nconst area=tileArea(c.tileSize); const production=shiftCount*area; const targetProduction=targetTiles*area;\n\n// sensorStatus and shiftStatus come directly from the central runtime state.\n// sensorStatus = flow.counters[device].sensorStatus\n// shiftStatus  = flow.downtimeStates[device].status\nconst r=(v,d=2)=>{const p=10**d;return Math.round(Number(v||0)*p)/p;};\nmsg.headers={\"Content-Type\":\"application/json\",\"Cache-Control\":\"no-store\"};\nmsg.payload={\n success:true,device:c.device,line:c.line,currentShift:c.shift,shiftDate:c.date,shiftFromTime:c.from,shiftToTime:c.to,\n shiftCount,shiftCountTimestamp:lastSeen,productionSqm:r(production,2),tileSize:c.tileSize,designCode:c.designCode,speed:r(speed,2),\n configuredLineSpeed:rated,ratedLineSpeed:rated,configuredStandardPlannedDowntime:r(c.plannedDowntime,2),\n plannedDowntime:r(dt.planned,2),plannedDowntimeMinutes:r(dt.planned,2),standardPlannedDowntimeMinutes:r(dt.standardApplied,2),\n recordedStandardDowntimeMinutes:r(dt.standardActual,2),remainingStandardAllowanceMinutes:r(dt.remaining,2),\n standardExcessDowntimeMinutes:r(dt.excess,2),\n additionalPlannedDowntimeMinutes:r(dt.additional,2),unplannedDowntimeMinutes:r(dt.unplanned,2),\n totalDowntimeMinutes:r(dt.total,2),maximumDowntimeMinutes:r(dt.maximum,2),completedStops:dt.completed,openStop:dt.open,\n elapsedShiftMinutes:r(dt.elapsed,2),plannedProductionMinutes:r(plannedProductionMinutes,2),actualOperatingMinutes:r(operatingMinutes,2),\n availability:r(availability,2),targetTiles:r(targetTiles,0),targetProduction:r(targetProduction,2),performance:r(performance,2),\n quality:r(quality,2),ole:r(ole,2),\n shiftStatus,sensorStatus,lastSeen,lastSignal,timestamp:now\n};\nfunction attachQualitySensorStatus(response,flow,global) {\n  if(response?.success!==true)return response;\n  const registry=global.get('devices');\n  const ready=global.get('devicesReady')===true&&registry&&typeof registry==='object';\n  const matches=ready?Object.entries(registry).filter(([id,cfg])=>id.startsWith('RX-QLT-')&&cfg?.enabled===true&&cfg.line===response.line):[];\n  const [device]=matches.length===1?matches[0]:[];\n  const state=device?(flow.get('qualitySensorStatus')||{})[device]:null;\n  const status=['Online','Offline'].includes(state?.sensorStatus)?state.sensorStatus:'Unknown';\n  const timestamp=n=>typeof n==='number'&&Number.isFinite(n)&&n>0?n:null;\n  Object.assign(response,{\n    qualitySensorConfigured:ready?matches.length===1:null,\n    qualitySensorConfigStatus:!ready?'configuration-not-ready':matches.length===0?'not-configured':matches.length>1?'multiple-sensors':'configured',\n    qualitySensorDevice:device||null,\n    qualitySensorStatus:status,\n    qualitySensorLastSeen:timestamp(state?.lastSeen),\n    qualitySensorStatusObservedAt:timestamp(state?.lastStatusSeen),\n    qualitySensorStatusRetained:state?.retained===true,\n  });\n  response.qualitySensor={\n    device:response.qualitySensorDevice,\n    sensorStatus:status,\n    lastSeen:response.qualitySensorLastSeen,\n    statusObservedAt:response.qualitySensorStatusObservedAt,\n    retained:response.qualitySensorStatusRetained,\n    configured:response.qualitySensorConfigured,\n    configStatus:response.qualitySensorConfigStatus,\n  };\n  return response;\n}\nmsg.payload=attachQualitySensorStatus(msg.payload,flow,global);\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1830,
+    "y": 3940,
+    "wires": [
+      [
+        "8f13d6516455d19b"
+      ]
+    ]
+  },
+  {
+    "id": "5d4e245ecfb443f6",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "debug 31",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 840,
+    "y": 3900,
+    "wires": []
+  },
+  {
+    "id": "8f13d6516455d19b",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: resolve registered sensor",
+    "func": "function applyLiveQuality(response, details) {\n  response.qualityDetails = details;\n  response.qualityAvailable = details.qualityAvailable === true;\n  response.qualityAssumed = details.qualityAssumed === true;\n  response.totalQualityTiles = details.qualityAvailable ? details.totalTiles : null;\n  response.firstQuality = response.qualityAssumed ? 100 : details.qualityAvailable ? details.firstQuality : null;\n  response.normalDamageQuality = details.qualityAvailable ? details.normalDamageQuality : null;\n  response.cutDamageQuality = details.qualityAvailable ? details.cutDamageQuality : null;\n  response.quality = response.firstQuality;\n  response.ole = response.quality === null ? null : Math.round(Number(response.availability) * Number(response.performance) * response.quality / 100) / 100;\n  return response;\n}\nfunction beginLiveQuality(msg, global) {\n  const response = msg.payload;\n  if (response?.success !== true) return [null, msg];\n  msg.liveQualityResponse = response;\n  if (!/^Keda [123]$/.test(response.line || '')) return [null, msg];\n  const devices = global.get('devices');\n  if (!devices || typeof devices !== 'object' || Array.isArray(devices)) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, status: 'device-registry-unavailable' });\n    return [null, msg];\n  }\n  const matches = Object.entries(devices).filter(([id, d]) => id.startsWith('RX-QLT-') && d?.enabled === true && d.line === response.line);\n  if (matches.length === 0) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, qualityAssumed: true, status: 'no-enabled-quality-sensor', assumedQuality: 100 });\n    return [null, msg];\n  }\n  if (matches.length !== 1) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, status: 'multiple-quality-sensors' });\n    return [null, msg];\n  }\n  msg.liveQualityDevice = matches[0][0];\n  msg.payload = [{ _id: 'designGrades' }]; msg.collection = 'ruhanex_config'; msg.operation = 'findOne';\n  return [msg, null];\n}\nreturn beginLiveQuality(msg, global);",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2280,
+    "y": 3740,
+    "wires": [
+      [
+        "532faeaf00b3b4dc"
+      ],
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  },
+  {
+    "id": "532faeaf00b3b4dc",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "name": "Read designGrades categories",
+    "x": 2670,
+    "y": 3740,
+    "wires": [
+      [
+        "318e89cb4b787dcf"
+      ]
+    ]
+  },
+  {
+    "id": "318e89cb4b787dcf",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: shift events / saved assignments",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH') {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction buildLiveQualityQuery(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(!Array.isArray(doc?.grades))throw Error('Design grade catalogue is missing.');\n  msg.liveQualityGrades=doc.grades;\n  const s=msg.liveQualityResponse;\n  const end=Math.min(Number(s.timestamp)+1,Date.parse(s.shiftToTime));\n  if(!Number.isFinite(end)||!Number.isFinite(Date.parse(s.shiftFromTime)))throw Error('Invalid quality shift interval.');\n  msg.query=qualityShiftQuery(msg.liveQualityDevice,s.shiftFromTime,new Date(end).toISOString());\n  delete msg.payload;\n  return msg;\n}\nreturn buildLiveQualityQuery(msg);",
+    "outputs": 1,
+    "x": 3080,
+    "y": 3740,
+    "wires": [
+      [
+        "a9b0f4fa1ee8881f"
+      ]
+    ]
+  },
+  {
+    "id": "a9b0f4fa1ee8881f",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Read quality_events shift tile totals",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 2280,
+    "y": 3840,
+    "wires": [
+      [
+        "ade9f36f8940b434"
+      ]
+    ]
+  },
+  {
+    "id": "ade9f36f8940b434",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: category 1 / 2 / 3 → KPI",
+    "func": "function calculateLiveQuality(rows, grades) {\n  if (!Array.isArray(rows) || !Array.isArray(grades)) throw Error('Invalid quality events or grade catalogue.');\n  const key = v => String(v || '').trim().toLowerCase();\n  const categories = new Map();\n  for (const g of grades) { const k = key(g.grade); if (!k) continue; if (categories.has(k)) throw Error('Duplicate grade name in catalogue.'); categories.set(k, String(g.category ?? '').trim()); }\n  const totals = { totalBoxes: 0, totalTiles: 0, firstBoxes: 0, firstTiles: 0, normalDamageBoxes: 0, normalDamageTiles: 0, cutDamageBoxes: 0, cutDamageTiles: 0, undetectedBoxes: 0, undetectedTiles: 0, unclassifiedBoxes: 0, unclassifiedTiles: 0 };\n  const segments = [];\n  for (const row of rows) {\n    const factor = Number(row.tiles_per_box), map = JSON.parse(row.design_grades_json);\n    if (!Number.isSafeInteger(factor) || factor <= 0 || !map || typeof map !== 'object' || Array.isArray(map)) throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment = { device: row.device, designCode: row.design_code, tileSize: row.tile_size, tilesPerBox: factor, totalBoxes: 0, totalTiles: 0 };\n    for (let grade = 0; grade < 16; grade++) {\n      const boxes = Number(row[`grade_${grade}_delta`]);\n      if (!Number.isSafeInteger(boxes) || boxes < 0) throw Error('Invalid saved quality box delta.');\n      const tiles = boxes * factor; if (!Number.isSafeInteger(tiles)) throw Error('Quality tile count exceeds safe integer range.');\n      const category = grade === 0 ? 'undetected' : categories.get(key(map[String(grade)]));\n      const label = category === '1' ? 'first' : category === '2' ? 'normalDamage' : category === '3' ? 'cutDamage' : grade === 0 ? 'undetected' : 'unclassified';\n      totals.totalBoxes += boxes; totals.totalTiles += tiles;\n      totals[label + 'Boxes'] += boxes; totals[label + 'Tiles'] += tiles;\n      segment.totalBoxes += boxes; segment.totalTiles += tiles;\n    }\n    segments.push(segment);\n  }\n  if (!Number.isSafeInteger(totals.totalTiles) || !Number.isSafeInteger(totals.totalBoxes)) throw Error('Quality total exceeds safe integer range.');\n  const pct = tiles => totals.totalTiles > 0 ? Math.round(tiles / totals.totalTiles * 10000) / 100 : null;\n  return {\n    ...totals, firstQuality: pct(totals.firstTiles), normalDamageQuality: pct(totals.normalDamageTiles), cutDamageQuality: pct(totals.cutDamageTiles), undetectedPercent: pct(totals.undetectedTiles), unclassifiedPercent: pct(totals.unclassifiedTiles), segments,\n    qualityAvailable: totals.totalTiles > 0, classificationComplete: totals.unclassifiedTiles === 0,\n    categorySource: 'current-designGrades-catalogue', countSource: 'quality_events-grade-deltas'\n  };\n}\nfunction applyLiveQuality(response, details) {\n  response.qualityDetails = details;\n  response.qualityAvailable = details.qualityAvailable === true;\n  response.qualityAssumed = details.qualityAssumed === true;\n  const noOutput = details.status === 'no-tracked-quality-tiles' && details.totalTiles === 0;\n  response.totalQualityTiles = details.qualityAvailable || noOutput ? details.totalTiles : null;\n  response.firstQuality = response.qualityAssumed ? 100 : details.qualityAvailable ? details.firstQuality : noOutput ? 0 : null;\n  response.normalDamageQuality = details.qualityAvailable ? details.normalDamageQuality : noOutput ? 0 : null;\n  response.cutDamageQuality = details.qualityAvailable ? details.cutDamageQuality : noOutput ? 0 : null;\n  response.quality = response.firstQuality;\n  response.ole = response.quality === null || noOutput ? null : Math.round(Number(response.availability) * Number(response.performance) * response.quality / 100) / 100;\n  return response;\n}\nfunction finishLiveQuality(msg) {\n  const details = calculateLiveQuality(msg.payload, msg.liveQualityGrades);\n  details.device = msg.liveQualityDevice;\n  details.shift = msg.liveQualityResponse.currentShift; details.shiftDate = msg.liveQualityResponse.shiftDate;\n  details.status = details.qualityAvailable ? 'available' : 'no-tracked-quality-tiles';\n  msg.payload = applyLiveQuality(msg.liveQualityResponse, details);\n  delete msg.liveQualityResponse; delete msg.liveQualityGrades;\n  return msg;\n}\nreturn finishLiveQuality(msg);",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2720,
+    "y": 3840,
+    "wires": [
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  },
+  {
+    "id": "8cdb3d13eb59332b",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Quality unavailable → retain production summary",
+    "scope": [
+      "532faeaf00b3b4dc",
+      "318e89cb4b787dcf",
+      "a9b0f4fa1ee8881f",
+      "ade9f36f8940b434"
+    ],
+    "uncaught": false,
+    "x": 2300,
+    "y": 3940,
+    "wires": [
+      [
+        "fcb380eda08ac235"
+      ]
+    ]
+  },
+  {
+    "id": "fcb380eda08ac235",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality error response",
+    "func": "function applyLiveQuality(response,details) {\n  response.qualityDetails=details;\n  response.qualityAvailable=details.qualityAvailable===true;\n  response.totalQualityTiles=details.qualityAvailable?details.totalTiles:null;\n  response.firstQuality=details.qualityAvailable?details.firstQuality:null;\n  response.normalDamageQuality=details.qualityAvailable?details.normalDamageQuality:null;\n  response.cutDamageQuality=details.qualityAvailable?details.cutDamageQuality:null;\n  response.quality=response.firstQuality;\n  response.ole=response.quality===null?null:Math.round(Number(response.availability)*Number(response.performance)*response.quality/100)/100;\n  return response;\n}\nmsg.payload=applyLiveQuality(msg.liveQualityResponse,{qualityAvailable:false,status:'quality-calculation-error'});delete msg.liveQualityGrades;delete msg.liveQualityResponse;node.warn('Live quality calculation failed; production summary returned with quality unavailable.');return msg;",
+    "outputs": 1,
+    "x": 2780,
+    "y": 3940,
+    "wires": [
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  }
+]

@@ -1,0 +1,1 @@
+msg.statusCode=500;msg.payload={success:false,error:msg.error?.message||"InfluxDB live query failed"};return msg;

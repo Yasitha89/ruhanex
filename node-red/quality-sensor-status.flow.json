@@ -1,0 +1,142 @@
+[
+  {
+    "id": "rx_qlt_status_in",
+    "z": "e5489573e203f3d0",
+    "type": "mqtt in",
+    "name": "ALL Quality Sensor Status",
+    "topic": "RX-QLT/+/status",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "rx_qlt_status_broker",
+    "inputs": 0,
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "x": 240,
+    "y": 120,
+    "wires": [
+      [
+        "rx_qlt_status_update"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qlt_status_update",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Update Quality Sensor Status (separate context)",
+    "outputs": 2,
+    "x": 680,
+    "y": 120,
+    "wires": [
+      [
+        "rx_qlt_status_debug"
+      ],
+      [
+        "rx_qlt_status_write"
+      ]
+    ],
+    "func": "function parseQualityStatus(value) {\n  if(Buffer.isBuffer(value))value=value.toString();\n  if(typeof value==='string'){const raw=value.trim();try{value=JSON.parse(raw);}catch{value=raw;}}\n  if(value&&typeof value==='object')value=value.status??value.state??value.sensorStatus;\n  const text=String(value??'').trim().toLowerCase();\n  if(['online','connected','1','true'].includes(text))return 'Online';\n  if(['offline','disconnected','0','false'].includes(text))return 'Offline';\n  return null;\n}\nfunction qualityStatusStep(msg,flow,global,node,now) {\n  const pending=flow.get('qualityPendingStatus')||{};\n  if(msg.qualityStatusAction!=='tick') {\n    const match=/^RX-QLT\\/([A-Za-z0-9_-]+)\\/status$/.exec(String(msg.topic||''));\n    if(!match)return null;\n    const id='RX-QLT-'+match[1],status=parseQualityStatus(msg.payload);\n    if(!status){node.warn('Invalid quality sensor status for '+id);return null;}\n    if(!pending[id]&&Object.keys(pending).length>=1000){node.warn('Quality status configuration buffer is full.');return null;}\n    pending[id]={device:id,sensorStatus:status,observedAt:now,retained:msg.retain===true};\n    flow.set('qualityPendingStatus',pending);\n  }\n  if(global.get('devicesReady')!==true)return null;\n  const devices=global.get('devices')||{},states=flow.get('qualitySensorStatus')||{},debug=[],writes=[];\n  for(const[id,event]of Object.entries(pending)) {\n    delete pending[id];\n    const cfg=devices[id];\n    if(!cfg){node.warn('Unknown quality status device: '+id);continue;}\n    if(cfg.enabled!==true)continue;\n    const old=states[id]||{};\n    const state={device:id,line:String(cfg.line||''),sensorStatus:event.sensorStatus,\n      lastStatusSeen:event.observedAt,retained:event.retained,\n      lastSeen:event.sensorStatus==='Online'&&!event.retained?event.observedAt:old.lastSeen??null};\n    states[id]=state;\n    const counters=flow.get('qualityCounters');\n    if(counters?.[id]) {\n      counters[id].sensorStatus=state.sensorStatus;counters[id].statusObservedAt=state.lastStatusSeen;\n      counters[id].lastCommunicationSeen=state.lastSeen;\n      flow.set('qualityCounters',counters);\n    }\n    debug.push({payload:{...state}});\n    writes.push({payload:[{time:event.observedAt,status:state.sensorStatus,received_status:state.sensorStatus.toLowerCase(),last_seen:Number(event.observedAt),retained:event.retained},{device:id,line:state.line||id}]});\n  }\n  flow.set('qualitySensorStatus',states);flow.set('qualityPendingStatus',pending);\n  if(debug.length)node.status({fill:debug.at(-1).payload.sensorStatus==='Online'?'green':'red',shape:'dot',text:debug.at(-1).payload.device+' '+debug.at(-1).payload.sensorStatus});\n  return debug.length?[debug,writes]:null;\n}\ntry{return qualityStatusStep(msg,flow,global,node,Date.now());}catch(e){node.error(e.message);return null;}"
+  },
+  {
+    "id": "rx_qlt_status_tick",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Release quality status after config loads",
+    "props": [
+      {
+        "p": "qualityStatusAction",
+        "v": "tick",
+        "vt": "str"
+      }
+    ],
+    "repeat": "5",
+    "once": true,
+    "onceDelay": 1,
+    "x": 260,
+    "y": 220,
+    "wires": [
+      [
+        "rx_qlt_status_update"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qlt_status_debug",
+    "z": "e5489573e203f3d0",
+    "type": "debug",
+    "name": "Quality sensor status",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1120,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "rx_qlt_status_write",
+    "z": "e5489573e203f3d0",
+    "type": "influxdb out",
+    "name": "Save quality status history (optional)",
+    "influxdb": "eef122fda5340dac",
+    "measurement": "device_status_debug",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "RCLH",
+    "x": 1150,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "rx_qlt_status_catch",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Quality status history write failed",
+    "scope": [
+      "rx_qlt_status_write"
+    ],
+    "uncaught": false,
+    "x": 270,
+    "y": 320,
+    "wires": [
+      [
+        "rx_qlt_status_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qlt_status_error",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Safe status-history error",
+    "outputs": 1,
+    "x": 700,
+    "y": 320,
+    "wires": [
+      [
+        "rx_qlt_status_debug"
+      ]
+    ],
+    "func": "return {payload:{saved:false,message:'Quality status history write failed; runtime status remains available.'}};"
+  },
+  {
+    "id": "rx_qlt_status_broker",
+    "type": "mqtt-broker",
+    "name": "QUALITY STATUS — SELECT EXISTING MQTT BROKER",
+    "broker": "",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true
+  }
+]

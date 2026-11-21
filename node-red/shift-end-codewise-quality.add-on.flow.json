@@ -1,0 +1,381 @@
+[
+  {
+    "id": "rx_dq_initial",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Shift summary: initialize direct quality",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nfunction directInitialQuality(msg,global) {\n  const s=msg.payload?.lineStats;\n  if(!s)throw Error('Missing calculated shift statistics.');\n  msg.directQualityTarget=directQualityTarget(s,global);\n  Object.assign(s,directQualityFields(msg.directQualityTarget,null,[],Date.now()));\n  return msg;\n}\nreturn directInitialQuality(msg,global);",
+    "outputs": 1,
+    "wires": [
+      [
+        "94b054dbc6125d09"
+      ]
+    ],
+    "x": 600,
+    "y": 2100
+  },
+  {
+    "id": "rx_dq_prepare",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Code-wise production: calculate quality directly",
+    "func": "function directPrepareQuality(msg) {\n  const t=msg.directQualityTarget;\n  if(!t||!msg.payload?.[1]?.$set)throw Error('Missing direct quality target / code-wise update.');\n  msg.directQualityOriginalUpdate=msg.payload;\n  if(!t.sensor)return [null,msg];\n  msg.payload=[{_id:'designGrades'}];return [msg,null];\n}\nreturn directPrepareQuality(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_dq_catalogue"
+      ],
+      [
+        "rx_dq_attach"
+      ]
+    ],
+    "x": 600,
+    "y": 2200
+  },
+  {
+    "id": "rx_dq_catalogue",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read grade categories only (ruhanex_config)",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1080,
+    "y": 2200,
+    "wires": [
+      [
+        "rx_dq_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_query",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Read quality_events for completed shift",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nfunction directCatalogueQuery(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(!Array.isArray(doc?.grades))throw Error('Missing design grade catalogue.');\n  msg.directQualityGrades=doc.grades;\n  msg.query=directQualityQuery(msg.directQualityTarget);delete msg.payload;\n  return msg;\n}\nreturn directCatalogueQuery(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_influx"
+      ]
+    ],
+    "x": 1530,
+    "y": 2200
+  },
+  {
+    "id": "rx_dq_influx",
+    "z": "e5489573e203f3d0",
+    "type": "influxdb in",
+    "name": "Direct quality by design / size / run",
+    "influxdb": "eef122fda5340dac",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 600,
+    "y": 2320,
+    "wires": [
+      [
+        "rx_dq_attach"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_attach",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Add quality to each code-wise entry + OLE",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nfunction directAttachQuality(msg) {\n  const original=msg.directQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original shift update.');\n  const t=msg.directQualityTarget,rows=t.sensor&&!msg.directQualityFailed?msg.payload:null;\n  const grades=msg.directQualityGrades||[];\n  const fields=directQualityFields(t,rows,grades,Date.now());\n  const entries=original[1].$set['lineStats.codeWiseProduction']||[];\n  original[1].$set['lineStats.codeWiseProduction']=directCodeWiseQuality(entries,t,rows,grades);\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  // Drop legacy references: this calculation does not read collection quality.\n  original[1].$unset={...original[1].$unset,'lineStats.qualityDocumentId':''};\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  return msg;\n}\nreturn directAttachQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1100,
+    "y": 2320
+  },
+  {
+    "id": "rx_dq_catch_final",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Direct quality failed: preserve production save",
+    "scope": [
+      "rx_dq_catalogue",
+      "rx_dq_query",
+      "rx_dq_influx",
+      "rx_dq_attach"
+    ],
+    "uncaught": false,
+    "x": 550,
+    "y": 2440,
+    "wires": [
+      [
+        "rx_dq_final_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_final_error",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Save production with pending quality",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nfunction directAttachQuality(msg) {\n  const original=msg.directQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original shift update.');\n  const t=msg.directQualityTarget,rows=t.sensor&&!msg.directQualityFailed?msg.payload:null;\n  const grades=msg.directQualityGrades||[];\n  const fields=directQualityFields(t,rows,grades,Date.now());\n  const entries=original[1].$set['lineStats.codeWiseProduction']||[];\n  original[1].$set['lineStats.codeWiseProduction']=directCodeWiseQuality(entries,t,rows,grades);\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  // Drop legacy references: this calculation does not read collection quality.\n  original[1].$unset={...original[1].$unset,'lineStats.qualityDocumentId':''};\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  return msg;\n}\nnode.warn('Direct quality calculation failed; production saved with pending quality.');msg.directQualityFailed=true;return directAttachQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1100,
+    "y": 2440
+  },
+  {
+    "id": "rx_dq_tick",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Recheck direct quality after grace / failures",
+    "props": [],
+    "once": true,
+    "onceDelay": 15,
+    "repeat": "60",
+    "x": 250,
+    "y": 2580,
+    "wires": [
+      [
+        "rx_dq_pending_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_pending_query",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Pending / settling shift quality",
+    "func": "return {payload:[{'lineStats.qualitySource':'quality_events-direct','lineStats.codeWiseProduction':{$exists:true},$or:[{'lineStats.qualityStatus':'pending'},{'lineStats.directQualitySettled':{$ne:true}}]},{sort:{'lineStats.directQualityCheckedAt':1},limit:50}]};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_pending_db"
+      ]
+    ],
+    "x": 650,
+    "y": 2580
+  },
+  {
+    "id": "rx_dq_pending_db",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read saved shifts for direct quality reconciliation",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1110,
+    "y": 2580,
+    "wires": [
+      [
+        "rx_dq_each"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_each",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Recalculate with saved production metadata",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nif(!Array.isArray(msg.payload))throw Error('Invalid pending shifts result.');const messages=[];\n   for(const doc of msg.payload){const s=doc.lineStats;if(!Array.isArray(s.codeWiseProduction))continue;\n    let target;if(s.qualitySensorDevice)target={line:s.lineName,device:s.device,shift:s.shift,shiftDate:s.shiftDate,from:s.shiftStart,to:s.shiftEnd,availability:s.availability,performance:s.performance,sensor:s.qualitySensorDevice,status:'pending'};else target=directQualityTarget(s,global);\n    messages.push({directQualityProduction:doc,directQualityTarget:target,directQualityReconcile:true,payload:[{_id:'designGrades'}]});}\n   return messages.length?[messages]:null;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_reconcile_route"
+      ]
+    ],
+    "x": 1540,
+    "y": 2580
+  },
+  {
+    "id": "rx_dq_reconcile_route",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Direct quality recheck routing",
+    "func": "return msg.directQualityTarget.sensor?[msg,null]:[null,msg];",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_dq_reconcile_catalogue"
+      ],
+      [
+        "rx_dq_reconcile_build"
+      ]
+    ],
+    "x": 650,
+    "y": 2700
+  },
+  {
+    "id": "rx_dq_reconcile_catalogue",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read current grade categories for recheck",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1110,
+    "y": 2700,
+    "wires": [
+      [
+        "rx_dq_reconcile_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_reconcile_query",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Query shift quality directly again",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nfunction directCatalogueQuery(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(!Array.isArray(doc?.grades))throw Error('Missing design grade catalogue.');\n  msg.directQualityGrades=doc.grades;\n  msg.query=directQualityQuery(msg.directQualityTarget);delete msg.payload;\n  return msg;\n}\nreturn directCatalogueQuery(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_reconcile_influx"
+      ]
+    ],
+    "x": 1540,
+    "y": 2700
+  },
+  {
+    "id": "rx_dq_reconcile_influx",
+    "z": "e5489573e203f3d0",
+    "type": "influxdb in",
+    "name": "Recheck persisted quality deltas",
+    "influxdb": "eef122fda5340dac",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 650,
+    "y": 2820,
+    "wires": [
+      [
+        "rx_dq_reconcile_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_reconcile_build",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Update saved code-wise quality (conditional)",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nconst doc=msg.directQualityProduction,s=doc.lineStats,t=msg.directQualityTarget;\n   const rows=t.sensor?msg.payload:null,grades=msg.directQualityGrades||[];\n   const fields=directQualityFields(t,rows,grades,Date.now());\n   const set={};for(const[k,v]of Object.entries(fields))set['lineStats.'+k]=v;\n   set['lineStats.codeWiseProduction']=directCodeWiseQuality(s.codeWiseProduction,t,rows,grades);\n   set['lineStats.directQualityCheckedAt']=new Date();\n   set['lineStats.directQualitySettled']=fields.qualityStatus!=='pending'&&Date.now()>=Date.parse(t.to)+90000;\n   msg.payload=[{_id:doc._id,'lineStats.availability':s.availability,'lineStats.performance':s.performance,'lineStats.codeWiseProduction':{$eq:s.codeWiseProduction}},{$set:set,$unset:{'lineStats.qualityDocumentId':''}}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_reconcile_save"
+      ]
+    ],
+    "x": 1130,
+    "y": 2820
+  },
+  {
+    "id": "rx_dq_reconcile_save",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Save direct quality fields to shifts",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1550,
+    "y": 2820,
+    "wires": [
+      [
+        "rx_dq_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_result",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Direct code-wise quality saved",
+    "func": "const r=msg.payload;if(r?.acknowledged!==true)throw Error('Direct quality update not acknowledged.');if(r.matchedCount!==1)return null;return {payload:{updated:true,shiftId:String(msg.directQualityProduction._id)}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_debug"
+      ]
+    ],
+    "x": 650,
+    "y": 2940
+  },
+  {
+    "id": "rx_dq_catch_reconcile",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Direct quality recheck failed: retry later",
+    "scope": [
+      "rx_dq_pending_db",
+      "rx_dq_each",
+      "rx_dq_reconcile_catalogue",
+      "rx_dq_reconcile_query",
+      "rx_dq_reconcile_influx",
+      "rx_dq_reconcile_build",
+      "rx_dq_reconcile_save",
+      "rx_dq_result"
+    ],
+    "uncaught": false,
+    "x": 1100,
+    "y": 2940,
+    "wires": [
+      [
+        "rx_dq_safe_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dq_safe_error",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Safe direct quality error",
+    "func": "return {payload:{updated:false,message:'Direct shift quality recheck failed; will retry.',phase:msg.error?.source?.name}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_dq_debug"
+      ]
+    ],
+    "x": 650,
+    "y": 3060
+  },
+  {
+    "id": "rx_dq_debug",
+    "z": "e5489573e203f3d0",
+    "type": "debug",
+    "name": "Direct shift quality result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1110,
+    "y": 3060,
+    "wires": []
+  }
+]

@@ -1,0 +1,468 @@
+[
+  {
+    "id": "37c8f93cf0f19f4a",
+    "type": "http in",
+    "z": "b490c7cde81b738c",
+    "name": "update downtime",
+    "url": "/api/update-downtime-reason",
+    "method": "post",
+    "upload": false,
+    "skipBodyParsing": false,
+    "swaggerDoc": "",
+    "x": 200,
+    "y": 300,
+    "wires": [
+      [
+        "bb730faf05dca453",
+        "49eca5b929520d04"
+      ]
+    ]
+  },
+  {
+    "id": "bb730faf05dca453",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Validate Downtime + Machine",
+    "func": "const body = msg.payload || {};\n\nconst date = String(body.date || \"\").trim();\nconst shift = String(body.shift || \"\").trim();\nconst line = String(body.line || \"\").trim();\nconst stopStart_ts = Number(body.stopStart_ts);\nconst reason = String(body.reason || \"\").trim();\nconst machine = String(body.machine || \"\").trim();\n\nconst downtimeType =\n    String(body.downtimeType || \"unplanned\").toLowerCase() === \"planned\"\n        ? \"planned\"\n        : \"unplanned\";\n\nconst plannedCategory =\n    downtimeType === \"planned\"\n        ? String(body.plannedCategory || \"\").toLowerCase()\n        : null;\n\nconst downtimeCode = String(body.downtimeCode || \"\").trim();\n\nif (!date || !shift || !line || !Number.isFinite(stopStart_ts)) {\n    msg.statusCode = 400;\n    msg.payload = {\n        success: false,\n        error: \"Invalid downtime record identifier\"\n    };\n    return [null, msg];\n}\n\nif (!reason) {\n    msg.statusCode = 400;\n    msg.payload = {\n        success: false,\n        error: \"Downtime reason is required\"\n    };\n    return [null, msg];\n}\n\nif (!machine) {\n    msg.statusCode = 400;\n    msg.payload = {\n        success: false,\n        error: \"Please select a machine from the registered machine list\"\n    };\n    return [null, msg];\n}\n\nif (\n    downtimeType === \"planned\" &&\n    ![\"standard\", \"additional\"].includes(plannedCategory)\n) {\n    msg.statusCode = 400;\n    msg.payload = {\n        success: false,\n        error: \"Planned downtime category is required\"\n    };\n    return [null, msg];\n}\n\n// Keep the original downtime information while MongoDB validates machine.\nmsg.downtimeUpdate = {\n    date,\n    shift,\n    line,\n    stopStart_ts,\n    reason,\n    machine,\n    downtimeType,\n    plannedCategory,\n    downtimeCode\n};\n\n// Escape RegExp characters before exact case-insensitive comparison.\nconst escapedMachine = machine.replace(/[.*+?^${}()|[\\\\]\\\\\\\\]/g, \"\\\\$&\");\n\n// Query machines master.\n// Machine must:\n//   1. belong to this line\n//   2. exactly match machineName\n//   3. be active\nmsg.payload = [{\n    line: line,\n    machineName: {\n        $regex: \"^\" + escapedMachine + \"$\",\n        $options: \"i\"\n    },\n    active: {\n        $ne: false\n    }\n}];\n\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 490,
+    "y": 300,
+    "wires": [
+      [
+        "25c94d3dcb05305c"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "25c94d3dcb05305c",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "machines",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Validate Machine",
+    "x": 710,
+    "y": 200,
+    "wires": [
+      [
+        "9b18ff99dc6ac9dc"
+      ]
+    ]
+  },
+  {
+    "id": "9b18ff99dc6ac9dc",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Check Machine Match",
+    "func": "const machineRecord = msg.payload || null;\nconst d = msg.downtimeUpdate || {};\n\nif (!machineRecord || !machineRecord.machineName) {\n    msg.statusCode = 400;\n    msg.headers = {\n        \"Content-Type\": \"application/json\"\n    };\n\n    msg.payload = {\n        success: false,\n        error: `Machine \"${d.machine || \"\"}\" is not registered as an active machine for ${d.line || \"selected line\"}. Please select a valid machine from the list.`\n    };\n\n    return [null, msg];\n}\n\n// Use the canonical machine name stored in MongoDB.\n// This avoids case/spelling variations in historical downtime data.\nconst canonicalMachine = String(machineRecord.machineName);\nconst machineCode = String(machineRecord.machineCode || \"\");\n\nmsg.operation = \"updateOne\";\nmsg.collection = \"stoppages\";\nmsg.mode = \"collection\";\n\nmsg.payload = [\n    {\n        date: d.date,\n        shift: d.shift,\n        line: d.line,\n        stopStart_ts: d.stopStart_ts\n    },\n    {\n        $set: {\n            reason: d.reason,\n            machine: canonicalMachine,\n            machineCode: machineCode,\n            downtimeType: d.downtimeType,\n            plannedCategory: d.plannedCategory,\n            downtimeCode: d.downtimeCode,\n            updatedAt: new Date().toISOString()\n        }\n    }\n];\n\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 920,
+    "y": 200,
+    "wires": [
+      [
+        "rx_da_prepare"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "1dca19134e960bb9",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Update Stoppage",
+    "x": 1170,
+    "y": 200,
+    "wires": [
+      [
+        "rx_da_build"
+      ]
+    ]
+  },
+  {
+    "id": "e77e4bc92ffd6b11",
+    "type": "http response",
+    "z": "b490c7cde81b738c",
+    "name": "",
+    "statusCode": "",
+    "headers": {},
+    "x": 1190,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "940c7e9bf259add4",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Verify Update + Find Saved Shift",
+    "func": "const d = msg.downtimeUpdate || {};\nconst result = msg.payload || {};\n\nconst matched = Number(\n    result.matchedCount ??\n    result.result?.n ??\n    result.n ??\n    0\n);\n\nif (matched < 1) {\n    msg.statusCode = 404;\n    msg.payload = {\n        success: false,\n        error: \"Downtime record was not found\"\n    };\n    return [null, msg];\n}\n\n// Keep HTTP request/response objects and the edited shift identity.\nmsg._httpReq = msg.req;\nmsg._httpRes = msg.res;\nmsg.recalcInfo = {\n    date: String(d.date || \"\"),\n    shift: String(d.shift || \"\"),\n    line: String(d.line || \"\")\n};\n\n// Find the exact completed shift document.\nmsg.collection = \"shifts\";\nmsg.operation = \"findOne\";\nmsg.payload = [{\n    \"lineStats.shiftDate\": msg.recalcInfo.date,\n    \"lineStats.shift\": msg.recalcInfo.shift,\n    \"lineStats.lineName\": msg.recalcInfo.line\n}];\n\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1360,
+    "y": 300,
+    "wires": [
+      [
+        "13dda68b6c290167"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "13dda68b6c290167",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Find Exact Saved Shift",
+    "x": 1600,
+    "y": 260,
+    "wires": [
+      [
+        "28fd05b574ce7311"
+      ]
+    ]
+  },
+  {
+    "id": "28fd05b574ce7311",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Prepare Shift Recalculation",
+    "func": "const shiftDoc = msg.payload || null;\n\nif (!shiftDoc || !shiftDoc.lineStats) {\n\n    const d = msg.downtimeUpdate || {};\n\n    const requestedDate =\n        String(d.date || \"\").trim();\n\n    const requestedShift =\n        String(d.shift || \"\").trim();\n\n\n    // ========================================================\n    // CALCULATE CURRENT SHIFT\n    //\n    // This intentionally uses the same Asia/Colombo shift-date\n    // convention as the counter flow:\n    //\n    // 06:00-14:00 -> today's date\n    // 14:00-22:00 -> today's date\n    // 22:00-24:00 -> today's date\n    // 00:00-06:00 -> PREVIOUS day's date, shift 22-06\n    // ========================================================\n\n    function getCurrentShiftInfo(timestamp = Date.now()) {\n\n        const p = {};\n\n        for (\n            const x of new Intl.DateTimeFormat(\n                \"en-CA\",\n                {\n                    timeZone: \"Asia/Colombo\",\n                    year: \"numeric\",\n                    month: \"2-digit\",\n                    day: \"2-digit\",\n                    hour: \"2-digit\",\n                    hourCycle: \"h23\"\n                }\n            ).formatToParts(new Date(timestamp))\n        ) {\n            if (x.type !== \"literal\") {\n                p[x.type] = x.value;\n            }\n        }\n\n        const y = Number(p.year);\n        const m = Number(p.month);\n        const day = Number(p.day);\n        const h = Number(p.hour);\n\n        const fmt = (yy, mm, dd) =>\n            `${String(yy).padStart(4, \"0\")}-${String(mm).padStart(2, \"0\")}-${String(dd).padStart(2, \"0\")}`;\n\n        let shiftName;\n        let shiftDate;\n\n        if (h >= 6 && h < 14) {\n\n            shiftName = \"06-14\";\n            shiftDate = fmt(y, m, day);\n\n        } else if (h >= 14 && h < 22) {\n\n            shiftName = \"14-22\";\n            shiftDate = fmt(y, m, day);\n\n        } else if (h >= 22) {\n\n            shiftName = \"22-06\";\n            shiftDate = fmt(y, m, day);\n\n        } else {\n\n            shiftName = \"22-06\";\n\n            const dt =\n                new Date(Date.UTC(y, m - 1, day));\n\n            dt.setUTCDate(\n                dt.getUTCDate() - 1\n            );\n\n            shiftDate =\n                dt.toISOString().slice(0, 10);\n        }\n\n        return {\n            shiftName,\n            shiftDate\n        };\n    }\n\n\n    const current =\n        getCurrentShiftInfo();\n\n\n    const isCurrentShift =\n        requestedDate === current.shiftDate &&\n        requestedShift === current.shiftName;\n\n\n    // ========================================================\n    // CURRENT SHIFT\n    //\n    // No saved \"shifts\" document is expected yet.\n    // The stoppage update has already succeeded.\n    // Live dashboard calculations will use the changed stoppage.\n    // ========================================================\n\n    if (isCurrentShift) {\n\n        msg.statusCode = 200;\n\n        msg.headers = {\n            \"Content-Type\": \"application/json\"\n        };\n\n        msg.req =\n            msg._httpReq || msg.req;\n\n        msg.res =\n            msg._httpRes || msg.res;\n\n        msg.payload = {\n            success: true,\n            downtimeUpdated: true,\n            shiftSummaryUpdated: false,\n            currentShift: true,\n\n            message:\n                \"Downtime updated successfully. Current shift summary is calculated live.\",\n\n            line:\n                String(d.line || \"\"),\n\n            date:\n                requestedDate,\n\n            shift:\n                requestedShift\n        };\n\n        return [null, msg];\n    }\n\n\n    // ========================================================\n    // COMPLETED / HISTORICAL SHIFT\n    //\n    // A completed shift SHOULD have a saved shift summary.\n    // Do not silently treat a missing document as success.\n    //\n    // IMPORTANT:\n    // The stoppage itself has already been updated at this point,\n    // therefore report the partial-success condition explicitly.\n    // ========================================================\n\n    msg.statusCode = 409;\n\n    msg.headers = {\n        \"Content-Type\": \"application/json\"\n    };\n\n    msg.req =\n        msg._httpReq || msg.req;\n\n    msg.res =\n        msg._httpRes || msg.res;\n\n    msg.payload = {\n        success: false,\n        downtimeUpdated: true,\n        shiftSummaryUpdated: false,\n        currentShift: false,\n\n        error:\n            \"Downtime was updated, but the saved shift summary for this completed shift was not found.\",\n\n        line:\n            String(d.line || \"\"),\n\n        date:\n            requestedDate,\n\n        shift:\n            requestedShift,\n\n        currentShiftInfo: {\n            date: current.shiftDate,\n            shift: current.shiftName\n        }\n    };\n\n    return [null, msg];\n}\n\nconst s = shiftDoc.lineStats;\n\nmsg.shiftDocumentId = shiftDoc._id;\nmsg.previousLineStats = s;\n\n// Rebuild exactly the input expected by the existing\n// Calculate Line Shift Statistics node.\nmsg.summaryRequest = {\n    device: String(s.device || \"\"),\n    line: String(s.lineName || \"\"),\n    machine: String(s.machine || \"\"),\n    shift: String(s.shift || \"\"),\n    shiftDate: String(s.shiftDate || \"\"),\n    fromTime: s.shiftStart,\n    toTime: s.shiftEnd,\n    tileCount: Number(s.tileCount || 0),\n    shiftStatus: String(s.status || \"Unknown\")\n};\n\nif (\n    !msg.summaryRequest.device ||\n    !msg.summaryRequest.shift ||\n    !msg.summaryRequest.shiftDate ||\n    !msg.summaryRequest.fromTime ||\n    !msg.summaryRequest.toTime\n) {\n    msg.statusCode = 500;\n    msg.req = msg._httpReq || msg.req;\n    msg.res = msg._httpRes || msg.res;\n    msg.payload = {\n        success: false,\n        error: \"Saved shift summary does not contain enough information to recalculate\"\n    };\n    return [null, msg];\n}\n\n// Re-read all stoppages AFTER the edited stoppage has been saved.\nmsg.collection = \"stoppages\";\nmsg.operation = \"find\";\nmsg.payload = [\n    {\n        device: msg.summaryRequest.device,\n        date: msg.summaryRequest.shiftDate,\n        shift: msg.summaryRequest.shift\n    },\n    {\n        sort: { stopStart_ts: 1 }\n    }\n];\n\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1850,
+    "y": 280,
+    "wires": [
+      [
+        "db13029510e06c04"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "db13029510e06c04",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Read All Shift Stoppages",
+    "x": 2090,
+    "y": 280,
+    "wires": [
+      [
+        "badd9baa78b057e6"
+      ]
+    ]
+  },
+  {
+    "id": "badd9baa78b057e6",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Recalculate Line Shift Statistics",
+    "func": "const rows = Array.isArray(msg.payload) ? [...msg.payload] : [];\nconst r = msg.summaryRequest;\n\nif (!r) return null;\n\n// ========================================================\n// GET CONFIGURATION\n// ========================================================\n\nconst cfgAll = global.get(\"counterConfig\") || {};\nconst cfg = cfgAll[r.device] || {};\n\nconst allSettings = global.get(\"lineSettings\") || {};\n\nconst ls =\n    allSettings[r.line] ||\n    allSettings[String(r.line).toLowerCase()] ||\n    {};\n\n\nconst lineSpeed =\n    Math.max(\n        0,\n        Number(\n            ls.lineSpeed ??\n            cfg.lineSpeed ??\n            0\n        )\n    );\n\n\nconst tileSize =\n    String(\n        ls.tileSize ??\n        cfg.tileSize ??\n        \"\"\n    ).trim();\n\n\nconst configuredPlannedDowntime =\n    Math.max(\n        0,\n        Number(\n            ls.plannedDowntime ??\n            cfg.plannedDowntime ??\n            0\n        )\n    );\n\n\n// ========================================================\n// SHIFT TIME RANGE\n// ========================================================\n\nconst fromMs =\n    new Date(r.fromTime).getTime();\n\nconst toMs =\n    new Date(r.toTime).getTime();\n\nconst now =\n    Date.now();\n\n\nif (\n    !Number.isFinite(fromMs) ||\n    !Number.isFinite(toMs) ||\n    toMs <= fromMs\n) {\n    node.error(\n        \"Invalid shift time range\",\n        msg\n    );\n\n    return null;\n}\n\n\n// ========================================================\n// HELPERS\n// ========================================================\n\nfunction round(v, n = 2) {\n\n    const p =\n        10 ** n;\n\n    return Math.round(\n        (Number(v || 0) + Number.EPSILON) * p\n    ) / p;\n}\n\n\nfunction tileAreaM2(size) {\n\n    const d =\n        String(size || \"\")\n            .toLowerCase()\n            .replace(/\\s+/g, \"\")\n            .split(\"x\")\n            .map(Number);\n\n    if (\n        d.length !== 2 ||\n        !d.every(\n            v =>\n                Number.isFinite(v) &&\n                v > 0\n        )\n    ) {\n        return 0;\n    }\n\n    // Tile dimensions assumed to be centimetres.\n    return (\n        d[0] *\n        d[1]\n    ) / 10000;\n}\n\n\n// ========================================================\n// SHIFT TIME\n// ========================================================\n\nconst calculationEndMs =\n    Math.min(\n        Math.max(now, fromMs),\n        toMs\n    );\n\n\nconst fullShiftMinutes =\n    Math.max(\n        0,\n        (toMs - fromMs) / 60000\n    );\n\n\nconst elapsedMinutes =\n    Math.max(\n        0,\n        (calculationEndMs - fromMs) / 60000\n    );\n\n\n// ========================================================\n// CLASSIFY DOWNTIME\n//\n// FINAL RULE:\n//\n// Planned -> Standard\n//     Actual recorded duration is planned,\n//     but limited by configured standard allowance.\n//\n//     Any duration above the allowance becomes\n//     UNPLANNED.\n//\n// Planned -> Additional\n//     Entire recorded duration is planned.\n//\n// Everything else\n//     Unplanned.\n//\n// IMPORTANT:\n//\n// Unused configured standard allowance is NOT\n// automatically distributed across the shift.\n// ========================================================\n\nlet totalDowntimeMinutes = 0;\n\nlet standardActualMinutes = 0;\nlet additionalPlannedMinutes = 0;\nlet explicitUnplannedMinutes = 0;\n\nlet completedStops = 0;\nlet openStop = false;\n\nlet currentOpenStopMinutes = 0;\nlet maximumDowntimeMinutes = 0;\n\n\nfor (const stop of rows) {\n\n    let start =\n        Number(stop.stopStart_ts);\n\n    if (!Number.isFinite(start)) {\n        continue;\n    }\n\n\n    // Clamp start to shift boundary.\n    start =\n        Math.max(\n            start,\n            fromMs\n        );\n\n\n    const isOpen =\n        stop.stopStop_ts === null ||\n        stop.stopStop_ts === undefined;\n\n\n    let end;\n\n    if (isOpen) {\n\n        end =\n            calculationEndMs;\n\n    } else {\n\n        end =\n            Number(\n                stop.stopStop_ts\n            );\n\n        if (!Number.isFinite(end)) {\n            continue;\n        }\n\n        end =\n            Math.min(\n                end,\n                calculationEndMs,\n                toMs\n            );\n    }\n\n\n    if (end <= start) {\n        continue;\n    }\n\n\n    const durationMinutes =\n        (end - start) / 60000;\n\n\n    // ----------------------------------------\n    // TOTAL ACTUAL DOWNTIME\n    // ----------------------------------------\n\n    totalDowntimeMinutes +=\n        durationMinutes;\n\n\n    maximumDowntimeMinutes =\n        Math.max(\n            maximumDowntimeMinutes,\n            durationMinutes\n        );\n\n\n    // ----------------------------------------\n    // CLASSIFICATION\n    // ----------------------------------------\n\n    const downtimeType =\n        String(\n            stop.downtimeType ||\n            \"unplanned\"\n        ).toLowerCase();\n\n\n    const plannedCategory =\n        String(\n            stop.plannedCategory ||\n            \"\"\n        ).toLowerCase();\n\n\n    if (\n        downtimeType === \"planned\" &&\n        plannedCategory === \"standard\"\n    ) {\n\n        standardActualMinutes +=\n            durationMinutes;\n\n    }\n\n    else if (\n        downtimeType === \"planned\" &&\n        plannedCategory === \"additional\"\n    ) {\n\n        additionalPlannedMinutes +=\n            durationMinutes;\n\n    }\n\n    else {\n\n        explicitUnplannedMinutes +=\n            durationMinutes;\n\n    }\n\n\n    // ----------------------------------------\n    // STOP COUNTS\n    // ----------------------------------------\n\n    if (isOpen) {\n\n        openStop = true;\n\n        currentOpenStopMinutes =\n            Math.max(\n                currentOpenStopMinutes,\n                durationMinutes\n            );\n\n    } else {\n\n        completedStops += 1;\n\n    }\n}\n\n\n// ========================================================\n// STANDARD PLANNED DOWNTIME\n// ========================================================\n\nconst allowance =\n    configuredPlannedDowntime;\n\n\n// IMPORTANT:\n//\n// If allowance = 0,\n// manually classified Standard Planned downtime\n// remains planned.\n//\n// This matches the live KPI rule.\n\nconst standardUsed =\n    allowance > 0\n        ? Math.min(\n            standardActualMinutes,\n            allowance\n        )\n        : standardActualMinutes;\n\n\nconst remainingStandardAllowance =\n    allowance > 0\n        ? Math.max(\n            0,\n            allowance -\n            standardUsed\n        )\n        : 0;\n\n\nconst standardExcess =\n    allowance > 0\n        ? Math.max(\n            0,\n            standardActualMinutes -\n            allowance\n        )\n        : 0;\n\n\n\nconst standardApplied =\n    standardUsed;\n\n\n// ========================================================\n// PLANNED / UNPLANNED DOWNTIME\n// ========================================================\n\nconst plannedDowntimeMinutes =\n    standardApplied +\n    additionalPlannedMinutes;\n\n\n// Everything not accepted as planned is unplanned.\n//\n// This automatically includes:\n//     explicit unplanned\n//     standard excess\n\nconst unplannedDowntimeMinutes =\n    Math.max(\n        0,\n        totalDowntimeMinutes -\n        plannedDowntimeMinutes\n    );\n\n\n// ========================================================\n// PRODUCTION TIME\n// ========================================================\n\n// Planned production time:\n//\n// Elapsed shift time minus accepted planned downtime.\n\nconst plannedProductionMinutes =\n    Math.max(\n        0,\n        elapsedMinutes -\n        plannedDowntimeMinutes\n    );\n\n\n// IMPORTANT:\n//\n// Physical operating time depends ONLY on\n// actual stoppage duration.\n//\n// Planned/unplanned classification does not\n// change physical operating time.\n\n// ========================================================\n// RUN CONFIRMATION CORRECTION\n// ========================================================\n//\n// STOP_END is confirmed only after the line has been running\n// continuously for requiredRunTimeMs.\n//\n// Tiles are already counted during this confirmation period,\n// while that same period is still included in the recorded\n// downtime. Add it back once for every COMPLETED stop.\n//\n// Open stops are intentionally excluded because they have not\n// completed the recovery-confirmation period yet.\n\nconst requiredRunTimeMs =\n    Math.max(\n        0,\n        Number(\n            ls.requiredRunTimeMs ??\n            cfg.requiredRunTimeMs ??\n            60000\n        )\n    );\n\nconst runConfirmationMinutes =\n    requiredRunTimeMs / 60000;\n\nconst recoveryCorrectionMinutes =\n    completedStops *\n    runConfirmationMinutes;\n\nconst actualOperatingMinutes =\n    Math.max(\n        0,\n        Math.min(\n            elapsedMinutes,\n            elapsedMinutes -\n            totalDowntimeMinutes +\n            recoveryCorrectionMinutes\n        )\n    );\n\n\n// ========================================================\n// AVAILABILITY\n// ========================================================\n\nconst availability =\n    plannedProductionMinutes > 0\n        ? (\n            actualOperatingMinutes /\n            plannedProductionMinutes\n        ) * 100\n        : 0;\n\n\n// ========================================================\n// PRODUCTION\n// ========================================================\n\nconst tileCount =\n    Math.max(\n        0,\n        Number(\n            r.tileCount || 0\n        )\n    );\n\n\nconst areaPerTile =\n    tileAreaM2(\n        tileSize\n    );\n\n\nconst production =\n    tileCount *\n    areaPerTile;\n\n\n// ========================================================\n// TARGET PRODUCTION\n//\n// Target is based on PHYSICAL OPERATING TIME.\n//\n// Example:\n//\n// Operating time = 400 min\n// Rated speed    = 12 tiles/min\n//\n// Target = 4,800 tiles\n// ========================================================\n\nconst targetTiles =\n    lineSpeed > 0\n        ? lineSpeed *\n          actualOperatingMinutes\n        : 0;\n\n\nconst targetProduction =\n    targetTiles *\n    areaPerTile;\n\n\n// ========================================================\n// PERFORMANCE\n// ========================================================\n\nconst performance =\n    targetTiles > 0\n        ? (\n            tileCount /\n            targetTiles\n        ) * 100\n        : 0;\n\n\n// ========================================================\n// QUALITY\n// ========================================================\n\n// No reject / quality counter is currently available.\n// Therefore quality remains 100%.\n\nconst quality =\n    100;\n\n\n// ========================================================\n// OLE\n// ========================================================\n\nconst ole =\n    (\n        availability *\n        performance *\n        quality\n    ) / 10000;\n\n\n// ========================================================\n// BUILD SHIFT SUMMARY\n// ========================================================\n\nmsg.payload = {\n\n    lineStats: {\n\n        // ----------------------------------------\n        // IDENTIFICATION\n        // ----------------------------------------\n\n        device:\n            r.device,\n\n        lineName:\n            r.line,\n\n        machine:\n            r.machine || \"\",\n\n        shift:\n            r.shift,\n\n        shiftDate:\n            r.shiftDate,\n\n        shiftStart:\n            r.fromTime,\n\n        shiftEnd:\n            r.toTime,\n\n        status:\n            r.shiftStatus ||\n            \"Unknown\",\n\n\n        // ----------------------------------------\n        // KPI\n        // ----------------------------------------\n\n        ole:\n            round(ole),\n\n        availability:\n            round(availability),\n\n        performance:\n            round(performance),\n\n        quality:\n            quality,\n\n\n        // ----------------------------------------\n        // PRODUCTION\n        // ----------------------------------------\n\n        tileCount:\n            Math.round(tileCount),\n\n        production:\n            round(production),\n\n        productionUnit:\n            \"m²\",\n\n        targetTiles:\n            round(targetTiles, 0),\n\n        targetProduction:\n            round(targetProduction),\n\n\n        // ----------------------------------------\n        // SHIFT TIME\n        // ----------------------------------------\n\n        fullShiftMinutes:\n            round(fullShiftMinutes),\n\n        elapsedShiftMinutes:\n            round(elapsedMinutes),\n\n        plannedProductionMinutes:\n            round(\n                plannedProductionMinutes\n            ),\n\n        actualOperatingMinutes:\n            round(\n                actualOperatingMinutes\n            ),\n\n\n        // ----------------------------------------\n        // DOWNTIME\n        // ----------------------------------------\n\n        totalDowntimeMinutes:\n            round(\n                totalDowntimeMinutes\n            ),\n\n        plannedDowntimeMinutes:\n            round(\n                plannedDowntimeMinutes\n            ),\n\n        unplannedDowntimeMinutes:\n            round(\n                unplannedDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // STANDARD PLANNED\n        // ----------------------------------------\n\n        configuredPlannedDowntime:\n            round(\n                configuredPlannedDowntime\n            ),\n\n        recordedStandardDowntimeMinutes:\n            round(\n                standardActualMinutes\n            ),\n\n        standardPlannedDowntimeMinutes:\n            round(\n                standardApplied\n            ),\n\n        remainingStandardAllowanceMinutes:\n            round(\n                remainingStandardAllowance\n            ),\n\n        standardExcessDowntimeMinutes:\n            round(\n                standardExcess\n            ),\n\n\n        // ----------------------------------------\n        // ADDITIONAL PLANNED\n        // ----------------------------------------\n\n        additionalPlannedDowntimeMinutes:\n            round(\n                additionalPlannedMinutes\n            ),\n\n        appliedPlannedDowntime:\n            round(\n                plannedDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // STOP INFORMATION\n        // ----------------------------------------\n\n        completedStops:\n            completedStops,\n\n        totalStops:\n            rows.length,\n\n        openStop:\n            openStop,\n\n        currentOpenStopMinutes:\n            round(\n                currentOpenStopMinutes\n            ),\n\n        maximumDowntimeMinutes:\n            round(\n                maximumDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // LINE CONFIGURATION\n        // ----------------------------------------\n\n        ratedLineSpeed:\n            lineSpeed,\n\n        tileSize:\n            tileSize,\n\n        stopDelayMs:\n            Number(\n                ls.stopDelayMs ??\n                cfg.stopDelayMs ??\n                60000\n            ),\n\n        maxPulseGapMs:\n            Number(\n                ls.maxPulseGapMs ??\n                cfg.maxPulseGapMs ??\n                10000\n            ),\n\n        requiredRunTimeMs:\n            Number(\n                ls.requiredRunTimeMs ??\n                cfg.requiredRunTimeMs ??\n                60000\n            ),\n\n\n        // Availability may legitimately exceed\n        // 100% under this planned-downtime model.\n        availabilityMayExceed100:\n            true,\n\n\n        source:\n            \"shift-summary\",\n\n        updatedAt:\n            new Date().toISOString()\n    }\n};\n\n\n// ========================================================\n// SAVE TO MONGODB\n// ========================================================\n\nmsg.collection =\n    \"shifts\";\n\nmsg.operation =\n    \"insertOne\";\n\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2340,
+    "y": 280,
+    "wires": [
+      [
+        "6ddf8380d5a379b8"
+      ]
+    ]
+  },
+  {
+    "id": "6ddf8380d5a379b8",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Prepare Shift Summary Update",
+    "func": "const result = msg.payload || {};\n\nif (!result.lineStats || !msg.shiftDocumentId) {\n    msg.statusCode = 500;\n    msg.req = msg._httpReq || msg.req;\n    msg.res = msg._httpRes || msg.res;\n    msg.payload = {\n        success: false,\n        error: \"Shift summary recalculation failed\"\n    };\n    return [null, msg];\n}\n\nconst newStats = result.lineStats;\nnewStats.updatedAt = new Date().toISOString();\n\nmsg.recalculatedLineStats = newStats;\n\nmsg.collection = \"shifts\";\nmsg.operation = \"updateOne\";\nmsg.payload = [\n    { _id: msg.shiftDocumentId },\n    {\n        $set: {\n            lineStats: newStats,\n            updatedAt: new Date().toISOString()\n        }\n    }\n];\n\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2600,
+    "y": 280,
+    "wires": [
+      [
+        "ba9d5d4a10e5d55c"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "ba9d5d4a10e5d55c",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Update Exact Shift Summary",
+    "x": 2850,
+    "y": 280,
+    "wires": [
+      [
+        "f8b53557259aaabb"
+      ]
+    ]
+  },
+  {
+    "id": "f8b53557259aaabb",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Downtime + Summary Response",
+    "func": "const s = msg.recalculatedLineStats || {};\n\nmsg.statusCode = 200;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.req = msg._httpReq || msg.req;\nmsg.res = msg._httpRes || msg.res;\n\nmsg.payload = {\n    success: true,\n    message: \"Downtime updated and shift summary recalculated successfully\",\n    shiftSummaryUpdated: true,\n    line: s.lineName,\n    date: s.shiftDate,\n    shift: s.shift,\n    production: s.production,\n    tileCount: s.tileCount,\n    totalDowntimeMinutes: s.totalDowntimeMinutes,\n    plannedDowntimeMinutes: s.plannedDowntimeMinutes,\n    unplannedDowntimeMinutes: s.unplannedDowntimeMinutes,\n    actualOperatingMinutes: s.actualOperatingMinutes,\n    availability: s.availability,\n    performance: s.performance,\n    quality: s.quality,\n    ole: s.ole\n};\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 3090,
+    "y": 280,
+    "wires": [
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ]
+  },
+  {
+    "id": "49eca5b929520d04",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "function 2",
+    "func": "const headers = msg.req?.headers || {};\n\nreturn {\n    payload: {\n        endpoint: msg.req?.url,\n        username: headers[\"x-ruhanex-user\"] || null,\n        role: headers[\"x-ruhanex-role\"] || null\n    }\n};",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 440,
+    "wires": [
+      [
+        "d543e47a9ef48767"
+      ]
+    ]
+  },
+  {
+    "id": "d543e47a9ef48767",
+    "type": "debug",
+    "z": "b490c7cde81b738c",
+    "name": "debug 4",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 680,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "rx_da_prepare",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: capture verified user + read old values",
+    "func": "return (function prepareDowntimeAudit(msg) {\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  const headers=msg.req?.headers||{};\n  const username=headers['x-ruhanex-user'],role=headers['x-ruhanex-role'];\n  if(typeof username!=='string'||!username.trim()||username.length>100||!['Admin','Manager','Line Supervisor','JE'].includes(role))return fail(401,'Authenticated user identity is required for this change.');\n  const args=msg.payload;\n  if(!Array.isArray(args)||!args[0]||!args[1]?.$set||!msg._msgid)return fail(500,'Unable to prepare downtime audit.');\n  msg.downtimeAudit={id:'downtime:'+msg._msgid,username,role,filter:args[0],update:args[1]};\n  msg.payload=[args[0]];msg.operation='findOne';msg.collection='stoppages';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_da_read"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 460,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_read",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: read stoppage before edit",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_da_before"
+      ]
+    ],
+    "x": 840,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_before",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: previous values + concurrent edit guard",
+    "func": "return (function captureDowntimeBefore(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  if(!doc)return fail(404,'Downtime record was not found.');\n  const a=msg.downtimeAudit;\n  const fields=['reason','machine','machineCode','downtimeType','plannedCategory','downtimeCode'];\n  a.before={};a.after={};const conditions=[];\n  for(const field of [...fields,'updatedAt']) {\n    const exists=Object.prototype.hasOwnProperty.call(doc,field);\n    conditions.push(exists?{[field]:{$eq:doc[field],$exists:true}}:{[field]:{$exists:false}});\n    if(fields.includes(field)){a.before[field]=exists?doc[field]:null;a.after[field]=a.update.$set[field]??null;}\n  }\n  a.stoppageId=String(doc._id);\n  a.timestamp=a.update.$set.updatedAt||new Date().toISOString();\n  const filter={...a.filter,_id:doc._id,$and:conditions};\n  msg.payload=[filter,a.update];msg.operation='updateOne';msg.collection='stoppages';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "1dca19134e960bb9"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 1220,
+    "y": 1040
+  },
+  {
+    "id": "rx_da_build",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit: acknowledged update → log",
+    "func": "return (function buildDowntimeAuditWrite(msg) {\n  const result=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};\n  if(result?.acknowledged!==true)return fail(500,'Downtime update was not acknowledged.');\n  if(Number(result.matchedCount||0)!==1)return fail(409,'Downtime changed or was removed by another process. Refresh and try again.');\n  const a=msg.downtimeAudit;\n  a.updateResult=result;\n  const d=msg.downtimeUpdate||{};\n  const record={timestamp:new Date(a.timestamp),username:a.username,role:a.role,\n    action:'downtime.details.updated',result:'success',source:'ruhanex-api',\n    endpoint:'/api/update-downtime-reason',requestId:msg._msgid,\n    line:d.line,date:d.date,shift:d.shift,stopStart_ts:d.stopStart_ts,stoppageId:a.stoppageId,\n    before:a.before,after:a.after,\n    changedFields:Object.keys(a.after).filter(k=>JSON.stringify(a.before[k])!==JSON.stringify(a.after[k])),\n    scope:'stoppage-update-only'};\n  msg.payload=[{_id:a.id},{$setOnInsert:record},{upsert:true}];\n  msg.operation='updateOne';msg.collection='ruhanex_audit_logs';\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_da_save"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 460,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_save",
+    "type": "mongodb4",
+    "z": "b490c7cde81b738c",
+    "name": "Save ruhanex_audit_logs",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_audit_logs",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_da_finish"
+      ]
+    ],
+    "x": 840,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_finish",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit saved → existing shift recalculation",
+    "func": "return (function finishDowntimeAudit(msg) {\n  const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(r?.acknowledged!==true) {\n    msg.statusCode=500;msg.payload={success:false,downtimeUpdated:true,auditSaved:false,shiftSummaryUpdated:false,error:'Downtime updated, but the audit log could not be confirmed. Contact an administrator.'};\n    return [null,msg];\n  }\n  msg.payload=msg.downtimeAudit.updateResult;\n  delete msg.downtimeAudit;\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "940c7e9bf259add4"
+      ],
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "x": 1220,
+    "y": 1140
+  },
+  {
+    "id": "rx_da_catch",
+    "type": "catch",
+    "z": "b490c7cde81b738c",
+    "name": "Audit database errors",
+    "scope": [
+      "rx_da_read",
+      "rx_da_save"
+    ],
+    "uncaught": false,
+    "x": 450,
+    "y": 1240,
+    "wires": [
+      [
+        "rx_da_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_da_error",
+    "type": "function",
+    "z": "b490c7cde81b738c",
+    "name": "Audit error: explicit partial result",
+    "outputs": 1,
+    "x": 850,
+    "y": 1240,
+    "wires": [
+      [
+        "e77e4bc92ffd6b11"
+      ]
+    ],
+    "func": "const updated=!!msg.downtimeAudit?.updateResult; node.warn(updated?'Downtime saved but audit database write failed.':'Downtime audit pre-read failed; no update performed.'); msg.statusCode=500;msg.payload={success:false,downtimeUpdated:updated,auditSaved:false,shiftSummaryUpdated:false,error:updated?'Downtime updated, but audit logging failed. Contact an administrator.':'Unable to read downtime for audit. No change was made.'};return msg;"
+  }
+]

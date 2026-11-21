@@ -1,0 +1,363 @@
+{
+  "sourceNodeCount": 284,
+  "exportedNodeCount": 280,
+  "functionNodes": 121,
+  "changedFunctions": 10,
+  "charactersBefore": 449279,
+  "charactersAfter": 416810,
+  "changes": [
+    {
+      "id": "9ab2fc7b3eb21867",
+      "name": "Build Shift Count Query",
+      "beforeCharacters": 2859,
+      "afterCharacters": 2183,
+      "removedHelpers": [
+        "currentShiftInfo"
+      ]
+    },
+    {
+      "id": "59a4591755ca7c7d",
+      "name": "Build Stoppages Query",
+      "beforeCharacters": 2366,
+      "afterCharacters": 1603,
+      "removedHelpers": [
+        "escapeFlux",
+        "currentShiftInfo"
+      ]
+    },
+    {
+      "id": "b82b48c5e8ca2a1d",
+      "name": "Build Live Shift Summary",
+      "beforeCharacters": 26054,
+      "afterCharacters": 25839,
+      "removedHelpers": [
+        "minutesBetween"
+      ]
+    },
+    {
+      "id": "5699300921ba4baa",
+      "name": "Shift summary: initialize direct quality",
+      "beforeCharacters": 8450,
+      "afterCharacters": 4926,
+      "removedHelpers": [
+        "qualityShiftQuery",
+        "directQualityQuery",
+        "directCodeWiseQuality"
+      ]
+    },
+    {
+      "id": "78ed1029434f7795",
+      "name": "Read quality_events for completed shift",
+      "beforeCharacters": 8462,
+      "afterCharacters": 1971,
+      "removedHelpers": [
+        "calculateLiveQuality",
+        "directQualityTarget",
+        "directQualityFields",
+        "directCodeWiseQuality"
+      ]
+    },
+    {
+      "id": "5c7d2ed7ab32e198",
+      "name": "Add quality to each code-wise entry + OLE",
+      "beforeCharacters": 8999,
+      "afterCharacters": 6707,
+      "removedHelpers": [
+        "qualityShiftQuery",
+        "directQualityTarget",
+        "directQualityQuery"
+      ]
+    },
+    {
+      "id": "5ea9f19941f2c4c9",
+      "name": "Save production with pending quality",
+      "beforeCharacters": 9115,
+      "afterCharacters": 6823,
+      "removedHelpers": [
+        "qualityShiftQuery",
+        "directQualityTarget",
+        "directQualityQuery"
+      ]
+    },
+    {
+      "id": "805abc74014c5629",
+      "name": "Recalculate with saved production metadata",
+      "beforeCharacters": 8786,
+      "afterCharacters": 1353,
+      "removedHelpers": [
+        "qualityShiftQuery",
+        "calculateLiveQuality",
+        "directQualityQuery",
+        "directQualityFields",
+        "directCodeWiseQuality"
+      ]
+    },
+    {
+      "id": "f3928a97357fcc6d",
+      "name": "Query shift quality directly again",
+      "beforeCharacters": 8462,
+      "afterCharacters": 1971,
+      "removedHelpers": [
+        "calculateLiveQuality",
+        "directQualityTarget",
+        "directQualityFields",
+        "directCodeWiseQuality"
+      ]
+    },
+    {
+      "id": "bebd23ecdb124256",
+      "name": "Update saved code-wise quality (conditional)",
+      "beforeCharacters": 8908,
+      "afterCharacters": 6616,
+      "removedHelpers": [
+        "qualityShiftQuery",
+        "directQualityTarget",
+        "directQualityQuery"
+      ]
+    }
+  ],
+  "skips": [],
+  "duplicateRoutes": [
+    {
+      "route": "GET /api/production/live-summary",
+      "copies": [
+        {
+          "id": "b25cb728dc9010e9",
+          "disabled": true,
+          "name": "GET Production Live Summary"
+        },
+        {
+          "id": "de46e5f3a4fdc627",
+          "disabled": false,
+          "name": "GET Production Live Summary"
+        }
+      ]
+    },
+    {
+      "route": "GET /api/production/shift-quality",
+      "copies": [
+        {
+          "id": "rx_qapi_http",
+          "disabled": false,
+          "name": "GET selected-shift quality chart + drilldown"
+        },
+        {
+          "id": "a81605f532b71056",
+          "disabled": false,
+          "name": "GET selected-shift quality chart + drilldown"
+        }
+      ]
+    }
+  ],
+  "identicalFunctions": [
+    [
+      {
+        "id": "bf393ddda58f6ac5",
+        "name": "Build Live Summary Influx + Mongo Queries"
+      },
+      {
+        "id": "f4d32fdfead0ecfd",
+        "name": "Build Live Summary Influx + Mongo Queries"
+      }
+    ],
+    [
+      {
+        "id": "bc39ff1afe854242",
+        "name": "Mark Live Influx Data"
+      },
+      {
+        "id": "bb7c7785c2abaf94",
+        "name": "Mark Live Influx Data"
+      }
+    ],
+    [
+      {
+        "id": "9d92b605b4bacade",
+        "name": "Live Influx Error Response"
+      },
+      {
+        "id": "6fc6f60047ee801f",
+        "name": "Live Influx Error Response"
+      }
+    ],
+    [
+      {
+        "id": "7f40c833cc54e4d4",
+        "name": "Mark Live Mongo Stoppages"
+      },
+      {
+        "id": "6735fc8bbf612b31",
+        "name": "Mark Live Mongo Stoppages"
+      }
+    ],
+    [
+      {
+        "id": "6e23590298f46bf2",
+        "name": "Merge Live Influx + Mongo / Calculate KPI"
+      },
+      {
+        "id": "fdf765c33b6dcbfa",
+        "name": "Merge Live Influx + Mongo / Calculate KPI"
+      }
+    ],
+    [
+      {
+        "id": "d01e6f24b5982856",
+        "name": "Build Shift Summary Query"
+      },
+      {
+        "id": "6b9eda9dc499cb65",
+        "name": "Build Shift Summary Query"
+      }
+    ],
+    [
+      {
+        "id": "62aa149752abd2c2",
+        "name": "Calculate Line Shift Statistics"
+      },
+      {
+        "id": "42ef6dce69e376fd",
+        "name": "Calculate Line Shift Statistics"
+      }
+    ],
+    [
+      {
+        "id": "d6d4a0cfdecfcf8d",
+        "name": "Build Code-wise Query AFTER Save"
+      },
+      {
+        "id": "bcc24442e31d89f7",
+        "name": "Build Code-wise Query AFTER Save"
+      }
+    ],
+    [
+      {
+        "id": "083fdfe36d88cca4",
+        "name": "Calculate Code-wise Production"
+      },
+      {
+        "id": "955d480a43e4ce3a",
+        "name": "Calculate Code-wise Production"
+      }
+    ],
+    [
+      {
+        "id": "c5d1ae1272e15109",
+        "name": "Build Shift Code-wise Update"
+      },
+      {
+        "id": "cbd957204cb12b6c",
+        "name": "Build Shift Code-wise Update"
+      }
+    ],
+    [
+      {
+        "id": "0dc1257f89da12f0",
+        "name": "floor: query entire snapshot gap"
+      },
+      {
+        "id": "1b7aa82398fe4215",
+        "name": "car: query entire snapshot gap"
+      }
+    ],
+    [
+      {
+        "id": "1df0901fd0c13ba0",
+        "name": "floor: calculate chronological closing balances"
+      },
+      {
+        "id": "99012053bf3038b4",
+        "name": "car: calculate chronological closing balances"
+      }
+    ],
+    [
+      {
+        "id": "4eb49095486aac19",
+        "name": "floor: verify snapshot insert"
+      },
+      {
+        "id": "828cd301f4a88ea7",
+        "name": "car: verify snapshot insert"
+      }
+    ],
+    [
+      {
+        "id": "4e10406a962ecc21",
+        "name": "floor: report failure and release queue"
+      },
+      {
+        "id": "2178a6ddefb079b8",
+        "name": "car: report failure and release queue"
+      }
+    ],
+    [
+      {
+        "id": "a46402eec7818bf5",
+        "name": "ALL Lines: Downtime + Shift Change"
+      },
+      {
+        "id": "0b9cb763aab46693",
+        "name": "ALL Lines: Downtime + Shift Change"
+      }
+    ],
+    [
+      {
+        "id": "rx_qapi_query",
+        "name": "Query quality_events using saved metadata"
+      },
+      {
+        "id": "204f06ae0ffd88b3",
+        "name": "Query quality_events using saved metadata"
+      }
+    ],
+    [
+      {
+        "id": "rx_qapi_response",
+        "name": "JSON response / no browser caching"
+      },
+      {
+        "id": "e0367ccc07b9c17e",
+        "name": "JSON response / no browser caching"
+      }
+    ],
+    [
+      {
+        "id": "rx_qapi_error",
+        "name": "Safe quality API error"
+      },
+      {
+        "id": "23488c57e4d57e77",
+        "name": "Safe quality API error"
+      }
+    ],
+    [
+      {
+        "id": "78ed1029434f7795",
+        "name": "Read quality_events for completed shift"
+      },
+      {
+        "id": "f3928a97357fcc6d",
+        "name": "Query shift quality directly again"
+      }
+    ]
+  ],
+  "omittedConfigNodes": [
+    {
+      "id": "mqtt_broker_aws",
+      "type": "mqtt-broker"
+    },
+    {
+      "id": "eef122fda5340dac",
+      "type": "influxdb"
+    },
+    {
+      "id": "8120871193b8f276",
+      "type": "mongodb4-client"
+    },
+    {
+      "id": "5109f1333acf6a07",
+      "type": "global-config"
+    }
+  ],
+  "externalWireTargets": []
+}

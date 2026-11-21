@@ -1,0 +1,617 @@
+[
+  {
+    "id": "fddbac2194a41ae8",
+    "type": "inject",
+    "z": "e5489573e203f3d0",
+    "name": "ONE 1s Timer",
+    "props": [],
+    "repeat": "1",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 170,
+    "y": 1240,
+    "wires": [
+      [
+        "a46402eec7818bf5"
+      ]
+    ]
+  },
+  {
+    "id": "b47e400d91128daf",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Save stoppages",
+    "x": 840,
+    "y": 1180,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "d01e6f24b5982856",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build Shift Summary Query",
+    "func": "const r = msg.summaryRequest;\nif (!r) return null;\n\nmsg.collection = \"stoppages\";\nmsg.operation = \"find\";\n\n// Shift-boundary logic splits open stoppages at boundaries,\n// therefore each stoppage document belongs to exactly one shift.\nmsg.payload = [\n    {\n        device: r.device,\n        date: r.shiftDate,\n        shift: r.shift\n    },\n    {\n        sort: {\n            stopStart_ts: 1\n        }\n    }\n];\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 850,
+    "y": 1320,
+    "wires": [
+      [
+        "354d7a33f5945512"
+      ]
+    ]
+  },
+  {
+    "id": "354d7a33f5945512",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Read Previous Shift Stoppages",
+    "x": 1130,
+    "y": 1320,
+    "wires": [
+      [
+        "62aa149752abd2c2"
+      ]
+    ]
+  },
+  {
+    "id": "62aa149752abd2c2",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Calculate Line Shift Statistics",
+    "func": "const rows = Array.isArray(msg.payload) ? [...msg.payload] : [];\nconst r = msg.summaryRequest;\n\nif (!r) return null;\n\n// ========================================================\n// GET CONFIGURATION\n// ========================================================\n\nconst cfgAll = global.get(\"counterConfig\") || {};\nconst cfg = cfgAll[r.device] || {};\n\nconst allSettings = global.get(\"lineSettings\") || {};\n\nconst ls =\n    allSettings[r.line] ||\n    allSettings[String(r.line).toLowerCase()] ||\n    {};\n\n\nconst lineSpeed =\n    Math.max(\n        0,\n        Number(\n            ls.lineSpeed ??\n            cfg.lineSpeed ??\n            0\n        )\n    );\n\n\nconst tileSize =\n    String(\n        ls.tileSize ??\n        cfg.tileSize ??\n        \"\"\n    ).trim();\n\n\nconst configuredPlannedDowntime =\n    Math.max(\n        0,\n        Number(\n            ls.plannedDowntime ??\n            cfg.plannedDowntime ??\n            0\n        )\n    );\n\n\n// ========================================================\n// SHIFT TIME RANGE\n// ========================================================\n\nconst fromMs =\n    new Date(r.fromTime).getTime();\n\nconst toMs =\n    new Date(r.toTime).getTime();\n\nconst now =\n    Date.now();\n\n\nif (\n    !Number.isFinite(fromMs) ||\n    !Number.isFinite(toMs) ||\n    toMs <= fromMs\n) {\n    node.error(\n        \"Invalid shift time range\",\n        msg\n    );\n\n    return null;\n}\n\n\n// ========================================================\n// HELPERS\n// ========================================================\n\nfunction round(v, n = 2) {\n\n    const p =\n        10 ** n;\n\n    return Math.round(\n        (Number(v || 0) + Number.EPSILON) * p\n    ) / p;\n}\n\n\nfunction tileAreaM2(size) {\n\n    const d =\n        String(size || \"\")\n            .toLowerCase()\n            .replace(/\\s+/g, \"\")\n            .split(\"x\")\n            .map(Number);\n\n    if (\n        d.length !== 2 ||\n        !d.every(\n            v =>\n                Number.isFinite(v) &&\n                v > 0\n        )\n    ) {\n        return 0;\n    }\n\n    // Tile dimensions assumed to be centimetres.\n    return (\n        d[0] *\n        d[1]\n    ) / 10000;\n}\n\n\n// ========================================================\n// SHIFT TIME\n// ========================================================\n\nconst calculationEndMs =\n    Math.min(\n        Math.max(now, fromMs),\n        toMs\n    );\n\n\nconst fullShiftMinutes =\n    Math.max(\n        0,\n        (toMs - fromMs) / 60000\n    );\n\n\nconst elapsedMinutes =\n    Math.max(\n        0,\n        (calculationEndMs - fromMs) / 60000\n    );\n\n\n// ========================================================\n// CLASSIFY DOWNTIME\n//\n// FINAL RULE:\n//\n// Planned -> Standard\n//     Actual recorded duration is planned,\n//     but limited by configured standard allowance.\n//\n//     Any duration above the allowance becomes\n//     UNPLANNED.\n//\n// Planned -> Additional\n//     Entire recorded duration is planned.\n//\n// Everything else\n//     Unplanned.\n//\n// IMPORTANT:\n//\n// Unused configured standard allowance is NOT\n// automatically distributed across the shift.\n// ========================================================\n\nlet totalDowntimeMinutes = 0;\n\nlet standardActualMinutes = 0;\nlet additionalPlannedMinutes = 0;\nlet explicitUnplannedMinutes = 0;\n\nlet completedStops = 0;\nlet openStop = false;\n\nlet currentOpenStopMinutes = 0;\nlet maximumDowntimeMinutes = 0;\n\n\nfor (const stop of rows) {\n\n    let start =\n        Number(stop.stopStart_ts);\n\n    if (!Number.isFinite(start)) {\n        continue;\n    }\n\n\n    // Clamp start to shift boundary.\n    start =\n        Math.max(\n            start,\n            fromMs\n        );\n\n\n    const isOpen =\n        stop.stopStop_ts === null ||\n        stop.stopStop_ts === undefined;\n\n\n    let end;\n\n    if (isOpen) {\n\n        end =\n            calculationEndMs;\n\n    } else {\n\n        end =\n            Number(\n                stop.stopStop_ts\n            );\n\n        if (!Number.isFinite(end)) {\n            continue;\n        }\n\n        end =\n            Math.min(\n                end,\n                calculationEndMs,\n                toMs\n            );\n    }\n\n\n    if (end <= start) {\n        continue;\n    }\n\n\n    const durationMinutes =\n        (end - start) / 60000;\n\n\n    // ----------------------------------------\n    // TOTAL ACTUAL DOWNTIME\n    // ----------------------------------------\n\n    totalDowntimeMinutes +=\n        durationMinutes;\n\n\n    maximumDowntimeMinutes =\n        Math.max(\n            maximumDowntimeMinutes,\n            durationMinutes\n        );\n\n\n    // ----------------------------------------\n    // CLASSIFICATION\n    // ----------------------------------------\n\n    const downtimeType =\n        String(\n            stop.downtimeType ||\n            \"unplanned\"\n        ).toLowerCase();\n\n\n    const plannedCategory =\n        String(\n            stop.plannedCategory ||\n            \"\"\n        ).toLowerCase();\n\n\n    if (\n        downtimeType === \"planned\" &&\n        plannedCategory === \"standard\"\n    ) {\n\n        standardActualMinutes +=\n            durationMinutes;\n\n    }\n\n    else if (\n        downtimeType === \"planned\" &&\n        plannedCategory === \"additional\"\n    ) {\n\n        additionalPlannedMinutes +=\n            durationMinutes;\n\n    }\n\n    else {\n\n        explicitUnplannedMinutes +=\n            durationMinutes;\n\n    }\n\n\n    // ----------------------------------------\n    // STOP COUNTS\n    // ----------------------------------------\n\n    if (isOpen) {\n\n        openStop = true;\n\n        currentOpenStopMinutes =\n            Math.max(\n                currentOpenStopMinutes,\n                durationMinutes\n            );\n\n    } else {\n\n        completedStops += 1;\n\n    }\n}\n\n\n// ========================================================\n// STANDARD PLANNED DOWNTIME\n// ========================================================\n\nconst allowance =\n    configuredPlannedDowntime;\n\n\n// IMPORTANT:\n//\n// If allowance = 0,\n// manually classified Standard Planned downtime\n// remains planned.\n//\n// This matches the live KPI rule.\n\nconst standardUsed =\n    allowance > 0\n        ? Math.min(\n            standardActualMinutes,\n            allowance\n        )\n        : standardActualMinutes;\n\n\nconst remainingStandardAllowance =\n    allowance > 0\n        ? Math.max(\n            0,\n            allowance -\n            standardUsed\n        )\n        : 0;\n\n\nconst standardExcess =\n    allowance > 0\n        ? Math.max(\n            0,\n            standardActualMinutes -\n            allowance\n        )\n        : 0;\n\n\n\nconst standardApplied =\n    standardUsed;\n\n\n// ========================================================\n// PLANNED / UNPLANNED DOWNTIME\n// ========================================================\n\nconst plannedDowntimeMinutes =\n    standardApplied +\n    additionalPlannedMinutes;\n\n\n// Everything not accepted as planned is unplanned.\n//\n// This automatically includes:\n//     explicit unplanned\n//     standard excess\n\nconst unplannedDowntimeMinutes =\n    Math.max(\n        0,\n        totalDowntimeMinutes -\n        plannedDowntimeMinutes\n    );\n\n\n// // ========================================================\n// // PRODUCTION TIME\n// // ========================================================\n\n// // Planned production time:\n// //\n// // Elapsed shift time minus accepted planned downtime.\n\n// const plannedProductionMinutes =\n//     Math.max(\n//         0,\n//         elapsedMinutes -\n//         plannedDowntimeMinutes\n//     );\n\n\n// // IMPORTANT:\n// //\n// // Physical operating time depends ONLY on\n// // actual stoppage duration.\n// //\n// // Planned/unplanned classification does not\n// // change physical operating time.\n\n// // ========================================================\n// // RUN CONFIRMATION CORRECTION\n// // ========================================================\n// //\n// // STOP_END is confirmed only after the line has been running\n// // continuously for requiredRunTimeMs.\n// //\n// // Tiles are already counted during this confirmation period,\n// // while that same period is still included in the recorded\n// // downtime. Add it back once for every COMPLETED stop.\n// //\n// // Open stops are intentionally excluded because they have not\n// // completed the recovery-confirmation period yet.\n\n// const requiredRunTimeMs =\n//     Math.max(\n//         0,\n//         Number(\n//             ls.requiredRunTimeMs ??\n//             cfg.requiredRunTimeMs ??\n//             60000\n//         )\n//     );\n\n// const runConfirmationMinutes =\n//     requiredRunTimeMs / 60000;\n\n// const recoveryCorrectionMinutes =\n//     completedStops *\n//     runConfirmationMinutes;\n\n\n\n// const actualOperatingMinutes =\n//     Math.max(\n//         0,\n//         Math.min(\n//             elapsedMinutes,\n//             elapsedMinutes -\n//             totalDowntimeMinutes +\n//             recoveryCorrectionMinutes\n//         )\n//     );\n\n\n// // ========================================================\n// // AVAILABILITY\n// // ========================================================\n\n// const availability =\n//     plannedProductionMinutes > 0\n//         ? (\n//             actualOperatingMinutes /\n//             (plannedProductionMinutes+recoveryCorrectionMinutes)\n//         ) * 100\n//         : 0;\n\n// ========================================================\n// PRODUCTION TIME\n// ========================================================\n\nconst plannedProductionMinutes = Math.max(\n    0,\n    elapsedMinutes - plannedDowntimeMinutes\n);\n\n// Stored STOP_END is already backdated to runningSince.\n// The confirmation minute is therefore already operating time.\nconst actualOperatingMinutes = Math.max(\n    0,\n    Math.min(\n        elapsedMinutes,\n        elapsedMinutes - totalDowntimeMinutes\n    )\n);\n\n// ========================================================\n// AVAILABILITY\n// ========================================================\n\nconst availability =\n    plannedProductionMinutes > 0\n        ? (actualOperatingMinutes / plannedProductionMinutes) * 100\n        : 0;\n\n\n// ========================================================\n// PRODUCTION\n// ========================================================\n\nconst tileCount =\n    Math.max(\n        0,\n        Number(\n            r.tileCount || 0\n        )\n    );\n\n\nconst areaPerTile =\n    tileAreaM2(\n        tileSize\n    );\n\n\nconst production =\n    tileCount *\n    areaPerTile;\n\n\n// ========================================================\n// TARGET PRODUCTION\n//\n// Target is based on PHYSICAL OPERATING TIME.\n//\n// Example:\n//\n// Operating time = 400 min\n// Rated speed    = 12 tiles/min\n//\n// Target = 4,800 tiles\n// ========================================================\n\nconst targetTiles =\n    lineSpeed > 0\n        ? lineSpeed *\n          actualOperatingMinutes\n        : 0;\n\n\nconst targetProduction =\n    targetTiles *\n    areaPerTile;\n\n\n// ========================================================\n// PERFORMANCE\n// ========================================================\n\nconst performance =\n    targetTiles > 0\n        ? (\n            tileCount /\n            targetTiles\n        ) * 100\n        : 0;\n\n\n// ========================================================\n// QUALITY\n// ========================================================\n\n// No reject / quality counter is currently available.\n// Therefore quality remains 100%.\n\nconst quality =\n    100;\n\n\n// ========================================================\n// OLE\n// ========================================================\n\nconst ole =\n    (\n        availability *\n        performance *\n        quality\n    ) / 10000;\n\n\n// ========================================================\n// BUILD SHIFT SUMMARY\n// ========================================================\n\nmsg.payload = {\n\n    lineStats: {\n\n        // ----------------------------------------\n        // IDENTIFICATION\n        // ----------------------------------------\n\n        device:\n            r.device,\n\n        lineName:\n            r.line,\n\n        machine:\n            r.machine || \"\",\n\n        shift:\n            r.shift,\n\n        shiftDate:\n            r.shiftDate,\n\n        shiftStart:\n            r.fromTime,\n\n        shiftEnd:\n            r.toTime,\n\n        status:\n            r.shiftStatus ||\n            \"Unknown\",\n\n        // Configuration at the end of this shift. Run IDs inside\n        // codeWiseProduction / Timeline identify individual production.\n        productionRunId: r.productionRunIdAtShiftEnd || null,\n        productionRunStartTime: r.productionRunStartTimeAtShiftEnd || null,\n\n\n        // ----------------------------------------\n        // KPI\n        // ----------------------------------------\n\n        ole:\n            round(ole),\n\n        availability:\n            round(availability),\n\n        performance:\n            round(performance),\n\n        quality:\n            quality,\n\n\n        // ----------------------------------------\n        // PRODUCTION\n        // ----------------------------------------\n\n        tileCount:\n            Math.round(tileCount),\n\n        production:\n            round(production),\n\n        productionUnit:\n            \"m²\",\n\n        targetTiles:\n            round(targetTiles, 0),\n\n        targetProduction:\n            round(targetProduction),\n\n\n        // ----------------------------------------\n        // SHIFT TIME\n        // ----------------------------------------\n\n        fullShiftMinutes:\n            round(fullShiftMinutes),\n\n        elapsedShiftMinutes:\n            round(elapsedMinutes),\n\n        plannedProductionMinutes:\n            round(\n                plannedProductionMinutes\n            ),\n\n        actualOperatingMinutes:\n            round(\n                actualOperatingMinutes\n            ),\n\n\n        // ----------------------------------------\n        // DOWNTIME\n        // ----------------------------------------\n\n        totalDowntimeMinutes:\n            round(\n                totalDowntimeMinutes\n            ),\n\n        plannedDowntimeMinutes:\n            round(\n                plannedDowntimeMinutes\n            ),\n\n        unplannedDowntimeMinutes:\n            round(\n                unplannedDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // STANDARD PLANNED\n        // ----------------------------------------\n\n        configuredPlannedDowntime:\n            round(\n                configuredPlannedDowntime\n            ),\n\n        recordedStandardDowntimeMinutes:\n            round(\n                standardActualMinutes\n            ),\n\n        standardPlannedDowntimeMinutes:\n            round(\n                standardApplied\n            ),\n\n        remainingStandardAllowanceMinutes:\n            round(\n                remainingStandardAllowance\n            ),\n\n        standardExcessDowntimeMinutes:\n            round(\n                standardExcess\n            ),\n\n\n        // ----------------------------------------\n        // ADDITIONAL PLANNED\n        // ----------------------------------------\n\n        additionalPlannedDowntimeMinutes:\n            round(\n                additionalPlannedMinutes\n            ),\n\n        appliedPlannedDowntime:\n            round(\n                plannedDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // STOP INFORMATION\n        // ----------------------------------------\n\n        completedStops:\n            completedStops,\n\n        totalStops:\n            rows.length,\n\n        openStop:\n            openStop,\n\n        currentOpenStopMinutes:\n            round(\n                currentOpenStopMinutes\n            ),\n\n        maximumDowntimeMinutes:\n            round(\n                maximumDowntimeMinutes\n            ),\n\n\n        // ----------------------------------------\n        // LINE CONFIGURATION\n        // ----------------------------------------\n\n        ratedLineSpeed:\n            lineSpeed,\n\n        tileSize:\n            tileSize,\n\n        stopDelayMs:\n            Number(\n                ls.stopDelayMs ??\n                cfg.stopDelayMs ??\n                60000\n            ),\n\n        maxPulseGapMs:\n            Number(\n                ls.maxPulseGapMs ??\n                cfg.maxPulseGapMs ??\n                10000\n            ),\n\n        requiredRunTimeMs:\n            Number(\n                ls.requiredRunTimeMs ??\n                cfg.requiredRunTimeMs ??\n                60000\n            ),\n\n\n        // Availability may legitimately exceed\n        // 100% under this planned-downtime model.\n        availabilityMayExceed100:\n            true,\n\n\n        source:\n            \"shift-summary\",\n\n        updatedAt:\n            new Date().toISOString()\n    }\n};\n\n\n// ========================================================\n// SAVE TO MONGODB\n// ========================================================\n\nmsg.collection =\n    \"shifts\";\n\nmsg.operation =\n    \"insertOne\";\n\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1420,
+    "y": 1320,
+    "wires": [
+      [
+        "rx_eq_initial"
+      ]
+    ]
+  },
+  {
+    "id": "94b054dbc6125d09",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Save shift summary",
+    "x": 1710,
+    "y": 1320,
+    "wires": [
+      [
+        "d6d4a0cfdecfcf8d"
+      ]
+    ]
+  },
+  {
+    "id": "48ee1c4bea224778",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "debug 2",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 880,
+    "y": 1240,
+    "wires": []
+  },
+  {
+    "id": "d6d4a0cfdecfcf8d",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build Code-wise Query AFTER Save",
+    "func": "const req = msg.summaryRequest;\n\nif (\n    !req ||\n    !req.device ||\n    !req.shift ||\n    !req.shiftDate ||\n    !req.fromTime ||\n    !req.toTime\n) {\n    node.warn(\n        \"Code-wise enrichment skipped: summaryRequest is missing\"\n    );\n    return null;\n}\n\nfunction esc(v) {\n    return String(v ?? \"\")\n        .replace(/\\\\/g, \"\\\\\\\\\")\n        .replace(/\"/g, '\\\\\"');\n}\n\nmsg.codeWiseTarget = {\n    device: req.device,\n    line: req.line,\n    shift: req.shift,\n    shiftDate: req.shiftDate,\n    fromTime: req.fromTime,\n    toTime: req.toTime,\n    productionRunIdAtShiftEnd: req.productionRunIdAtShiftEnd || null,\n    productionRunStartTimeAtShiftEnd: req.productionRunStartTimeAtShiftEnd || null\n};\n\nconst device = esc(req.device);\nconst shift = esc(req.shift);\nconst shiftDate = esc(req.shiftDate);\nconst fromTime = esc(req.fromTime);\nconst toTime = esc(req.toTime);\n\n// Read the completed shift's cumulative shift_count records.\n// Difference calculation and design-code grouping are performed\n// in the next Node-RED function for better Flux compatibility.\nmsg.query = `\nfrom(bucket: \"RCLH\")\n  |> range(\n      start: time(v: \"${fromTime}\"),\n      stop: time(v: \"${toTime}\")\n  )\n  |> filter(fn: (r) =>\n      r[\"_measurement\"] == \"tile_events\" and\n      r[\"_field\"] == \"shift_count\" and\n      r[\"device\"] == \"${device}\" and\n      r[\"shift\"] == \"${shift}\" and\n      r[\"shiftDate\"] == \"${shiftDate}\"\n  )\n  |> group(columns: [\"device\", \"shift\", \"shiftDate\"])\n  |> sort(columns: [\"_time\"])\n  |> keep(\n      columns: [\n          \"_time\",\n          \"_value\",\n          \"designCode\",\n          \"tileSize\",\n          \"productionRunId\",\n          \"productionRunStartTime\"\n      ]\n  )\n`;\n\nnode.warn(\n    `Code-wise shift_count query: ${req.device} | ` +\n    `${req.shiftDate} | ${req.shift} | ` +\n    `${req.fromTime} -> ${req.toTime}`\n);\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1990,
+    "y": 1300,
+    "wires": [
+      [
+        "6af04aad1fad3fbc"
+      ]
+    ]
+  },
+  {
+    "id": "6af04aad1fad3fbc",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Read Completed Shift Code-wise Production",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 2330,
+    "y": 1300,
+    "wires": [
+      [
+        "083fdfe36d88cca4"
+      ]
+    ]
+  },
+  {
+    "id": "083fdfe36d88cca4",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Calculate Code-wise Production",
+    "func": "const rows = (Array.isArray(msg.payload) ? msg.payload : [])\n    .filter(row => Number.isFinite(Number(row?._value)))\n    .sort((a, b) => {\n        const ta = new Date(a?._time || 0).getTime();\n        const tb = new Date(b?._time || 0).getTime();\n        return ta - tb;\n    });\n\nconst target = msg.codeWiseTarget;\n\nif (!target) {\n    node.error(\"Code-wise target identity was lost\", msg);\n    return null;\n}\n\nfunction round(v, n = 2) {\n    const p = 10 ** n;\n    return Math.round((Number(v || 0) + Number.EPSILON) * p) / p;\n}\n\nfunction tileAreaM2(size) {\n    const d = String(size || \"\")\n        .toLowerCase()\n        .replace(/\\s+/g, \"\")\n        .split(\"x\")\n        .map(Number);\n\n    if (\n        d.length !== 2 ||\n        !d.every(v => Number.isFinite(v) && v > 0)\n    ) {\n        return 0;\n    }\n\n    return (d[0] * d[1]) / 10000;\n}\n\nfunction cleanText(value, fallback) {\n    const text = String(value ?? \"\").trim();\n    return text || fallback;\n}\n\nfunction isoTime(value) {\n    if (value === undefined || value === null || value === \"\") return null;\n    const ms = new Date(value).getTime();\n    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;\n}\n\nconst aggregateMap = new Map();\nconst timeline = [];\n\nlet previousShiftCount = 0;\nlet ignoredRollbacks = 0;\nlet activeRun = null;\n\nfor (const row of rows) {\n    const currentShiftCount = Number(row._value);\n    const delta = currentShiftCount - previousShiftCount;\n\n    // Keep the last valid cumulative value if a lower/stale value\n    // appears. This prevents the next valid row creating a spike.\n    if (!Number.isFinite(delta) || delta < 0) {\n        ignoredRollbacks += 1;\n\n        node.warn(\n            \"Completed-shift shift_count rollback ignored: \" +\n            \"previous=\" + previousShiftCount +\n            \", current=\" + currentShiftCount +\n            \", time=\" + String(row?._time || \"\")\n        );\n\n        continue;\n    }\n\n    previousShiftCount = currentShiftCount;\n\n    if (delta === 0) {\n        continue;\n    }\n\n    const designCode = cleanText(row.designCode, \"Unknown\");\n    const tileSize = cleanText(row.tileSize, \"Unknown\");\n    const producedAt = isoTime(row._time);\n    const production = delta * tileAreaM2(tileSize);\n\n    // Prefer immutable tags written alongside each counter event.\n    // Without these tags, a global setting read at shift end cannot\n    // determine which earlier run produced a tile before a changeover.\n    let productionRunId = cleanText(row.productionRunId, \"\") || null;\n    let productionRunStartTime = isoTime(row.productionRunStartTime);\n    let runIdSource = productionRunId ? \"influx-event\" : \"unresolved\";\n\n    // Conservative fallback for legacy telemetry: only associate a row\n    // with the end-of-shift run if the event is on/after its start AND\n    // its tile size agrees. Do not guess the earlier production run.\n    const fallbackStart = isoTime(target.productionRunStartTimeAtShiftEnd);\n    const fallbackId = target.productionRunIdAtShiftEnd || null;\n    if (!productionRunId && fallbackId && fallbackStart &&\n        producedAt && Date.parse(producedAt) >= Date.parse(fallbackStart)) {\n        const settings = global.get(\"lineSettings\") || {};\n        const ls = settings[target.line] || settings[String(target.line || \"\").toLowerCase()] || {};\n        if (String(ls.tileSize || \"\").trim() === tileSize &&\n            String(ls.productionRunId || \"\") === String(fallbackId)) {\n            productionRunId = String(fallbackId);\n            productionRunStartTime = fallbackStart;\n            runIdSource = \"shift-end-fallback\";\n        }\n    }\n\n    const key = JSON.stringify([designCode, tileSize, productionRunId, productionRunStartTime]);\n\n    // ----------------------------------------------------------\n    // AGGREGATED TOTAL PER DESIGN CODE + TILE SIZE\n    // sequence records when this design was first produced.\n    // ----------------------------------------------------------\n    const aggregate = aggregateMap.get(key) || {\n        sequence: aggregateMap.size + 1,\n        designCode,\n        tileSize,\n        productionRunId,\n        productionRunStartTime,\n        runIdSource,\n        firstProducedAt: producedAt,\n        lastProducedAt: producedAt,\n        tileCount: 0,\n        production: 0\n    };\n\n    if (!aggregate.firstProducedAt && producedAt) {\n        aggregate.firstProducedAt = producedAt;\n    }\n\n    if (producedAt) {\n        aggregate.lastProducedAt = producedAt;\n    }\n\n    aggregate.tileCount += delta;\n    aggregate.production += production;\n    aggregateMap.set(key, aggregate);\n\n    // ----------------------------------------------------------\n    // CHRONOLOGICAL PRODUCTION RUNS\n    // A -> B -> A is saved as three separate timeline entries.\n    // ----------------------------------------------------------\n    if (!activeRun || activeRun.key !== key) {\n        activeRun = {\n            key,\n            sequence: timeline.length + 1,\n            designCode,\n            tileSize,\n            productionRunId,\n            productionRunStartTime,\n            runIdSource,\n            startTime: producedAt,\n            endTime: producedAt,\n            tileCount: 0,\n            production: 0\n        };\n\n        timeline.push(activeRun);\n    }\n\n    if (!activeRun.startTime && producedAt) {\n        activeRun.startTime = producedAt;\n    }\n\n    if (producedAt) {\n        activeRun.endTime = producedAt;\n    }\n\n    activeRun.tileCount += delta;\n    activeRun.production += production;\n}\n\n// Unique design-code totals, ordered by first production time.\nmsg.codeWiseProduction = [...aggregateMap.values()]\n    .map(item => ({\n        sequence: item.sequence,\n        designCode: item.designCode,\n        tileSize: item.tileSize,\n        productionRunId: item.productionRunId,\n        productionRunStartTime: item.productionRunStartTime,\n        runIdSource: item.runIdSource,\n        firstProducedAt: item.firstProducedAt,\n        lastProducedAt: item.lastProducedAt,\n        tileCount: Math.round(item.tileCount),\n        production: round(item.production)\n    }))\n    .sort((a, b) => a.sequence - b.sequence);\n\n// Every chronological production run. Use this array for a chart\n// where the left side is the first run and the right side is the last.\nmsg.codeWiseProductionTimeline = timeline\n    .map(({key, ...item}) => ({\n        ...item,\n        tileCount: Math.round(item.tileCount),\n        production: round(item.production)\n    }))\n    .sort((a, b) => a.sequence - b.sequence);\n\nconst calculatedTileCount = msg.codeWiseProduction.reduce(\n    (sum, item) => sum + Number(item.tileCount || 0),\n    0\n);\n\nnode.status({\n    fill: ignoredRollbacks > 0 ? \"yellow\" : \"green\",\n    shape: ignoredRollbacks > 0 ? \"ring\" : \"dot\",\n    text:\n        rows.length + \" rows -> \" +\n        msg.codeWiseProduction.length + \" codes, \" +\n        msg.codeWiseProductionTimeline.length + \" runs, \" +\n        calculatedTileCount + \" tiles\"\n});\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2590,
+    "y": 1540,
+    "wires": [
+      [
+        "c5d1ae1272e15109"
+      ]
+    ]
+  },
+  {
+    "id": "c5d1ae1272e15109",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build Shift Code-wise Update",
+    "func": "// const target = msg.codeWiseTarget;\n\n// if (!target || !target.device || !target.shift || !target.shiftDate) {\n//     node.error(\"Cannot update shift: codeWiseTarget is invalid\", msg);\n//     return null;\n// }\n\n// msg.collection = \"shifts\";\n// msg.mode = \"collection\";\n// msg.operation = \"updateOne\";\n\n// msg.payload = [\n//     {\n//         \"lineStats.device\": target.device,\n//         \"lineStats.shift\": target.shift,\n//         \"lineStats.shiftDate\": target.shiftDate\n//     },\n//     {\n//         $set: {\n//             // Aggregated unique design totals in first-produced order.\n//             \"lineStats.codeWiseProduction\":\n//                 Array.isArray(msg.codeWiseProduction)\n//                     ? msg.codeWiseProduction\n//                     : [],\n\n//             // Complete run order. This preserves A -> B -> A.\n//             \"lineStats.codeWiseProductionTimeline\":\n//                 Array.isArray(msg.codeWiseProductionTimeline)\n//                     ? msg.codeWiseProductionTimeline\n//                     : [],\n\n//             \"lineStats.codeWiseUpdatedAt\": new Date().toISOString()\n//         }\n//     }\n// ];\n\n// return msg;\n\nconst target = msg.codeWiseTarget;\n\nif (!target || !target.device || !target.shift || !target.shiftDate) {\n    node.error(\"Cannot update shift: codeWiseTarget is invalid\", msg);\n    return null;\n}\n\nconst codeWise = Array.isArray(msg.codeWiseProduction)\n    ? msg.codeWiseProduction\n    : [];\n\nconst timeline = Array.isArray(msg.codeWiseProductionTimeline)\n    ? msg.codeWiseProductionTimeline\n    : [];\n\nfunction round(value, decimals = 2) {\n    const p = 10 ** decimals;\n    return Math.round((value + Number.EPSILON) * p) / p;\n}\n\nfunction normalizeSize(value) {\n    return String(value ?? \"\")\n        .trim()\n        .toLowerCase()\n        .replace(/\\s+/g, \"\")\n        .replace(/×/g, \"x\");\n}\n\nfunction tileAreaM2(size) {\n    const dimensions = size.split(\"x\").map(Number);\n\n    if (\n        dimensions.length !== 2 ||\n        !dimensions.every(n => Number.isFinite(n) && n > 0)\n    ) {\n        return null;\n    }\n\n    // Dimensions are in centimetres.\n    return dimensions[0] * dimensions[1] / 10000;\n}\n\nconst sizes = new Map();\n\nfor (const row of codeWise) {\n    const tileSize = normalizeSize(row.tileSize);\n    const tileCount = Number(row.tileCount);\n    const area = tileAreaM2(tileSize);\n\n    if (\n        area === null ||\n        !Number.isFinite(tileCount) ||\n        tileCount < 0\n    ) {\n        node.error(\n            \"Cannot calculate size-wise production: invalid tile size/count\",\n            msg\n        );\n        return null;\n    }\n\n    if (!sizes.has(tileSize)) {\n        sizes.set(tileSize, {\n            tileSize,\n            tileCount: 0,\n            production: 0,\n            productionUnit: \"m²\"\n        });\n    }\n\n    const item = sizes.get(tileSize);\n\n    item.tileCount += tileCount;\n    item.production += tileCount * area;\n}\n\nconst sizeWiseProduction = [...sizes.values()].map(item => ({\n    ...item,\n    production: round(item.production)\n}));\n\n// Calculate the total before rounding individual size totals.\nconst totalProduction = round(\n    [...sizes.values()].reduce(\n        (sum, item) => sum + item.production,\n        0\n    )\n);\n\nconst tileSizes = sizeWiseProduction.map(item => item.tileSize);\nconst updatedAt = new Date().toISOString();\n\nmsg.collection = \"shifts\";\nmsg.mode = \"collection\";\nmsg.operation = \"updateOne\";\n\nmsg.payload = [\n    {\n        \"lineStats.device\": target.device,\n        \"lineStats.shift\": target.shift,\n        \"lineStats.shiftDate\": target.shiftDate\n    },\n    {\n        $set: {\n            \"lineStats.codeWiseProduction\": codeWise,\n            \"lineStats.codeWiseProductionTimeline\": timeline,\n            \"lineStats.sizeWiseProduction\": sizeWiseProduction,\n\n            // All sizes produced during this shift.\n            \"lineStats.tileSizes\": tileSizes,\n            \"lineStats.multipleTileSizes\": tileSizes.length > 1,\n\n            // Correct total m² using each size's actual count.\n            \"lineStats.production\": totalProduction,\n            \"lineStats.productionUnit\": \"m²\",\n\n            \"lineStats.codeWiseUpdatedAt\": updatedAt\n        }\n    }\n];\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2880,
+    "y": 1540,
+    "wires": [
+      [
+        "rx_eq_prepare"
+      ]
+    ]
+  },
+  {
+    "id": "ceb7f2b046b165ff",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Update Shift Code-wise Production",
+    "x": 3200,
+    "y": 1540,
+    "wires": [
+      [
+        "903c16620f895836",
+        "c3fc35bad70ed5ba",
+        "0deef794aab463d7",
+        "rx_shift_report_after_save_link",
+        "rx_eq_queue"
+      ]
+    ]
+  },
+  {
+    "id": "903c16620f895836",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "Code-wise Shift Update Result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 3550,
+    "y": 1540,
+    "wires": []
+  },
+  {
+    "id": "a46402eec7818bf5",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "ALL Lines: Downtime + Shift Change",
+    "func": "function annotateCommunication(result, flow, global, now) {\n    if (!result) return result;\n    const counters = flow.get('counters') || {};\n    const config = global.get('counterConfig') || {};\n    const settings = global.get('lineSettings') || {};\n    const tracked = flow.get('communicationGapTracking') || {};\n    const output = result[0] ? (Array.isArray(result[0]) ? result[0] : [result[0]]) : [];\n    const gaps = [];\n    for (const [id, cfg] of Object.entries(config)) {\n        if (cfg.enabled !== true || !counters[id]) continue;\n        const state = counters[id];\n        const ls = settings[cfg.line] || settings[String(cfg.line).toLowerCase()] || {};\n        const timeout = Number(ls.communicationTimeoutMs ?? cfg.communicationTimeoutMs ?? 60000);\n        if (!Number.isFinite(timeout) || timeout < 1000) continue;\n        const lastSeen = Number(state.lastSeen || 0);\n        const offline = String(state.sensorStatus || '').toLowerCase() === 'offline';\n        const stale = lastSeen > 0 && now - lastSeen > timeout;\n        let gap = tracked[id];\n        if (offline || stale) {\n            if (!gap) gap = tracked[id] = {\n                start: lastSeen > 0 && lastSeen <= now ? lastSeen : now, lastWrite: 0,\n                evidence: offline ? 'mqtt_offline' : 'telemetry_timeout'\n            };\n            if (offline) gap.evidence = 'mqtt_offline';\n            gaps.push({ id, start: gap.start, end: now, evidence: gap.evidence });\n            if (now - gap.lastWrite < 30000) continue;\n            gap.lastWrite = now;\n        } else if (gap) {\n            // A fresh message confirms communication resumed. It does NOT prove\n            // whether the machine was running throughout the missing interval.\n            gaps.push({ id, start: gap.start, end: Math.min(now, Math.max(gap.start, lastSeen)), evidence: gap.evidence });\n            delete tracked[id];\n        } else continue;\n        const active = gaps[gaps.length - 1];\n        output.push({\n            collection: 'stoppages', mode: 'collection', operation: 'updateMany', payload: [\n                { device: id, stopStart_ts: { $lt: active.end }, $or: [{ stopStop_ts: null }, { stopStop_ts: { $gt: active.start } }] },\n                {\n                    $set: { communicationAffected: true, communicationEvidence: active.evidence },\n                    $min: { communicationGapStart_ts: active.start }, $max: { communicationGapObservedUntil_ts: active.end }\n                }\n            ]\n        });\n    }\n    // New STOP_START records are flagged directly: async Mongo operations may\n    // otherwise execute the overlap update before the new insert completes.\n    for (const message of output) {\n        if (message.operation !== 'insertOne' || message.collection !== 'stoppages') continue;\n        const row = message.payload?.[0];\n        if (!row) continue;\n        const gap = gaps.find(g => g.id === row.device && Number(row.stopStart_ts) < g.end && (row.stopStop_ts == null || Number(row.stopStop_ts) > g.start));\n        if (gap) Object.assign(row, {\n            communicationAffected: true, communicationEvidence: gap.evidence,\n            communicationGapStart_ts: gap.start, communicationGapObservedUntil_ts: gap.end\n        });\n    }\n    flow.set('communicationGapTracking', tracked);\n    result[0] = output.length ? output : null;\n    return result;\n}\nconst timerResult = (function () {\n    if (\n        flow.get(\"counterRestoreReady\") !== true ||\n        flow.get(\"downtimeRestoreReady\") !== true\n    ) {\n        return null;\n    }\n\n    const now = Date.now();\n\n    const cfgAll =\n        global.get(\"counterConfig\") || {};\n\n    let counters =\n        flow.get(\"counters\") || {};\n\n    let downs =\n        flow.get(\"downtimeStates\") || {};\n\n    const allLineSettings =\n        global.get(\"lineSettings\") || {};\n\n    const mongoMsgs = [];\n    const displayMsgs = [];\n    const summaryMsgs = [];\n\n\n    // ========================================================\n    // SHIFT HELPER\n    // ========================================================\n    function getShiftInfo(timestamp = Date.now()) {\n\n        const p = {};\n\n        for (\n            const x of new Intl.DateTimeFormat(\n                \"en-CA\",\n                {\n                    timeZone: \"Asia/Colombo\",\n                    year: \"numeric\",\n                    month: \"2-digit\",\n                    day: \"2-digit\",\n                    hour: \"2-digit\",\n                    hourCycle: \"h23\"\n                }\n            ).formatToParts(new Date(timestamp))\n        ) {\n            if (x.type !== \"literal\") {\n                p[x.type] = x.value;\n            }\n        }\n\n        const y = Number(p.year);\n        const m = Number(p.month);\n        const d = Number(p.day);\n        const h = Number(p.hour);\n\n        const fmt = (yy, mm, dd) =>\n            `${String(yy).padStart(4, \"0\")}-${String(mm).padStart(2, \"0\")}-${String(dd).padStart(2, \"0\")}`;\n\n        let shiftName;\n        let shiftDate;\n        let startIso;\n        let endIso;\n\n\n        // --------------------------------------------------------\n        // 06:00 - 14:00\n        // --------------------------------------------------------\n        if (\n            h >= 6 &&\n            h < 14\n        ) {\n\n            shiftName = \"06-14\";\n            shiftDate = fmt(y, m, d);\n\n            startIso =\n                `${shiftDate}T06:00:00+05:30`;\n\n            endIso =\n                `${shiftDate}T14:00:00+05:30`;\n        }\n\n\n        // --------------------------------------------------------\n        // 14:00 - 22:00\n        // --------------------------------------------------------\n        else if (\n            h >= 14 &&\n            h < 22\n        ) {\n\n            shiftName = \"14-22\";\n            shiftDate = fmt(y, m, d);\n\n            startIso =\n                `${shiftDate}T14:00:00+05:30`;\n\n            endIso =\n                `${shiftDate}T22:00:00+05:30`;\n        }\n\n\n        // --------------------------------------------------------\n        // 22:00 - MIDNIGHT\n        // --------------------------------------------------------\n        else if (\n            h >= 22\n        ) {\n\n            shiftName = \"22-06\";\n            shiftDate = fmt(y, m, d);\n\n            const dt =\n                new Date(\n                    Date.UTC(\n                        y,\n                        m - 1,\n                        d\n                    )\n                );\n\n            dt.setUTCDate(\n                dt.getUTCDate() + 1\n            );\n\n            const next =\n                dt\n                    .toISOString()\n                    .slice(0, 10);\n\n            startIso =\n                `${shiftDate}T22:00:00+05:30`;\n\n            endIso =\n                `${next}T06:00:00+05:30`;\n        }\n\n\n        // --------------------------------------------------------\n        // MIDNIGHT - 06:00\n        // --------------------------------------------------------\n        else {\n\n            shiftName =\n                \"22-06\";\n\n            const dt =\n                new Date(\n                    Date.UTC(\n                        y,\n                        m - 1,\n                        d\n                    )\n                );\n\n            dt.setUTCDate(\n                dt.getUTCDate() - 1\n            );\n\n            shiftDate =\n                dt\n                    .toISOString()\n                    .slice(0, 10);\n\n            startIso =\n                `${shiftDate}T22:00:00+05:30`;\n\n            endIso =\n                `${fmt(y, m, d)}T06:00:00+05:30`;\n        }\n\n\n        return {\n            shiftName,\n            shiftDate,\n            startIso,\n            endIso,\n\n            startMs:\n                new Date(startIso).getTime(),\n\n            endMs:\n                new Date(endIso).getTime()\n        };\n    }\n\n\n    // ========================================================\n    // GET RANGE FOR A SAVED SHIFT\n    // ========================================================\n    function getShiftRange(\n        shiftName,\n        shiftDate\n    ) {\n\n        const dt =\n            new Date(\n                `${shiftDate}T00:00:00Z`\n            );\n\n\n        if (\n            shiftName === \"06-14\"\n        ) {\n\n            return {\n                startIso:\n                    `${shiftDate}T06:00:00+05:30`,\n\n                endIso:\n                    `${shiftDate}T14:00:00+05:30`\n            };\n        }\n\n\n        if (\n            shiftName === \"14-22\"\n        ) {\n\n            return {\n                startIso:\n                    `${shiftDate}T14:00:00+05:30`,\n\n                endIso:\n                    `${shiftDate}T22:00:00+05:30`\n            };\n        }\n\n\n        dt.setUTCDate(\n            dt.getUTCDate() + 1\n        );\n\n        const next =\n            dt\n                .toISOString()\n                .slice(0, 10);\n\n\n        return {\n            startIso:\n                `${shiftDate}T22:00:00+05:30`,\n\n            endIso:\n                `${next}T06:00:00+05:30`\n        };\n    }\n\n\n    // ========================================================\n    // CREATE STOP_START\n    // ========================================================\n    // Boot identity is observed when this timer processes the event. Event timestamps\n    // can be backdated, so observation times are stored separately.\n    function sensorBootId(id) {\n        // Process ALL Counters uses previousBootId as its live counting baseline.\n        // Prefer it over a legacy bootId field that may be null or stale.\n        const value = counters[id]?.previousBootId ?? counters[id]?.bootId ?? counters[id]?.boot_id;\n        if (typeof value === \"string\") return value.trim() || null;\n        if (typeof value === \"number\" && Number.isFinite(value)) return String(value);\n        return null;\n    }\n\n    function mongoStart(\n        id,\n        cfg,\n        shiftName,\n        shiftDate,\n        ts\n    ) {\n\n        return {\n\n            collection:\n                \"stoppages\",\n\n            mode:\n                \"collection\",\n\n            operation:\n                \"insertOne\",\n\n            payload: [\n                {\n                    date:\n                        shiftDate,\n\n                    shift:\n                        shiftName,\n\n                    device:\n                        id,\n\n                    line:\n                        String(\n                            cfg.line || id\n                        ),\n\n                    machine:\n                        String(\n                            cfg.machine || \"\"\n                        ),\n\n                    downStatus:\n                        \"STOP_START\",\n\n                    stopStart_ts:\n                        Number(ts),\n\n                    bootIdAtStopStart: sensorBootId(id),\n                    bootIdAtStopEnd: null,\n                    bootIdStartObservedAt: new Date().toISOString(),\n                    bootIdEndObservedAt: null,\n\n                    stopStop_ts:\n                        null,\n\n                    reason:\n                        \"\"\n                }\n            ]\n        };\n    }\n\n\n    // ========================================================\n    // CLOSE OPEN STOP\n    //\n    // IMPORTANT:\n    // Only closes an open stop belonging to the SAME:\n    //\n    // device\n    // line\n    // shift\n    // date\n    //\n    // Also prevents STOP_END being earlier than STOP_START.\n    // ========================================================\n    function mongoEnd(\n        id,\n        cfg,\n        shiftName,\n        shiftDate,\n        ts\n    ) {\n\n        return {\n\n            collection:\n                \"stoppages\",\n\n            mode:\n                \"collection\",\n\n            operation:\n                \"updateOne\",\n\n            payload: [\n                {\n                    device:\n                        id,\n\n                    line:\n                        String(\n                            cfg.line || id\n                        ),\n\n                    shift:\n                        shiftName,\n\n                    date:\n                        shiftDate,\n\n                    downStatus:\n                        \"STOP_START\",\n\n                    stopStop_ts:\n                        null,\n\n                    stopStart_ts: {\n                        $lte:\n                            Number(ts)\n                    }\n                },\n\n                {\n                    $set: {\n                        downStatus:\n                            \"STOP_END\",\n\n                        stopStop_ts:\n                            Number(ts),\n\n                        bootIdAtStopEnd: sensorBootId(id),\n                        bootIdEndObservedAt: new Date().toISOString()\n                    }\n                }\n            ]\n        };\n    }\n\n\n    // ========================================================\n    // CURRENT SHIFT\n    // ========================================================\n    const currentShift =\n        getShiftInfo(now);\n\n\n    // ========================================================\n    // PROCESS EACH COUNTER\n    // ========================================================\n    for (\n        const [id, cfg]\n        of Object.entries(cfgAll)\n    ) {\n\n        if (!cfg.enabled) {\n            continue;\n        }\n\n\n        const state =\n            counters[id];\n\n        if (!state) {\n            continue;\n        }\n\n\n        // ====================================================\n        // INITIALIZE DOWNTIME STATE\n        // ====================================================\n        if (!downs[id]) {\n\n            downs[id] = {\n\n                status:\n                    \"Stopped\",\n\n                runningSince:\n                    null,\n\n                lastEventTs:\n                    null,\n\n                lastObservedSignal:\n                    null,\n\n                /*\n                 * Used only when:\n                 *\n                 * production restarts before a shift boundary,\n                 * but REQUIRED_RUN_TIME confirmation finishes\n                 * after the boundary.\n                 */\n                pendingShiftRecovery:\n                    null\n            };\n        }\n\n\n        const down =\n            downs[id];\n\n\n        // Backward compatibility with existing flow context\n        if (\n            down.pendingShiftRecovery === undefined\n        ) {\n            down.pendingShiftRecovery =\n                null;\n        }\n\n\n        // ====================================================\n        // LINE SETTINGS\n        // ====================================================\n        const ls =\n            allLineSettings[cfg.line] ||\n            allLineSettings[\n            String(cfg.line).toLowerCase()\n            ] ||\n            {};\n\n\n        const STOP_DELAY =\n            Number(\n                ls.stopDelayMs ??\n                60000\n            );\n\n\n        const MAX_PULSE_GAP =\n            Number(\n                ls.maxPulseGapMs ??\n                10000\n            );\n\n\n        const REQUIRED_RUN_TIME =\n            Number(\n                ls.requiredRunTimeMs ??\n                60000\n            );\n\n\n        // ====================================================\n        // PRODUCTION SIGNAL STATE\n        //\n        // IMPORTANT:\n        // This is now evaluated BEFORE shift transition.\n        // ====================================================\n        const lastSignal =\n            Number(\n                state.lastSignal || 0\n            );\n\n\n        const since =\n            lastSignal > 0\n                ? now - lastSignal\n                : Number.MAX_SAFE_INTEGER;\n\n\n        const previousObservedSignal =\n            Number(\n                down.lastObservedSignal || 0\n            );\n\n\n        const hasNewProductionSignal =\n            lastSignal > 0 &&\n            lastSignal !==\n            previousObservedSignal;\n\n\n        const signalGap =\n            previousObservedSignal > 0 &&\n                lastSignal > 0\n\n                ? lastSignal -\n                previousObservedSignal\n\n                : null;\n\n\n        // ====================================================\n        // NEW PRODUCTION SIGNAL\n        // ====================================================\n        if (\n            hasNewProductionSignal\n        ) {\n\n            if (\n                down.status ===\n                \"Stopped\"\n            ) {\n\n                /*\n                 * Start sustained-running confirmation\n                 * from first real production signal.\n                 */\n                if (\n                    !down.runningSince ||\n                    signalGap === null ||\n                    signalGap >\n                    MAX_PULSE_GAP\n                ) {\n\n                    down.runningSince =\n                        lastSignal;\n                }\n            }\n\n\n            down.lastObservedSignal =\n                lastSignal;\n        }\n\n\n        // ====================================================\n        // SHIFT CHANGE\n        // ====================================================\n        if (\n            state.shiftName !==\n            currentShift.shiftName ||\n\n            state.shiftDate !==\n            currentShift.shiftDate\n        ) {\n\n            const oldShift =\n                state.shiftName;\n\n            const oldDate =\n                state.shiftDate;\n\n            const oldCount =\n                Number(\n                    state.shiftCount || 0\n                );\n\n            const boundary =\n                currentShift.startMs;\n\n\n            // =================================================\n            // DETECT RECOVERY THAT STARTED BEFORE BOUNDARY\n            // =================================================\n            const recoveryStartedAt =\n                Number(\n                    down.runningSince || 0\n                );\n\n\n            const recoveryCrossingBoundary =\n                down.status === \"Stopped\" &&\n\n                recoveryStartedAt > 0 &&\n\n                recoveryStartedAt <\n                boundary &&\n\n                lastSignal > 0 &&\n\n                since <=\n                MAX_PULSE_GAP;\n\n\n            // =================================================\n            // BUILD OLD SHIFT SUMMARY REQUEST\n            // =================================================\n            let oldShiftSummary =\n                null;\n\n\n            if (\n                oldShift &&\n                oldDate\n            ) {\n\n                const range =\n                    getShiftRange(\n                        oldShift,\n                        oldDate\n                    );\n\n\n                oldShiftSummary = {\n\n                    summaryRequest: {\n\n                        device:\n                            id,\n\n                        line:\n                            String(\n                                cfg.line || id\n                            ),\n\n                        machine:\n                            String(\n                                cfg.machine || \"\"\n                            ),\n\n                        shift:\n                            oldShift,\n\n                        shiftDate:\n                            oldDate,\n\n                        fromTime:\n                            range.startIso,\n\n                        toTime:\n                            range.endIso,\n\n                        tileCount:\n                            oldCount,\n\n                        shiftStatus:\n                            down.status ||\n                            \"Unknown\",\n\n                        // Configuration snapshot captured when the old shift closes.\n                        // Not a substitute for per-event run tags if a changeover\n                        // happened within this shift.\n                        productionRunIdAtShiftEnd:\n                            String(ls.productionRunId || \"\") || null,\n                        productionRunStartTimeAtShiftEnd:\n                            ls.productionRunStartTime || null\n                    }\n                };\n            }\n\n\n            // =================================================\n            // LINE IS STOPPED AT SHIFT CHANGE\n            // =================================================\n            if (\n                down.status ===\n                \"Stopped\" &&\n\n                oldShift &&\n                oldDate\n            ) {\n\n                // =============================================\n                // CASE 1:\n                //\n                // Production already restarted BEFORE\n                // shift boundary, but REQUIRED_RUN_TIME\n                // is still being confirmed.\n                //\n                // DO NOT SPLIT STOP YET.\n                // =============================================\n                if (\n                    recoveryCrossingBoundary\n                ) {\n\n                    down.pendingShiftRecovery = {\n\n                        oldShift:\n                            oldShift,\n\n                        oldDate:\n                            oldDate,\n\n                        boundary:\n                            boundary,\n\n                        summaryRequest:\n                            oldShiftSummary\n                    };\n\n\n                    /*\n                     * Do not:\n                     *\n                     * close old stop at boundary\n                     * create new stop at boundary\n                     *\n                     * We wait to see whether recovery\n                     * becomes confirmed or fails.\n                     */\n                }\n\n\n                // =============================================\n                // CASE 2:\n                //\n                // Genuinely stopped through boundary.\n                // Normal shift split.\n                // =============================================\n                else {\n\n                    mongoMsgs.push(\n                        mongoEnd(\n                            id,\n                            cfg,\n                            oldShift,\n                            oldDate,\n                            boundary\n                        )\n                    );\n\n\n                    mongoMsgs.push(\n                        mongoStart(\n                            id,\n                            cfg,\n                            currentShift.shiftName,\n                            currentShift.shiftDate,\n                            boundary\n                        )\n                    );\n\n\n                    down.lastEventTs =\n                        boundary;\n\n\n                    down.pendingShiftRecovery =\n                        null;\n\n\n                    if (\n                        oldShiftSummary\n                    ) {\n\n                        summaryMsgs.push(\n                            oldShiftSummary\n                        );\n                    }\n                }\n            }\n\n\n            // =================================================\n            // LINE WAS RUNNING AT SHIFT CHANGE\n            // =================================================\n            else {\n\n                if (\n                    oldShiftSummary\n                ) {\n\n                    summaryMsgs.push(\n                        oldShiftSummary\n                    );\n                }\n            }\n\n\n            // =================================================\n            // RESET SHIFT COUNTER\n            // =================================================\n            state.shiftCount =\n                0;\n\n\n            state.shiftName =\n                currentShift.shiftName;\n\n\n            state.shiftDate =\n                currentShift.shiftDate;\n\n\n            // =================================================\n            // DISPLAY RESET\n            // =================================================\n            displayMsgs.push({\n\n                topic:\n                    cfg.displayTopic ||\n                    `display/${id}/shiftCount`,\n\n                payload:\n                    JSON.stringify({\n\n                        device:\n                            id,\n\n                        line:\n                            cfg.line,\n\n                        shift:\n                            state.shiftName,\n\n                        shiftDate:\n                            state.shiftDate,\n\n                        count:\n                            0\n                    })\n            });\n        }\n\n\n        // ====================================================\n        // CURRENT DOWNTIME STATE\n        // ====================================================\n        const oldStatus =\n            down.status ||\n            \"Stopped\";\n\n\n        let newStatus =\n            oldStatus;\n\n\n        let eventTs =\n            null;\n\n\n        // ====================================================\n        // PENDING CROSS-SHIFT RECOVERY FAILED\n        //\n        // Production started before shift boundary,\n        // but stopped again before REQUIRED_RUN_TIME.\n        //\n        // Therefore the original downtime really DID\n        // continue through the shift boundary.\n        // ====================================================\n        if (\n            oldStatus === \"Stopped\" &&\n\n            down.pendingShiftRecovery &&\n\n            since >\n            MAX_PULSE_GAP\n        ) {\n\n            const pending =\n                down.pendingShiftRecovery;\n\n\n            // Close previous shift stop\n            // exactly at shift boundary.\n            mongoMsgs.push(\n                mongoEnd(\n                    id,\n                    cfg,\n                    pending.oldShift,\n                    pending.oldDate,\n                    pending.boundary\n                )\n            );\n\n\n            // Create new shift stop\n            // exactly at boundary.\n            mongoMsgs.push(\n                mongoStart(\n                    id,\n                    cfg,\n                    state.shiftName,\n                    state.shiftDate,\n                    pending.boundary\n                )\n            );\n\n\n            down.lastEventTs =\n                pending.boundary;\n\n\n            // Save old shift summary now that\n            // we know recovery actually failed.\n            if (\n                pending.summaryRequest\n            ) {\n\n                pending.summaryRequest\n                    .summaryRequest\n                    .shiftStatus =\n                    \"Stopped\";\n\n\n                summaryMsgs.push(\n                    pending.summaryRequest\n                );\n            }\n\n\n            down.pendingShiftRecovery =\n                null;\n\n\n            down.runningSince =\n                null;\n        }\n\n\n        // ====================================================\n        // RUNNING -> STOPPED\n        // ====================================================\n        if (\n            since >\n            STOP_DELAY\n        ) {\n\n            down.runningSince =\n                null;\n\n\n            if (\n                oldStatus !==\n                \"Stopped\"\n            ) {\n\n                newStatus =\n                    \"Stopped\";\n\n\n                /*\n                 * Downtime begins from last\n                 * real production signal.\n                 */\n                eventTs =\n                    lastSignal > 0\n\n                        ? lastSignal\n\n                        : now -\n                        STOP_DELAY;\n            }\n        }\n\n\n        // ====================================================\n        // STOPPED -> RUNNING\n        // ====================================================\n        else if (\n            oldStatus ===\n            \"Stopped\"\n        ) {\n\n            // -----------------------------------------------\n            // Production confirmation broken\n            // -----------------------------------------------\n            if (\n                since >\n                MAX_PULSE_GAP\n            ) {\n\n                down.runningSince =\n                    null;\n            }\n\n\n            // -----------------------------------------------\n            // Production confirmed\n            // -----------------------------------------------\n            if (\n                down.runningSince &&\n\n                since <=\n                MAX_PULSE_GAP &&\n\n                (\n                    now -\n                    down.runningSince\n                ) >=\n                REQUIRED_RUN_TIME\n            ) {\n\n                newStatus =\n                    \"Running\";\n\n\n                /*\n                 * STOP_END is backdated to the first\n                 * signal of confirmed continuous running.\n                 */\n                eventTs =\n                    Number(\n                        down.runningSince\n                    );\n\n\n                down.runningSince =\n                    null;\n            }\n        }\n\n\n        // ====================================================\n        // STATUS CHANGED\n        // ====================================================\n        if (\n            newStatus !==\n            oldStatus\n        ) {\n\n            down.status =\n                newStatus;\n\n\n            down.lastEventTs =\n                eventTs;\n\n\n            // =================================================\n            // RUNNING -> STOPPED\n            // =================================================\n            if (\n                newStatus ===\n                \"Stopped\"\n            ) {\n\n                mongoMsgs.push(\n                    mongoStart(\n                        id,\n                        cfg,\n                        state.shiftName,\n                        state.shiftDate,\n                        eventTs\n                    )\n                );\n            }\n\n\n            // =================================================\n            // STOPPED -> RUNNING\n            // =================================================\n            else {\n\n                // =============================================\n                // RECOVERY STARTED IN PREVIOUS SHIFT\n                // =============================================\n                if (\n                    down.pendingShiftRecovery\n                ) {\n\n                    const pending =\n                        down.pendingShiftRecovery;\n\n\n                    /*\n                     * IMPORTANT:\n                     *\n                     * Recovery began BEFORE the shift\n                     * boundary.\n                     *\n                     * Therefore close the PREVIOUS\n                     * shift's stop using the actual\n                     * recovery-start timestamp.\n                     *\n                     * Do NOT attempt to close a\n                     * current-shift stop because one\n                     * was never created.\n                     */\n                    mongoMsgs.push(\n                        mongoEnd(\n                            id,\n                            cfg,\n                            pending.oldShift,\n                            pending.oldDate,\n                            eventTs\n                        )\n                    );\n\n\n                    // Save old shift summary after\n                    // recovery has been confirmed.\n                    if (\n                        pending.summaryRequest\n                    ) {\n\n                        pending\n                            .summaryRequest\n                            .summaryRequest\n                            .shiftStatus =\n                            \"Running\";\n\n\n                        summaryMsgs.push(\n                            pending.summaryRequest\n                        );\n                    }\n\n\n                    down.pendingShiftRecovery =\n                        null;\n                }\n\n\n                // =============================================\n                // NORMAL SAME-SHIFT RECOVERY\n                // =============================================\n                else {\n\n                    mongoMsgs.push(\n                        mongoEnd(\n                            id,\n                            cfg,\n                            state.shiftName,\n                            state.shiftDate,\n                            eventTs\n                        )\n                    );\n                }\n            }\n        }\n\n\n        // ====================================================\n        // SAVE DEVICE STATE\n        // ====================================================\n        counters[id] =\n            state;\n\n\n        downs[id] =\n            down;\n    }\n\n\n    // ========================================================\n    // SAVE FLOW CONTEXT\n    // ========================================================\n    flow.set(\n        \"counters\",\n        counters\n    );\n\n\n    flow.set(\n        \"downtimeStates\",\n        downs\n    );\n\n\n    // ========================================================\n    // NODE STATUS\n    // ========================================================\n    node.status({\n\n        fill:\n            \"green\",\n\n        shape:\n            \"dot\",\n\n        text:\n            `${Object.values(cfgAll)\n                .filter(x => x.enabled)\n                .length} lines`\n    });\n\n\n    // ========================================================\n    // OUTPUTS\n    //\n    // OUTPUT 1 = MongoDB downtime\n    // OUTPUT 2 = Display\n    // OUTPUT 3 = Shift summary\n    // ========================================================\n    return [\n\n        mongoMsgs.length\n            ? mongoMsgs\n            : null,\n\n        displayMsgs.length\n            ? displayMsgs\n            : null,\n\n        summaryMsgs.length\n            ? summaryMsgs\n            : null\n    ];\n})();\nreturn annotateCommunication(timerResult, flow, global, Date.now());",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 510,
+    "y": 1260,
+    "wires": [
+      [
+        "b47e400d91128daf",
+        "48ee1c4bea224778"
+      ],
+      [
+        "8a925c249dd7c218"
+      ],
+      [
+        "d01e6f24b5982856"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_initial",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Shift quality: mark measured / assumed / pending",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction markInitialShiftQuality(msg,global) {\n  const stats=msg.payload?.lineStats;\n  if(!stats?.device||!stats.lineName||!stats.shiftDate||!stats.shift)throw Error('Missing shift identity for quality integration.');\n  const target=shiftQualityTarget(stats,global);\n  msg.shiftQualityTarget=target;\n  Object.assign(stats,savedShiftQualityFields(target,null,Date.now()));\n  return msg;\n}\nreturn markInitialShiftQuality(msg,global);",
+    "outputs": 1,
+    "wires": [
+      [
+        "94b054dbc6125d09"
+      ]
+    ],
+    "x": 650,
+    "y": 2140
+  },
+  {
+    "id": "rx_eq_prepare",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Final code-wise save: read matching quality",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction prepareFinalShiftQuality(msg) {\n  const target=msg.shiftQualityTarget;\n  if(!target||!Array.isArray(msg.payload)||!msg.payload[1]?.$set)throw Error('Missing quality target / final code-wise update.');\n  msg.shiftQualityOriginalUpdate=msg.payload;\n  if(!target.qualityDocumentId) {\n    const fields=savedShiftQualityFields(target,null,Date.now());\n    for(const [k,v] of Object.entries(fields))msg.payload[1].$set['lineStats.'+k]=v;\n    delete msg.shiftQualityOriginalUpdate;\n    return [null,msg];\n  }\n  msg.payload=[{_id:target.qualityDocumentId,status:'complete'}];\n  msg.collection='quality';msg.operation='findOne';return [msg,null];\n}\nreturn prepareFinalShiftQuality(msg);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_eq_quality"
+      ],
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 650,
+    "y": 2240
+  },
+  {
+    "id": "rx_eq_quality",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read completed quality for this sensor/shift",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2240,
+    "wires": [
+      [
+        "rx_eq_attach"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_attach",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Attach category quality + OLE / OEE",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction attachFinalShiftQuality(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  const original=msg.shiftQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original code-wise update.');\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  delete msg.shiftQualityOriginalUpdate;\n  return msg;\n}\nreturn attachFinalShiftQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1560,
+    "y": 2240
+  },
+  {
+    "id": "rx_eq_read_catch",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Quality read error: save production as pending",
+    "scope": [
+      "rx_eq_quality"
+    ],
+    "uncaught": false,
+    "x": 1110,
+    "y": 2340,
+    "wires": [
+      [
+        "rx_eq_read_failed"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_read_failed",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Keep production update; quality retries later",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction attachFinalShiftQuality(msg) {\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  const original=msg.shiftQualityOriginalUpdate;\n  if(!original?.[1]?.$set)throw Error('Missing original code-wise update.');\n  for(const [k,v] of Object.entries(fields))original[1].$set['lineStats.'+k]=v;\n  msg.payload=original;msg.collection='shifts';msg.operation='updateOne';\n  delete msg.shiftQualityOriginalUpdate;\n  return msg;\n}\nnode.warn('Quality read failed; preserving production save with pending quality.');delete msg.error;msg.payload=null;return attachFinalShiftQuality(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "ceb7f2b046b165ff"
+      ]
+    ],
+    "x": 1580,
+    "y": 2340
+  },
+  {
+    "id": "rx_eq_queue",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "After confirmed code-wise save: queue quality storage",
+    "func": "const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;if(r?.acknowledged!==true||Number(r.matchedCount||0)<1||!msg.codeWiseTarget)return null;const t=msg.codeWiseTarget;return {qualityShift:{line:t.line,date:t.shiftDate,shift:t.shift}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_storage_link"
+      ]
+    ],
+    "x": 650,
+    "y": 2440
+  },
+  {
+    "id": "rx_eq_storage_link",
+    "z": "e5489573e203f3d0",
+    "type": "link out",
+    "name": "Queue separate quality collection shift job",
+    "mode": "link",
+    "links": [
+      "rx_qs_link"
+    ],
+    "x": 1000,
+    "y": 2440,
+    "wires": []
+  },
+  {
+    "id": "rx_eq_tick",
+    "z": "e5489573e203f3d0",
+    "type": "inject",
+    "name": "Reconcile pending shift quality every 60 sec",
+    "props": [],
+    "repeat": "60",
+    "once": true,
+    "onceDelay": 15,
+    "x": 250,
+    "y": 2560,
+    "wires": [
+      [
+        "rx_eq_find"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_find",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Read saved production shifts awaiting quality",
+    "func": "return {payload:[{'lineStats.qualityStatus':'pending'},{sort:{'lineStats.qualityLastCheckedAt':1,'lineStats.shiftDate':1},limit:100}]};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_pending_db"
+      ]
+    ],
+    "x": 650,
+    "y": 2560
+  },
+  {
+    "id": "rx_eq_pending_db",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Pending shifts (durable recovery)",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1110,
+    "y": 2560,
+    "wires": [
+      [
+        "rx_eq_each"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_each",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Each pending production shift",
+    "func": "if(!Array.isArray(msg.payload))throw Error('Pending shift query must return an array.');const messages=msg.payload.map(doc=>({shiftQualityProduction:doc}));return messages.length?[messages]:null;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_pending_prepare"
+      ]
+    ],
+    "x": 1550,
+    "y": 2560
+  },
+  {
+    "id": "rx_eq_pending_prepare",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Pending shift: use captured sensor identity",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction preparePendingShiftQuality(msg,global) {\n  const production=msg.shiftQualityProduction;\n  const stats=production.lineStats;\n  let target;\n  if(stats.qualitySensorDevice&&stats.qualityDocumentId)target={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance,sensor:stats.qualitySensorDevice,qualityDocumentId:stats.qualityDocumentId,status:'pending'};\n  else target=shiftQualityTarget(stats,global);\n  msg.shiftQualityTarget=target;\n  if(!target.qualityDocumentId)return [null,msg];\n  msg.payload=[{_id:target.qualityDocumentId,status:'complete'}];return [msg,null];\n}\nreturn preparePendingShiftQuality(msg,global);",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_eq_pending_quality"
+      ],
+      [
+        "rx_eq_pending_build"
+      ]
+    ],
+    "x": 650,
+    "y": 2680
+  },
+  {
+    "id": "rx_eq_pending_quality",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Read pending shift quality result",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2680,
+    "wires": [
+      [
+        "rx_eq_pending_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_pending_build",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Recalculate pending OLE; preserve other shift fields",
+    "func": "function shiftQualityTarget(stats,global) {\n  const base={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||typeof devices!=='object'||global.get('devicesReady')!==true)return {...base,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===base.line);\n  if(!sensors.length)return {...base,status:'assumed',reason:'no-enabled-quality-sensor'};\n  if(sensors.length>1)return {...base,status:'configuration-error',reason:'multiple-quality-sensors'};\n  const sensor=sensors[0][0];\n  return {...base,status:'pending',sensor,qualityDocumentId:JSON.stringify([sensor,base.line,base.shiftDate,base.shift])};\n}\nfunction savedShiftQualityFields(target,qualityDoc,now) {\n  const usable=qualityDoc?.status==='complete'&&qualityDoc.device===target.sensor&&qualityDoc.line===target.line&&qualityDoc.shift===target.shift&&qualityDoc.shiftDate===target.shiftDate&&qualityDoc._id===target.qualityDocumentId;\n  const measured=usable&&qualityDoc.qualityAvailable===true&&Number.isFinite(qualityDoc.firstQuality)&&qualityDoc.firstQuality>=0&&qualityDoc.firstQuality<=100;\n  const assumed=target.status==='assumed';\n  const quality=assumed?100:measured?qualityDoc.firstQuality:null;\n  const round=v=>Math.round(v*100)/100;\n  const metric=quality===null?null:round(Number(target.availability)*Number(target.performance)*quality/10000);\n  const status=assumed?'assumed':measured?'measured':usable?'unavailable':target.status==='configuration-error'?'configuration-error':'pending';\n  const details=usable?{\n    qualityDocumentId:target.qualityDocumentId,device:target.sensor,status:qualityDoc.dataStatus,\n    totalBoxes:qualityDoc.totalBoxes,totalTiles:qualityDoc.totalTiles,\n    firstBoxes:qualityDoc.firstBoxes,firstTiles:qualityDoc.firstTiles,\n    normalDamageBoxes:qualityDoc.normalDamageBoxes,normalDamageTiles:qualityDoc.normalDamageTiles,\n    cutDamageBoxes:qualityDoc.cutDamageBoxes,cutDamageTiles:qualityDoc.cutDamageTiles,\n    undetectedBoxes:qualityDoc.undetectedBoxes,undetectedTiles:qualityDoc.undetectedTiles,\n    unclassifiedBoxes:qualityDoc.unclassifiedBoxes,unclassifiedTiles:qualityDoc.unclassifiedTiles,\n    classificationComplete:qualityDoc.classificationComplete,coverage:qualityDoc.coverage,\n    sourceUpdatedAt:qualityDoc.updatedAt,\n  }:{status:target.reason||'waiting-for-quality-document'};\n  return {\n    quality,firstQuality:quality,normalDamageQuality:measured?qualityDoc.normalDamageQuality:null,cutDamageQuality:measured?qualityDoc.cutDamageQuality:null,\n    totalQualityTiles:usable?qualityDoc.totalTiles:null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:status,qualitySensorDevice:target.sensor||null,qualityDocumentId:target.qualityDocumentId||null,\n    qualitySummary:details,ole:metric,oee:metric,qualityUpdatedAt:new Date(now).toISOString(),\n  };\n}\nfunction buildPendingShiftQualityUpdate(msg) {\n  const production=msg.shiftQualityProduction,stats=production.lineStats;\n  const doc=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  const fields=savedShiftQualityFields(msg.shiftQualityTarget,doc,Date.now());\n  if(fields.qualityStatus==='pending') {\n    msg.shiftQualityCheckOnly=true;\n    msg.payload=[{_id:production._id,'lineStats.qualityStatus':'pending'},{$set:{'lineStats.qualityLastCheckedAt':new Date()}}];\n    return msg;\n  }\n  const set={};for(const [k,v] of Object.entries(fields))set['lineStats.'+k]=v;\n  msg.payload=[{_id:production._id,'lineStats.qualityStatus':'pending','lineStats.availability':stats.availability,'lineStats.performance':stats.performance},{$set:set}];\n  return msg;\n}\nreturn buildPendingShiftQualityUpdate(msg);",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_update"
+      ]
+    ],
+    "x": 1570,
+    "y": 2680
+  },
+  {
+    "id": "rx_eq_update",
+    "z": "e5489573e203f3d0",
+    "type": "mongodb4",
+    "name": "Update only shift quality fields",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1120,
+    "y": 2800,
+    "wires": [
+      [
+        "rx_eq_result"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_result",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Shift quality update confirmed",
+    "func": "const r=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;if(r?.acknowledged!==true)throw Error('Shift quality update was not acknowledged.');if(r.matchedCount!==1||msg.shiftQualityCheckOnly)return null;return {payload:{updated:true,shiftId:String(msg.shiftQualityProduction._id),qualityDocumentId:msg.shiftQualityTarget.qualityDocumentId||null}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_debug"
+      ]
+    ],
+    "x": 1570,
+    "y": 2800
+  },
+  {
+    "id": "rx_eq_catch",
+    "z": "e5489573e203f3d0",
+    "type": "catch",
+    "name": "Pending quality integration error",
+    "scope": [
+      "rx_eq_find",
+      "rx_eq_pending_db",
+      "rx_eq_each",
+      "rx_eq_pending_prepare",
+      "rx_eq_pending_quality",
+      "rx_eq_pending_build",
+      "rx_eq_update",
+      "rx_eq_result"
+    ],
+    "uncaught": false,
+    "x": 650,
+    "y": 2920,
+    "wires": [
+      [
+        "rx_eq_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_eq_error",
+    "z": "e5489573e203f3d0",
+    "type": "function",
+    "name": "Safe quality retry notice",
+    "func": "return {payload:{updated:false,message:'Pending shift quality could not be reconciled; will retry.',phase:msg.error?.source?.name||'unknown'}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_eq_debug"
+      ]
+    ],
+    "x": 1120,
+    "y": 2920
+  },
+  {
+    "id": "rx_eq_debug",
+    "z": "e5489573e203f3d0",
+    "type": "debug",
+    "name": "Saved production shift quality result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1550,
+    "y": 2920,
+    "wires": []
+  }
+]

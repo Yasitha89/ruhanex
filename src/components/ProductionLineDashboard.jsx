@@ -70,18 +70,15 @@ import "./ProductionLineDashboard.css";
 
 const { Text } = Typography;
 const SHIFTS = ["06-14", "14-22", "22-06"];
-// Preview values until the quality API is available.
-const SAMPLE_QUALITY = {
-  "Keda 1": { first: 0, second: 0 },
-  "Keda 2": { first: 0, second: 0 },
-  "Keda 3": { first: 0, second: 0 },
-};
 
 function fmt(value, digits = 1) {
   return Number(value || 0).toLocaleString("en-US", {
     maximumFractionDigits: digits,
   });
 }
+
+const qualityPercent = (value) => value == null ? "—" : `${fmt(value, 1)}%`;
+const qualityCount = (value) => value == null ? "—" : fmt(value, 0);
 
 function minutesBetween(from, to) {
   const a = new Date(from).getTime();
@@ -132,7 +129,7 @@ function KpiCard({ icon, label, value, suffix, children, tone = "blue" }) {
 export default function ProductionLineDashboard({ line, title = line }) {
   const { user } = useAuth();
   const canDownloadExcel = canExportProduction(user?.role);
-  const quality = SAMPLE_QUALITY[line];
+  const quality = /^Keda [123]$/.test(line);
   const [sizeModalOpen, setSizeModalOpen] = useState(false);
   const [gradeReview, setGradeReview] = useState(null);
   const [gradeReviewSaving, setGradeReviewSaving] = useState(false);
@@ -175,6 +172,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
   });
   const [selectedShiftStats, setSelectedShiftStats] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [qualityRefreshKey, setQualityRefreshKey] = useState(0);
 
   const [selectedDowntime, setSelectedDowntime] = useState(null);
   const [downtimeModalOpen, setDowntimeModalOpen] = useState(false);
@@ -597,8 +595,16 @@ export default function ProductionLineDashboard({ line, title = line }) {
 
         availability: Number(live.availability || 0),
         performance: Number(live.performance || 0),
-        quality: Number(live.quality ?? 100),
-        ole: Number(live.ole || 0),
+        quality: live.quality ?? null,
+        firstQuality: live.firstQuality,
+        normalDamageQuality: live.normalDamageQuality,
+        cutDamageQuality: live.cutDamageQuality,
+        totalQualityTiles: live.totalQualityTiles,
+        qualityAssumed: live.qualityAssumed,
+        qualityAvailable: live.qualityAvailable,
+        qualityStatus: live.qualityStatus,
+        qualitySummary: live.qualityDetails,
+        ole: live.ole ?? null,
 
         targetTiles: Number(live.targetTiles || 0),
         targetProduction: Number(live.targetProduction || 0),
@@ -623,6 +629,9 @@ export default function ProductionLineDashboard({ line, title = line }) {
   }, [isSelectedCurrentShift, live, selectedShiftStats]);
 
   const selectedSizeProduction = useMemo(() => getSizeProduction(selectedDetails), [selectedDetails]);
+  const selectedQualityDetails = isSelectedCurrentShift && live ? live : selectedDetails;
+  const selectedQualityTotals = selectedQualityDetails.qualitySummary || selectedQualityDetails.qualityDetails;
+  const qualitySensorStatus = live?.qualitySensor?.sensorStatus ?? live?.qualitySensorStatus ?? "Unknown";
 
   const selectedCodeProduction = useMemo(() => {
     const rows = selectedShiftStats?.codeWiseProduction;
@@ -1038,8 +1047,17 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 title={`Sensor ${live?.sensorStatus || "Unknown"}`}
                 aria-label={`Sensor ${live?.sensorStatus || "Unknown"}`}
               >
+                {quality && <span className="production-quality-sensor-label" aria-hidden="true">C</span>}
                 <WifiOutlined />
               </span>
+              {quality && <span
+                className={`production-sensor-signal production-quality-sensor-signal ${qualitySensorStatus === "Online" ? "is-online" : "is-offline"}`}
+                title={`Quality sensor ${qualitySensorStatus}`}
+                aria-label={`Quality sensor ${qualitySensorStatus}`}
+              >
+                <span className="production-quality-sensor-label" aria-hidden="true">Q</span>
+                <WifiOutlined />
+              </span>}
             </div>
           </div>
         </div>
@@ -1150,12 +1168,12 @@ export default function ProductionLineDashboard({ line, title = line }) {
             <KpiCard
               icon={<SafetyCertificateOutlined />}
               label="Quality"
-              value="100"
-              suffix="%"
+              value={live?.firstQuality == null ? "—" : fmt(live.firstQuality, 1)}
+              suffix={live?.firstQuality == null ? undefined : "%"}
               tone="quality"
             >
-              <span>Normal damages <strong>{fmt(quality.first, 1)}%</strong></span>
-              <span>Cut damages <strong>{fmt(quality.second, 1)}%</strong></span>
+              <span>Normal damages <strong>{qualityPercent(live?.normalDamageQuality)}</strong></span>
+              <span>Cut damages <strong>{qualityPercent(live?.cutDamageQuality)}</strong></span>
             </KpiCard>
           </Col>
         )}
@@ -1229,7 +1247,10 @@ export default function ProductionLineDashboard({ line, title = line }) {
               />
               <Button
                 icon={<ReloadOutlined />}
-                onClick={refreshSelectedAnalysis}
+                onClick={() => {
+                  setQualityRefreshKey((value) => value + 1);
+                  refreshSelectedAnalysis();
+                }}
               >
                 Refresh
               </Button>
@@ -1244,7 +1265,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 <div className="production-panel-heading">
                   <strong>Shift Grades ({selectedShift})</strong>
                 </div>
-                <ShiftGradeChart first={quality.first} second={quality.second} />
+                <ShiftGradeChart
+                  key={`${line}:${selectedDateString}:${selectedShift}`}
+                  line={line}
+                  date={selectedDateString}
+                  shift={selectedShift}
+                  refreshKey={qualityRefreshKey}
+                />
               </div>
             </Col>
           )}
@@ -1335,6 +1362,12 @@ export default function ProductionLineDashboard({ line, title = line }) {
                           <Text strong>{row.designCode || "Unknown"}</Text>
                           <Text strong>{fmt(row.production, 2)} m²</Text>
                         </div>
+                        {quality && <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 4 }}>
+                          <Text type="secondary">First: {qualityPercent(row.firstQuality ?? row.quality)}</Text>
+                          <Text type="secondary">Normal damages: {qualityPercent(row.normalDamageQuality)}</Text>
+                          <Text type="secondary">Cut damages: {qualityPercent(row.cutDamageQuality)}</Text>
+                          <Text type="secondary">Total out tiles: {qualityCount(row.qualityTotalTiles)}</Text>
+                        </div>}
                       </div>
                     ))
                   ) : (
@@ -1367,6 +1400,16 @@ export default function ProductionLineDashboard({ line, title = line }) {
                     { title: "Production (m²)", dataIndex: "production", align: "right", render: value => fmt(value, 2) },
                   ]}
                 />
+              {quality && <>
+                <div className="production-shift-section-title">Quality</div>
+                <Descriptions className="production-shift-details" layout="vertical" column={2} size="small" colon={false}>
+                  <Descriptions.Item label="First Quality">{qualityPercent(selectedQualityDetails.firstQuality ?? selectedQualityDetails.quality)}</Descriptions.Item>
+                  <Descriptions.Item label="Normal Damages">{qualityPercent(selectedQualityDetails.normalDamageQuality)}</Descriptions.Item>
+                  <Descriptions.Item label="Cut Damages">{qualityPercent(selectedQualityDetails.cutDamageQuality)}</Descriptions.Item>
+                  <Descriptions.Item label="Total out tiles">{qualityCount(selectedQualityDetails.totalQualityTiles ?? selectedQualityTotals?.totalTiles)}</Descriptions.Item>
+                  <Descriptions.Item label="No of boxes">{qualityCount(selectedQualityTotals?.totalBoxes)}</Descriptions.Item>
+                </Descriptions>
+              </>}
               <div className="production-shift-section-title">
                 Time &amp; Downtime
               </div>
@@ -1416,8 +1459,11 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 <Descriptions.Item label="Performance">
                   {fmt(selectedDetails.performance, 1)} %
                 </Descriptions.Item>
-                <Descriptions.Item label="OLE">
-                  {fmt(selectedDetails.ole, 1)} %
+                {quality && <Descriptions.Item label="Quality">
+                  {qualityPercent(selectedQualityDetails.firstQuality ?? selectedQualityDetails.quality)}
+                </Descriptions.Item>}
+                <Descriptions.Item label={quality ? "OEE" : "OLE"}>
+                  {qualityPercent(quality ? (selectedQualityDetails.oee ?? selectedQualityDetails.ole) : selectedDetails.ole)}
                 </Descriptions.Item>
                 {isSelectedCurrentShift ? (
                   <Descriptions.Item label="Current Speed">
