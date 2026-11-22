@@ -1,0 +1,27 @@
+{
+  "runtimeFunctions": [
+    {
+      "id": "dailylinemerge01",
+      "name": "Merge Daily Line Summary"
+    },
+    {
+      "id": "203a3acb2f94d4dc",
+      "name": "Build Monthly Queries + Runtime Current Shift"
+    },
+    {
+      "id": "79741f52c04c26ed",
+      "name": "Merge Monthly Summary"
+    },
+    {
+      "id": "b82b48c5e8ca2a1d",
+      "name": "Build Live Shift Summary"
+    },
+    {
+      "id": "fdf765c33b6dcbfa",
+      "name": "Merge Live Influx + Mongo / Calculate KPI"
+    }
+  ],
+  "crossTabConnections": 19,
+  "externalWireTargets": [],
+  "disabledDuplicateEndpoint": "rx_qapi_http"
+}

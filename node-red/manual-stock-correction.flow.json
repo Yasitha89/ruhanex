@@ -1,0 +1,299 @@
+[
+  {
+    "id": "rx_manual_stock_correction",
+    "type": "tab",
+    "label": "Manual 60x30 stock correction"
+  },
+  {
+    "id": "rx_mc_preview",
+    "type": "inject",
+    "z": "rx_manual_stock_correction",
+    "name": "PREVIEW 60x30 correction",
+    "props": [
+      {
+        "p": "apply",
+        "v": "false",
+        "vt": "bool"
+      }
+    ],
+    "once": false,
+    "repeat": "",
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "rx_mc_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_mc_apply",
+    "type": "inject",
+    "z": "rx_manual_stock_correction",
+    "name": "APPLY 60x30 correction",
+    "props": [
+      {
+        "p": "apply",
+        "v": "true",
+        "vt": "bool"
+      }
+    ],
+    "once": false,
+    "repeat": "",
+    "x": 180,
+    "y": 240,
+    "wires": [
+      [
+        "rx_mc_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_mc_start",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "History settings / current shift",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\n// Optional: specify a known shift boundary and opening stock in TILES.\nconst options={from:'2026-11-04T06:00:00+05:30',floorOpening:0,carOpening:0};\nmsg.correction={period:stockPeriod(Date.now()),options,apply:msg.apply===true};\nmsg.payload=[{'lineStats.shiftStart':{$exists:true}}, {sort:{'lineStats.shiftStart':1}}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_history"
+      ]
+    ],
+    "x": 480,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_history",
+    "type": "mongodb4",
+    "z": "rx_manual_stock_correction",
+    "name": "find shifts",
+    "clientNode": "8120871193b8f276",
+    "collection": "shifts",
+    "mode": "collection",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "30000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_mc_sum"
+      ]
+    ],
+    "x": 760,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_sum",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Total historical 60x30 production",
+    "func": "function sumHistoricalStock(documents, period, options = {}) {\n  if (!Array.isArray(documents)) throw Error('Invalid shifts response.');\n  const size = value => String(value || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n  const totals = { glaze: 0, kiln: 0, keda: 0 }, seen = new Set();\n  let first = null, last = null, matchedDocuments = 0;\n  const from = options.from ? Date.parse(options.from) : -Infinity;\n  if (options.from && !Number.isFinite(from)) throw Error('Invalid history start date.');\n  for (const doc of documents) {\n    const s = doc.lineStats;\n    if (!s) continue;\n    const start = Date.parse(s.shiftStart);\n    const end = Date.parse(s.shiftEnd);\n    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw Error('A shift summary has invalid shiftStart/shiftEnd.');\n    if (end > period.start || end <= from) continue;\n    if (start < from) throw Error('History start must align to a shift boundary.');\n    const line = String(s.lineName || '');\n    const role = /kiln|firing/i.test(line) ? 'kiln' : /keda|sorting/i.test(line) ? 'keda' : /glaze|glazing/i.test(line) ? 'glaze' : '';\n    if (!role) continue;\n    const identity = JSON.stringify([s.device || line, start, end]);\n    if (seen.has(identity)) throw Error('Duplicate shift summaries found; resolve duplicates before correction.');\n    seen.add(identity);\n    const rows = Array.isArray(s.sizeWiseProduction) && s.sizeWiseProduction.length ? s.sizeWiseProduction : Array.isArray(s.codeWiseProduction) && s.codeWiseProduction.length ? s.codeWiseProduction : s.multipleTileSizes ? null : [{ tileSize: s.tileSize, tileCount: s.tileCount }];\n    if (!rows) throw Error('A multi-size shift has no size-wise or code-wise production.');\n    for (const row of rows) {\n      if (size(row.tileSize) !== '60x30') continue;\n      const count = Number(row.tileCount);\n      if (row.tileCount == null || !Number.isSafeInteger(count) || count < 0) throw Error('Invalid 60x30 tile count in shift summary.');\n      totals[role] += count;\n    }\n    first = first === null ? start : Math.min(first, start);\n    last = last === null ? end : Math.max(last, end);\n    matchedDocuments++;\n  }\n  if (!matchedDocuments || !totals.kiln) throw Error('No usable historical kiln production found. Check the history range.');\n  const floorInitial = Number(options.floorOpening || 0), carInitial = Number(options.carOpening || 0);\n  if (![floorInitial, carInitial].every(n => Number.isSafeInteger(n) && n >= 0)) throw Error('Opening balances must be nonnegative tile counts.');\n  return { totals, matchedDocuments, historyFrom: new Date(first).toISOString(), historyTo: new Date(last).toISOString(),\n    floorRaw: floorInitial + totals.kiln - totals.keda, carRaw: carInitial + totals.glaze - totals.kiln,\n    floorOpening: Math.max(0, floorInitial + totals.kiln - totals.keda), carOpening: Math.max(0, carInitial + totals.glaze - totals.kiln) };\n}\nmsg.correction.history=sumHistoricalStock(msg.payload,msg.correction.period,msg.correction.options);\nmsg.payload=[{_id:msg.correction.period.id}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_floor_read"
+      ]
+    ],
+    "x": 1060,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_floor_read",
+    "type": "mongodb4",
+    "z": "rx_manual_stock_correction",
+    "name": "findOne floorStocks",
+    "clientNode": "8120871193b8f276",
+    "collection": "floorStocks",
+    "mode": "collection",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_mc_floor_hold"
+      ]
+    ],
+    "x": 1360,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_floor_hold",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Keep floor / read car",
+    "func": "msg.correction.floor=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;msg.payload=[{_id:msg.correction.period.id}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_car_read"
+      ]
+    ],
+    "x": 1620,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_car_read",
+    "type": "mongodb4",
+    "z": "rx_manual_stock_correction",
+    "name": "findOne carStocks",
+    "clientNode": "8120871193b8f276",
+    "collection": "carStocks",
+    "mode": "collection",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_mc_prepare"
+      ]
+    ],
+    "x": 1880,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_prepare",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Preview or prepare conditional writes",
+    "func": "function buildManualStockUpdate(doc, history, kind, now = Date.now()) {\n  if (!doc || !Array.isArray(doc.stocks)) throw Error(`Current ${kind} stock document is missing; run the periodic stock flow first.`);\n  const opening = history[kind + 'Opening'];\n  const input = kind === 'floor' ? 'kilnOutput' : 'glazeOutput', output = kind === 'floor' ? 'kedaOutput' : 'kilnOutput';\n  // MongoDB stock rows contain scalar fields; copy each row without sandbox globals.\n  const stocks = doc.stocks.map(stock => ({ ...stock }));\n  let row = stocks.find(r => String(r.tileSize || '').replace(/\\s+/g, '').replace(/×/g, 'x').toLowerCase() === '60x30');\n  if (!row) throw Error(`Current ${kind} document has no 60x30 entry; current-shift movements must be available before correction.`);\n  if (![row[input], row[output]].every(v => v != null && Number.isSafeInteger(Number(v)) && Number(v) >= 0)) throw Error('Invalid current-shift stock movements.');\n  const before = { ...row };\n  const raw = opening + Number(row[input]) - Number(row[output]);\n  Object.assign(row, { openingStock: opening, rawClosingStock: raw, closingStock: Math.max(0, raw), closingStockM2: Math.round(Math.max(0, raw) * 18) / 100,\n    zeroClampAdjustment: Math.max(0, -raw), clampedToZero: raw < 0 });\n  const total = stocks.reduce((sum, r) => {\n    const value = Number(r.closingStockM2);\n    if (!Number.isFinite(value)) throw Error('Invalid stock m² value.');\n    return sum + value;\n  }, 0);\n  return { filter: { _id: doc._id, stocks: { $eq: doc.stocks }, calculatedAt: doc.calculatedAt },\n    update: { $set: { stocks, [`manualOpeningStocks.60x30`]: opening,\n      [kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: Math.round(total * 100) / 100,\n      manualCorrection: { at: new Date(now).toISOString(), tileSize: '60x30', before, after: row, history } } },\n    preview: { kind, shiftId: doc._id, before, after: row, history } };\n}\nconst c=msg.correction;const car=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\nif(Date.now()>=c.period.end)throw Error('Shift changed during correction; run preview again.');\nc.floorUpdate=buildManualStockUpdate(c.floor,c.history,'floor');c.carUpdate=buildManualStockUpdate(car,c.history,'car');\nif(!c.apply){msg.payload={preview:true,floor:c.floorUpdate.preview,car:c.carUpdate.preview};return [null,msg];}\nmsg.payload=[c.floorUpdate.filter,c.floorUpdate.update];return [msg,null];",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_mc_floor_write"
+      ],
+      [
+        "rx_mc_debug"
+      ]
+    ],
+    "x": 2180,
+    "y": 180
+  },
+  {
+    "id": "rx_mc_floor_write",
+    "type": "mongodb4",
+    "z": "rx_manual_stock_correction",
+    "name": "updateOne floorStocks",
+    "clientNode": "8120871193b8f276",
+    "collection": "floorStocks",
+    "mode": "collection",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_mc_next"
+      ]
+    ],
+    "x": 750,
+    "y": 400
+  },
+  {
+    "id": "rx_mc_next",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Confirm floor / update car",
+    "func": "const r=msg.payload;if(r?.acknowledged!==true||r.matchedCount!==1)throw Error('Floor changed during calculation. Preview and retry.');msg.correction.floorSaved=true;const u=msg.correction.carUpdate;msg.payload=[u.filter,u.update];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_car_write"
+      ]
+    ],
+    "x": 1100,
+    "y": 400
+  },
+  {
+    "id": "rx_mc_car_write",
+    "type": "mongodb4",
+    "z": "rx_manual_stock_correction",
+    "name": "updateOne carStocks",
+    "clientNode": "8120871193b8f276",
+    "collection": "carStocks",
+    "mode": "collection",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_mc_done"
+      ]
+    ],
+    "x": 1450,
+    "y": 400
+  },
+  {
+    "id": "rx_mc_done",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Confirm correction",
+    "func": "const r=msg.payload;if(r?.acknowledged!==true||r.matchedCount!==1)throw Error('Car changed during calculation. Floor saved; preview and retry car correction.');return {payload:{saved:true,floor:msg.correction.floorUpdate.preview,car:msg.correction.carUpdate.preview}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_debug"
+      ]
+    ],
+    "x": 1800,
+    "y": 400
+  },
+  {
+    "id": "rx_mc_catch",
+    "type": "catch",
+    "z": "rx_manual_stock_correction",
+    "name": "Correction failed",
+    "scope": [
+      "rx_mc_start",
+      "rx_mc_history",
+      "rx_mc_sum",
+      "rx_mc_floor_read",
+      "rx_mc_floor_hold",
+      "rx_mc_car_read",
+      "rx_mc_prepare",
+      "rx_mc_floor_write",
+      "rx_mc_next",
+      "rx_mc_car_write",
+      "rx_mc_done"
+    ],
+    "uncaught": false,
+    "x": 500,
+    "y": 540,
+    "wires": [
+      [
+        "rx_mc_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_mc_error",
+    "type": "function",
+    "z": "rx_manual_stock_correction",
+    "name": "Report correction error",
+    "func": "return {payload:{saved:false,floorSaved:msg.correction?.floorSaved===true,error:String(msg.error?.message||'Correction failed')}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_mc_debug"
+      ]
+    ],
+    "x": 900,
+    "y": 540
+  },
+  {
+    "id": "rx_mc_debug",
+    "type": "debug",
+    "z": "rx_manual_stock_correction",
+    "name": "60x30 stock correction result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 2500,
+    "y": 400,
+    "wires": []
+  }
+]

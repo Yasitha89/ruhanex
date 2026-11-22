@@ -1,0 +1,32 @@
+[
+    {
+        "id":  "rx_qreport_scan",
+        "type":  "function",
+        "z":  "e5489573e203f3d0",
+        "name":  "Find Keda quality missing its report copy",
+        "func":  "msg.payload=[{\u0027lineStats.lineName\u0027:{$in:[\u0027Keda 1\u0027,\u0027Keda 2\u0027,\u0027Keda 3\u0027]},\u0027lineStats.qualityUpdatedAt\u0027:{$exists:true},\u0027lineStats.qualityStatus\u0027:{$ne:\u0027pending\u0027},$expr:{$ne:[{$ifNull:[\u0027$lineStats.qualityReportSourceUpdatedAt\u0027,null]},\u0027$lineStats.qualityUpdatedAt\u0027]}},{sort:{\u0027lineStats.qualityUpdatedAt\u0027:1},limit:50}];return msg;",
+        "outputs":  1,
+        "wires":  [
+                      [
+                          "rx_qreport_read"
+                      ]
+                  ],
+        "x":  650,
+        "y":  2300
+    },
+    {
+        "id":  "rx_qreport_build",
+        "type":  "function",
+        "z":  "e5489573e203f3d0",
+        "name":  "Build category / design / grade report documents",
+        "func":  "function qualityReportDocument(doc, now = Date.now()) {\n  const s = doc?.lineStats;\n  if (!/^Keda [123]$/.test(s?.lineName || \u0027\u0027)) throw Error(\u0027Quality reports are only supported for Keda 1, Keda 2 and Keda 3.\u0027);\n  if (!s || !s.lineName || !s.shiftDate || ![\u002706-14\u0027,\u002714-22\u0027,\u002722-06\u0027].includes(s.shift) || !s.qualityUpdatedAt) throw Error(\u0027Missing saved shift quality identity/version.\u0027);\n  if (!Number.isFinite(Date.parse(s.qualityUpdatedAt))) throw Error(\u0027Invalid quality version timestamp.\u0027);\n  const totals = s.qualitySummary || null;\n  const segments = totals?.gradeSegments;\n  const catalogue = s.qualityCatalogueSnapshot || [];\n  const definitions = new Map(catalogue.map(g =\u003e [String(g.grade || \u0027\u0027).trim().toLowerCase(), g]));\n  const products = new Map();\n  if (Array.isArray(segments)) for (const segment of segments) {\n    if (!Array.isArray(segment.gradeBoxes) || segment.gradeBoxes.length !== 16 || !Number.isSafeInteger(segment.tilesPerBox) || segment.tilesPerBox \u003c= 0) throw Error(\u0027Invalid saved grade segment.\u0027);\n    const key = JSON.stringify([segment.designCode, segment.tileSize]);\n    if (!products.has(key)) products.set(key, { designCode: segment.designCode, tileSize: segment.tileSize, totalBoxes: 0, totalTiles: 0, firstTiles: 0, normalDamageTiles: 0, cutDamageTiles: 0, undetectedTiles: 0, unclassifiedTiles: 0, grades: new Map() });\n    const product = products.get(key);\n    segment.gradeBoxes.forEach((boxes, gradeNumber) =\u003e {\n      if (!Number.isSafeInteger(boxes) || boxes \u003c 0) throw Error(\u0027Invalid grade box count.\u0027);\n      const tiles = boxes * segment.tilesPerBox;\n      if (!Number.isSafeInteger(tiles)) throw Error(\u0027Invalid grade tile count.\u0027);\n      product.totalBoxes += boxes; product.totalTiles += tiles;\n      const grade = gradeNumber === 0 ? null : segment.designGrades?.[String(gradeNumber)] || null;\n      const definition = definitions.get(String(grade || \u0027\u0027).trim().toLowerCase());\n      const category = gradeNumber === 0 ? null : Number(definition?.category);\n      const label = gradeNumber === 0 ? \u0027undetected\u0027 : category === 1 ? \u0027first\u0027 : category === 2 ? \u0027normalDamage\u0027 : category === 3 ? \u0027cutDamage\u0027 : \u0027unclassified\u0027;\n      product[label + \u0027Tiles\u0027] += tiles;\n      if (!boxes) return;\n      const gradeKey = JSON.stringify([gradeNumber, grade, category]);\n      if (!product.grades.has(gradeKey)) product.grades.set(gradeKey, { gradeNumber, grade, description: definition?.description || \u0027\u0027, category: [1,2,3].includes(category) ? category : null, boxes: 0, tiles: 0 });\n      const row = product.grades.get(gradeKey); row.boxes += boxes; row.tiles += tiles;\n    });\n  }\n  const pct = (n,d) =\u003e d \u003e 0 ? Math.round(n / d * 10000) / 100 : null;\n  const designs = [...products.values()].map(p =\u003e ({ ...p, grades: [...p.grades.values()], firstQuality: pct(p.firstTiles,p.totalTiles), normalDamageQuality: pct(p.normalDamageTiles,p.totalTiles), cutDamageQuality: pct(p.cutDamageTiles,p.totalTiles) }));\n  if (Array.isArray(segments) \u0026\u0026 (designs.reduce((n,p)=\u003en+p.totalTiles,0)!==totals.totalTiles || designs.reduce((n,p)=\u003en+p.totalBoxes,0)!==totals.totalBoxes)) throw Error(\u0027Saved quality segment totals disagree.\u0027);\n  return { _id: JSON.stringify([s.lineName,s.shiftDate,s.shift]), schema: 1, line: s.lineName, shiftDate: s.shiftDate, shift: s.shift,\n    shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, productionDevice: s.device, qualitySensorDevice: s.qualitySensorDevice || null,\n    sourceShiftId: String(doc._id), sourceQualityUpdatedAt: s.qualityUpdatedAt, source: \u0027saved-shift-summary\u0027,\n    status: s.qualityStatus || \u0027unavailable\u0027, settled: s.directQualitySettled === true, qualityAvailable: s.qualityAvailable === true, qualityAssumed: s.qualityAssumed === true,\n    quality: s.quality ?? null, firstQuality: s.firstQuality ?? null, normalDamageQuality: s.normalDamageQuality ?? null, cutDamageQuality: s.cutDamageQuality ?? null,\n    totalBoxes: totals?.totalBoxes ?? null, totalTiles: totals?.totalTiles ?? null,\n    firstTiles: totals?.firstTiles ?? null, normalDamageTiles: totals?.normalDamageTiles ?? null, cutDamageTiles: totals?.cutDamageTiles ?? null,\n    undetectedTiles: totals?.undetectedTiles ?? null, unclassifiedTiles: totals?.unclassifiedTiles ?? null,\n    designs, gradeBreakdownAvailable: Array.isArray(segments), codeWiseProduction: s.codeWiseProduction || [],\n    gradeSegments: segments || [], gradeCatalogue: catalogue, qualitySummary: totals,\n    availability: s.availability ?? null, performance: s.performance ?? null, oee: s.oee ?? s.ole ?? null,\n    updatedAt: new Date(now).toISOString() };\n}\nif(!Array.isArray(msg.payload))throw Error(\u0027Invalid saved shifts response.\u0027);\nreturn [msg.payload.map(doc=\u003e{const report=qualityReportDocument(doc);const {_id,...fields}=report;return {qualityReport:report,sourceShift:doc,payload:[{_id,$or:[{sourceQualityUpdatedAt:{$lte:report.sourceQualityUpdatedAt}},{sourceQualityUpdatedAt:{$exists:false}}]},{$set:fields},{upsert:true}]};})];",
+        "outputs":  1,
+        "wires":  [
+                      [
+                          "rx_qreport_save"
+                      ]
+                  ],
+        "x":  1380,
+        "y":  2300
+    }
+]

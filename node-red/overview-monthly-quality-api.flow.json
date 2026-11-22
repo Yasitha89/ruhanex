@@ -1,0 +1,210 @@
+[
+  {
+    "id": "rx_overview_quality_api",
+    "type": "tab",
+    "label": "Overview monthly quality API"
+  },
+  {
+    "id": "rx_omq_http",
+    "type": "http in",
+    "z": "rx_overview_quality_api",
+    "name": "GET monthly Keda quality",
+    "method": "get",
+    "url": "/api/production/monthly-quality",
+    "x": 200,
+    "y": 160,
+    "wires": [
+      [
+        "rx_omq_prepare"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_prepare",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Validate identity / month",
+    "func": "return (function prepareMonthlyQuality(msg, now = Date.now()) {\n  const headers = msg.req?.headers || {};\n  if (!headers['x-ruhanex-user'] || !['Admin','Manager','Supervisor','Line Supervisor','JE'].includes(headers['x-ruhanex-role'])) {\n    msg.statusCode=401;msg.payload={success:false,error:'Sign in to view quality.'};return [null,msg];\n  }\n  const month=msg.req?.query?.month || new Date(now+330*60000).toISOString().slice(0,7);\n  if(typeof month!=='string'||!/^\\d{4}-(0[1-9]|1[0-2])$/.test(month)) {\n    msg.statusCode=400;msg.payload={success:false,error:'month must be YYYY-MM.'};return [null,msg];\n  }\n  const [year,number]=month.split('-').map(Number);\n  const next=new Date(Date.UTC(year,number,1)).toISOString().slice(0,10);\n  msg.monthlyQuality={month,at:now};\n  msg.payload=[{line:{$in:['Keda 1','Keda 2','Keda 3']},shiftDate:{$gte:month+'-01',$lt:next}},\n    {limit:3001,projection:{line:1,shiftDate:1,shift:1,qualityAvailable:1,qualityAssumed:1,totalTiles:1,totalBoxes:1,firstTiles:1,normalDamageTiles:1,cutDamageTiles:1,undetectedTiles:1,unclassifiedTiles:1,sourceQualityUpdatedAt:1,designs:1}}];\n  return [msg,null];\n})(msg);",
+    "outputs": 2,
+    "x": 490,
+    "y": 160,
+    "wires": [
+      [
+        "rx_omq_mongo"
+      ],
+      [
+        "rx_omq_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_mongo",
+    "type": "mongodb4",
+    "z": "rx_overview_quality_api",
+    "name": "Read monthly quality_reports",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality_reports",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 800,
+    "y": 160,
+    "wires": [
+      [
+        "rx_omq_live_prepare"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_build",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Sum Keda category tiles / calculate percentages",
+    "func": "return (function monthlyQualityResponse(msg) {\n  if(!Array.isArray(msg.payload)||msg.payload.length>3000)throw Error('Invalid monthly quality report query result.');\n  const fields=['totalTiles','totalBoxes','firstTiles','normalDamageTiles','cutDamageTiles','undetectedTiles','unclassifiedTiles'];\n  const blank=()=>Object.fromEntries(fields.map(k=>[k,0]));\n  const totals=blank(),lines=new Map(['Keda 1','Keda 2','Keda 3'].map(line=>[line,{line,...blank(),reportCount:0}]));\n  const seen=new Set();let measuredReports=0,excludedReports=0,asOf=null;\n  const sizes=new Map();let tilesWithoutSizeBreakdown=0;\n  for(const report of msg.payload) {\n    if(!lines.has(report.line))throw Error('Unexpected quality report line.');\n    const key=JSON.stringify([report.line,report.shiftDate,report.shift]);\n    if(seen.has(key))throw Error('Duplicate line/shift quality reports.');seen.add(key);\n    if(report.qualityAvailable!==true||report.qualityAssumed===true){excludedReports++;continue;}\n    if(fields.some(k=>!Number.isSafeInteger(report[k])||report[k]<0))throw Error('Invalid quality report totals.');\n    if(report.firstTiles+report.normalDamageTiles+report.cutDamageTiles+report.undetectedTiles+report.unclassifiedTiles!==report.totalTiles)throw Error('Quality category counts disagree with total tiles.');\n    for(const field of fields){totals[field]+=report[field];lines.get(report.line)[field]+=report[field];}\n    const allocated=blank();\n    for(const design of report.designs || []) {\n      const tileSize=String(design.tileSize || '').trim().toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n      if(!/^\\d+(?:\\.\\d+)?x\\d+(?:\\.\\d+)?$/.test(tileSize)||!tileSize.split('x').every(v=>Number(v)>0))throw Error('Invalid quality design tile size.');\n      if(fields.some(k=>!Number.isSafeInteger(design[k])||design[k]<0))throw Error('Invalid size quality totals.');\n      if(design.firstTiles+design.normalDamageTiles+design.cutDamageTiles+design.undetectedTiles+design.unclassifiedTiles!==design.totalTiles)throw Error('Size quality categories disagree with total.');\n      if(!sizes.has(tileSize))sizes.set(tileSize,{tileSize,...blank()});\n      for(const field of fields){sizes.get(tileSize)[field]+=design[field];allocated[field]+=design[field];}\n    }\n    if(fields.some(k=>allocated[k]>report[k]))throw Error('Design quality totals exceed shift totals.');\n    tilesWithoutSizeBreakdown+=report.totalTiles-allocated.totalTiles;\n    measuredReports++;lines.get(report.line).reportCount++;\n    const time=Date.parse(report.sourceQualityUpdatedAt);\n    if(Number.isFinite(time)&&(!asOf||time>Date.parse(asOf)))asOf=new Date(time).toISOString();\n  }\n  if(fields.some(k=>!Number.isSafeInteger(totals[k])))throw Error('Monthly quality totals exceed integer range.');\n  const pct=n=>totals.totalTiles>0?Math.round(n/totals.totalTiles*10000)/100:null;\n  const data=totals.totalTiles>0?[\n    {name:'First quality',key:'first',value:totals.firstTiles,percentage:pct(totals.firstTiles)},\n    {name:'Normal damages',key:'normalDamage',value:totals.normalDamageTiles,percentage:pct(totals.normalDamageTiles)},\n    {name:'Cut damages',key:'cutDamage',value:totals.cutDamageTiles,percentage:pct(totals.cutDamageTiles)}\n  ]:[];\n  const remainder=totals.undetectedTiles+totals.unclassifiedTiles;\n  if(remainder)data.push({name:'Undetected / unclassified',key:'other',value:remainder,percentage:pct(remainder)});\n  msg.statusCode=200;msg.headers={'Content-Type':'application/json','Cache-Control':'no-store'};\n  const sizeWiseQuality=[...sizes.values()].sort((a,b)=>a.tileSize.localeCompare(b.tileSize,undefined,{numeric:true})).map(size=>{\n    const percent=n=>size.totalTiles>0?Math.round(n/size.totalTiles*10000)/100:null;\n    return {...size,firstQuality:percent(size.firstTiles),normalDamageQuality:percent(size.normalDamageTiles),cutDamageQuality:percent(size.cutDamageTiles),otherQuality:percent(size.undetectedTiles+size.unclassifiedTiles)};\n  });\n  msg.payload={success:true,month:msg.monthlyQuality.month,source:msg.monthlyQuality.currentShiftIncluded?'quality_reports+quality_events':'quality_reports',coverage:msg.monthlyQuality.currentShiftIncluded?'saved-shifts-plus-current-shift':'saved-shifts-only',...totals,\n    firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),\n    measuredReports,excludedReports,asOf,currentShiftIncluded:msg.monthlyQuality.currentShiftIncluded===true,currentShift:msg.monthlyQuality.includeCurrentShift?msg.monthlyQuality.currentShift:null,liveReportCount:msg.monthlyQuality.liveReportCount||0,lines:[...lines.values()],sizeWiseQuality,tilesWithoutSizeBreakdown,pie:{data,valueUnit:'tiles'}};\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1150,
+    "y": 160,
+    "wires": [
+      [
+        "rx_omq_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_response",
+    "type": "http response",
+    "z": "rx_overview_quality_api",
+    "name": "Return monthly quality",
+    "statusCode": "",
+    "headers": {},
+    "x": 1510,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "rx_omq_catch",
+    "type": "catch",
+    "z": "rx_overview_quality_api",
+    "name": "Monthly quality API errors",
+    "scope": [
+      "rx_omq_prepare",
+      "rx_omq_mongo",
+      "rx_omq_build",
+      "rx_omq_live_prepare",
+      "rx_omq_catalogue",
+      "rx_omq_live_query",
+      "rx_omq_live_influx",
+      "rx_omq_live_merge"
+    ],
+    "uncaught": false,
+    "x": 550,
+    "y": 280,
+    "wires": [
+      [
+        "rx_omq_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_error",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Quality data unavailable",
+    "func": "node.warn('Monthly quality API failed at '+(msg.error?.source?.name||'unknown'));msg.statusCode=503;msg.payload={success:false,error:'Monthly quality data is temporarily unavailable.'};return msg;",
+    "outputs": 1,
+    "x": 950,
+    "y": 280,
+    "wires": [
+      [
+        "rx_omq_response"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_live_prepare",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Include active shift once / resolve Keda sensors",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nreturn (function prepareOverviewLiveQuality(msg, global) {\n  const meta=msg.monthlyQuality;\n  if(!Array.isArray(msg.payload))throw Error('Invalid saved quality response.');\n  const period=stockPeriod(meta.at);\n  msg.monthlySavedQuality=msg.payload;\n  meta.currentShift={shift:period.shift,shiftDate:period.shiftDate,from:new Date(period.start).toISOString(),to:new Date(Math.min(meta.at+1,period.end)).toISOString()};\n  meta.includeCurrentShift=period.shiftDate.slice(0,7)===meta.month;\n  if(!meta.includeCurrentShift)return [null,msg];\n  const registry=global.get('devices');\n  if(global.get('devicesReady')!==true||!registry)throw Error('Quality device registry is not ready for current-shift totals.');\n  meta.liveSensors=[];\n  for(const line of ['Keda 1','Keda 2','Keda 3']){\n    const matches=Object.entries(registry).filter(([id,c])=>id.startsWith('RX-QLT-')&&c?.enabled===true&&c.line===line);\n    if(matches.length>1)throw Error('Multiple enabled quality sensors for '+line);\n    if(matches.length)meta.liveSensors.push({device:matches[0][0],line});\n  }\n  // Remove active-shift reports even when a sensor is now disabled: live data is authoritative.\n  msg.monthlySavedQuality=msg.monthlySavedQuality.filter(r=>r.shiftDate!==period.shiftDate||r.shift!==period.shift);\n  if(!meta.liveSensors.length){msg.payload=msg.monthlySavedQuality;meta.currentShiftIncluded=true;return [null,msg];}\n  msg.payload=[{_id:'designGrades'}];return [msg,null];\n})(msg,global);",
+    "outputs": 2,
+    "x": 1100,
+    "y": 440,
+    "wires": [
+      [
+        "rx_omq_catalogue"
+      ],
+      [
+        "rx_omq_build"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_catalogue",
+    "type": "mongodb4",
+    "z": "rx_overview_quality_api",
+    "name": "Read categories for current-shift quality",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 1480,
+    "y": 440,
+    "wires": [
+      [
+        "rx_omq_live_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_live_query",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Query live Keda quality deltas",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nreturn (function buildOverviewLiveQuery(msg) {\n  const catalogue=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n  if(!Array.isArray(catalogue?.grades))throw Error('Design grade catalogue unavailable for live quality.');\n  msg.monthlyLiveGrades=catalogue.grades;\n  const meta=msg.monthlyQuality, shift=meta.currentShift;\n  const queries=meta.liveSensors.map(s=>qualityShiftQuery(s.device,shift.from,shift.to,'RCLH',s.line));\n  msg.query=queries.length===1?queries[0]:`union(tables:[${queries.join(',')}])`;\n  delete msg.payload;return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1840,
+    "y": 440,
+    "wires": [
+      [
+        "rx_omq_live_influx"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_live_influx",
+    "type": "influxdb in",
+    "z": "rx_overview_quality_api",
+    "name": "Read current shift quality_events",
+    "influxdb": "eef122fda5340dac",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 2180,
+    "y": 440,
+    "wires": [
+      [
+        "rx_omq_live_merge"
+      ]
+    ]
+  },
+  {
+    "id": "rx_omq_live_merge",
+    "type": "function",
+    "z": "rx_overview_quality_api",
+    "name": "Combine saved reports + live category/design totals",
+    "func": "function calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction qualityReportDocument(doc, now = Date.now()) {\n  const s = doc?.lineStats;\n  if (!/^Keda [123]$/.test(s?.lineName || '')) throw Error('Quality reports are only supported for Keda 1, Keda 2 and Keda 3.');\n  if (!s || !s.lineName || !s.shiftDate || !['06-14','14-22','22-06'].includes(s.shift) || !s.qualityUpdatedAt) throw Error('Missing saved shift quality identity/version.');\n  if (!Number.isFinite(Date.parse(s.qualityUpdatedAt))) throw Error('Invalid quality version timestamp.');\n  const totals = s.qualitySummary || null;\n  const segments = totals?.gradeSegments;\n  const catalogue = s.qualityCatalogueSnapshot || [];\n  const definitions = new Map(catalogue.map(g => [String(g.grade || '').trim().toLowerCase(), g]));\n  const products = new Map();\n  if (Array.isArray(segments)) for (const segment of segments) {\n    if (!Array.isArray(segment.gradeBoxes) || segment.gradeBoxes.length !== 16 || !Number.isSafeInteger(segment.tilesPerBox) || segment.tilesPerBox <= 0) throw Error('Invalid saved grade segment.');\n    const key = JSON.stringify([segment.designCode, segment.tileSize]);\n    if (!products.has(key)) products.set(key, { designCode: segment.designCode, tileSize: segment.tileSize, totalBoxes: 0, totalTiles: 0, firstTiles: 0, normalDamageTiles: 0, cutDamageTiles: 0, undetectedTiles: 0, unclassifiedTiles: 0, grades: new Map() });\n    const product = products.get(key);\n    segment.gradeBoxes.forEach((boxes, gradeNumber) => {\n      if (!Number.isSafeInteger(boxes) || boxes < 0) throw Error('Invalid grade box count.');\n      const tiles = boxes * segment.tilesPerBox;\n      if (!Number.isSafeInteger(tiles)) throw Error('Invalid grade tile count.');\n      product.totalBoxes += boxes; product.totalTiles += tiles;\n      const grade = gradeNumber === 0 ? null : segment.designGrades?.[String(gradeNumber)] || null;\n      const definition = definitions.get(String(grade || '').trim().toLowerCase());\n      const category = gradeNumber === 0 ? null : Number(definition?.category);\n      const label = gradeNumber === 0 ? 'undetected' : category === 1 ? 'first' : category === 2 ? 'normalDamage' : category === 3 ? 'cutDamage' : 'unclassified';\n      product[label + 'Tiles'] += tiles;\n      if (!boxes) return;\n      const gradeKey = JSON.stringify([gradeNumber, grade, category]);\n      if (!product.grades.has(gradeKey)) product.grades.set(gradeKey, { gradeNumber, grade, description: definition?.description || '', category: [1,2,3].includes(category) ? category : null, boxes: 0, tiles: 0 });\n      const row = product.grades.get(gradeKey); row.boxes += boxes; row.tiles += tiles;\n    });\n  }\n  const pct = (n,d) => d > 0 ? Math.round(n / d * 10000) / 100 : null;\n  const designs = [...products.values()].map(p => ({ ...p, grades: [...p.grades.values()], firstQuality: pct(p.firstTiles,p.totalTiles), normalDamageQuality: pct(p.normalDamageTiles,p.totalTiles), cutDamageQuality: pct(p.cutDamageTiles,p.totalTiles) }));\n  if (Array.isArray(segments) && (designs.reduce((n,p)=>n+p.totalTiles,0)!==totals.totalTiles || designs.reduce((n,p)=>n+p.totalBoxes,0)!==totals.totalBoxes)) throw Error('Saved quality segment totals disagree.');\n  return { _id: JSON.stringify([s.lineName,s.shiftDate,s.shift]), schema: 1, line: s.lineName, shiftDate: s.shiftDate, shift: s.shift,\n    shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, productionDevice: s.device, qualitySensorDevice: s.qualitySensorDevice || null,\n    sourceShiftId: String(doc._id), sourceQualityUpdatedAt: s.qualityUpdatedAt, source: 'saved-shift-summary',\n    status: s.qualityStatus || 'unavailable', settled: s.directQualitySettled === true, qualityAvailable: s.qualityAvailable === true, qualityAssumed: s.qualityAssumed === true,\n    quality: s.quality ?? null, firstQuality: s.firstQuality ?? null, normalDamageQuality: s.normalDamageQuality ?? null, cutDamageQuality: s.cutDamageQuality ?? null,\n    totalBoxes: totals?.totalBoxes ?? null, totalTiles: totals?.totalTiles ?? null,\n    firstTiles: totals?.firstTiles ?? null, normalDamageTiles: totals?.normalDamageTiles ?? null, cutDamageTiles: totals?.cutDamageTiles ?? null,\n    undetectedTiles: totals?.undetectedTiles ?? null, unclassifiedTiles: totals?.unclassifiedTiles ?? null,\n    designs, gradeBreakdownAvailable: Array.isArray(segments), codeWiseProduction: s.codeWiseProduction || [],\n    gradeSegments: segments || [], gradeCatalogue: catalogue, qualitySummary: totals,\n    availability: s.availability ?? null, performance: s.performance ?? null, oee: s.oee ?? s.ole ?? null,\n    updatedAt: new Date(now).toISOString() };\n}\nreturn (function mergeOverviewLiveQuality(msg) {\n  if(!Array.isArray(msg.payload))throw Error('Invalid live quality query result.');\n  const meta=msg.monthlyQuality, shift=meta.currentShift;\n  const reports=meta.liveSensors.map(sensor=>{\n    const rows=msg.payload.filter(r=>r.device===sensor.device);\n    const qualitySummary=calculateLiveQuality(rows,msg.monthlyLiveGrades);\n    qualitySummary.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n    return qualityReportDocument({_id:'live:'+sensor.device,lineStats:{lineName:sensor.line,device:null,qualitySensorDevice:sensor.device,shiftDate:shift.shiftDate,shift:shift.shift,\n      shiftStart:shift.from,shiftEnd:shift.to,qualityUpdatedAt:new Date(meta.at).toISOString(),qualitySummary,qualityCatalogueSnapshot:msg.monthlyLiveGrades,\n      qualityAvailable:qualitySummary.qualityAvailable,qualityAssumed:false,qualityStatus:qualitySummary.qualityAvailable?'measured':'no-tracked-quality-data',\n      quality:qualitySummary.firstQuality,firstQuality:qualitySummary.firstQuality,normalDamageQuality:qualitySummary.normalDamageQuality,cutDamageQuality:qualitySummary.cutDamageQuality}},meta.at);\n  });\n  msg.payload=[...msg.monthlySavedQuality,...reports];\n  meta.currentShiftIncluded=true;meta.liveReportCount=reports.filter(r=>r.qualityAvailable).length;\n  delete msg.monthlySavedQuality;delete msg.monthlyLiveGrades;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 2540,
+    "y": 440,
+    "wires": [
+      [
+        "rx_omq_build"
+      ]
+    ]
+  }
+]

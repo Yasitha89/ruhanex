@@ -1,0 +1,26 @@
+import fs from 'node:fs';
+import { qualityReportDocument } from './quality-report-storage.mjs';
+const raw=JSON.parse(fs.readFileSync('C:/Users/Yasitha/.codex/attachments/9410f09a-5354-49f7-9a5d-17c4f5112cee/Pasted text.txt','utf8').replace(/^\uFEFF/,''));
+const z='e5489573e203f3d0';
+const add=[];
+const fn=(id,name,func,to,x,y)=>add.push({id,type:'function',z,name,func,outputs:1,wires:[[to]],x,y});
+const db=(id,collection,operation,to,x,y)=>add.push({id,type:'mongodb4',z,name:`Reports: ${operation} ${collection}`,clientNode:'8120871193b8f276',mode:'collection',collection,operation,output:'toArray',maxTimeMS:operation==='find'?'15000':'',handleDocId:false,wires:[[to]],x,y});
+add.push({id:'rx_qreport_tick',type:'inject',z,name:'Retry quality report copies every minute',props:[],repeat:'60',once:true,onceDelay:30,x:300,y:2300,wires:[['rx_qreport_scan']]});
+fn('rx_qreport_scan','Find Keda quality missing its report copy',`msg.payload=[{'lineStats.lineName':{$in:['Keda 1','Keda 2','Keda 3']},'lineStats.qualityUpdatedAt':{$exists:true},'lineStats.qualityStatus':{$ne:'pending'},$expr:{$ne:[{$ifNull:['$lineStats.qualityReportSourceUpdatedAt',null]},'$lineStats.qualityUpdatedAt']}},{sort:{'lineStats.qualityUpdatedAt':1},limit:50}];return msg;`,'rx_qreport_read',650,2300);
+db('rx_qreport_read','shifts','find','rx_qreport_build',1000,2300);
+fn('rx_qreport_build','Build category / design / grade report documents',`${qualityReportDocument.toString()}
+if(!Array.isArray(msg.payload))throw Error('Invalid saved shifts response.');
+return [msg.payload.map(doc=>{const report=qualityReportDocument(doc);const {_id,...fields}=report;return {qualityReport:report,sourceShift:doc,payload:[{_id,$or:[{sourceQualityUpdatedAt:{$lte:report.sourceQualityUpdatedAt}},{sourceQualityUpdatedAt:{$exists:false}}]},{$set:fields},{upsert:true}]};})];`,'rx_qreport_save',1380,2300);
+db('rx_qreport_save','quality_reports','updateOne','rx_qreport_mark',1780,2300);
+fn('rx_qreport_mark','Confirm report / mark source version',`if(msg.payload?.acknowledged!==true)throw Error('Quality report write not acknowledged.');const d=msg.sourceShift;msg.payload=[{_id:d._id,'lineStats.qualityUpdatedAt':d.lineStats.qualityUpdatedAt},{$set:{'lineStats.qualityReportSourceUpdatedAt':d.lineStats.qualityUpdatedAt,'lineStats.qualityReportCopiedAt':new Date().toISOString()}}];return msg;`,'rx_qreport_ack',2150,2300);
+db('rx_qreport_ack','shifts','updateOne','rx_qreport_done',2500,2300);
+fn('rx_qreport_done','Quality report copied',`if(msg.payload?.acknowledged!==true)throw Error('Cannot mark quality report copy.');return {payload:{saved:msg.payload.matchedCount===1,collection:'quality_reports',reportId:msg.qualityReport._id}};`,'rx_qreport_debug',2800,2300);
+add.push({id:'rx_qreport_catch',type:'catch',z,name:'Quality report copy errors',scope:add.filter(n=>['function','mongodb4'].includes(n.type)).map(n=>n.id),uncaught:false,x:600,y:2420,wires:[['rx_qreport_error']]});
+fn('rx_qreport_error','Report copy retries next minute',`return {payload:{saved:false,collection:'quality_reports',error:String(msg.error?.message||'Quality report copy failed'),retry:'Next minute'}};`,'rx_qreport_debug',1050,2420);
+add.push({id:'rx_qreport_debug',type:'debug',z,name:'Quality reporting save result',active:true,tosidebar:true,complete:'payload',targetType:'msg',x:3100,y:2300,wires:[]});
+const nodes=raw.filter(n=>!['mongodb4-client','influxdb','global-config'].includes(n.type));
+const success=nodes.find(n=>n.id==='e3e63d6b35ac8613');
+success.wires[0].push('rx_qreport_scan');
+fs.writeFileSync(new URL('./quality-recheck-reporting.complete.flow.json',import.meta.url),JSON.stringify([...nodes,...add],null,2)+'\n');
+fs.writeFileSync(new URL('./quality-report-storage.add-on.flow.json',import.meta.url),JSON.stringify([success,...add],null,2)+'\n');
+console.log('Generated quality reporting collection add-on and complete recheck flow.');

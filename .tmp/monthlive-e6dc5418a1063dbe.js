@@ -1,0 +1,1 @@
+node.warn('Monthly quality API failed at '+(msg.error?.source?.name||'unknown'));msg.statusCode=503;msg.payload={success:false,error:'Monthly quality data is temporarily unavailable.'};return msg;

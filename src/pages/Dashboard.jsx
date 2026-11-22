@@ -28,8 +28,7 @@ import {
 import { PRODUCTION_LINES } from "../utils/constants";
 import { getCurrentShiftTimeRange } from "../utils/shiftUtils";
 import "./Dashboard.css";
-import FloorStockChart from "../components/FloorStockChart";
-import CarStockChart from "../components/CarStockChart";
+import MonthlyQualityChart from "../components/MonthlyQualityChart";
 import CodeProductionChart from "../components/CodeProductionChart";
 
 const { Title, Text } = Typography;
@@ -733,12 +732,8 @@ export default function Dashboard() {
           </Card>
         </Col>
 
-        <Col xs={24} xl={8}>
-          <FloorStockChart />
-        </Col>
-
-        <Col xs={24} xl={8}>
-          <CarStockChart />
+        <Col xs={24} xl={16}>
+          <MonthlyQualityChart key={month} month={month} />
         </Col>
       </Row>
     </div>

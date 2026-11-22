@@ -1,0 +1,23 @@
+[
+  {
+    "id": "ba29ac1848fbe345",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Update Shift Code-wise Production",
+    "x": 4340,
+    "y": 1680,
+    "wires": [
+      [
+        "5164809ae95a44b7",
+        "rx_shift_report_after_save_link"
+      ]
+    ]
+  }
+]

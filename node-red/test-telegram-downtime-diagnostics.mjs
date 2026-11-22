@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const nodes=JSON.parse(fs.readFileSync(new URL('./telegram-downtime-diagnostics.complete.flow.json',import.meta.url)));
+for(const n of nodes.filter(n=>n.type==='function'))new vm.Script(`(function(msg){${n.func}\n})`);
+const code=nodes.find(n=>n.id==='d8687f0fb9d3963a').func;
+const now=Date.parse('2026-11-22T03:40:00Z'),device={device:'RX-CNT-1004',line:'Keda 2',status:'Stopped',event:now-2400000,pending:false};
+class Clock extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}}
+const make=(input,settings={},startingLock=undefined)=>{
+ const emitted=[],states=new Map([['aiLatestDowntimeSnapshot',{at:now,devices:[device]}]]);
+ const flow={get:k=>states.get(k),set:(k,v)=>states.set(k,v)};
+ const initialLock=startingLock===undefined&&input.dt?{id:input.dt.id,until:now+300000}:startingLock;
+ if(initialLock)states.set('telegramDowntimeAlertLock',initialLock);
+ const env={get:k=>({TELEGRAM_BOT_TOKEN:'123:testtoken',DOWNTIME_ALERT_ENABLED:'true',DOWNTIME_ALERT_DEBUG:'true',...settings})[k]};
+ const node={send:r=>emitted.push(r),status:()=>{},error:message=>{throw Error(message);}};
+ const result=vm.runInNewContext(`(function(msg){${code}\n})`,{flow,env,node,global:{get:()=>({})},Date:Clock})(input);
+ return {result,emitted,states};
+};
+const start=make({downtimeSnapshot:{at:now,devices:[device]},_msgid:'test'});assert.equal(start.result[0].dtDb,'stops.find');
+assert(start.emitted.some(r=>r[2]?.payload?.reason==='message-entered'));
+assert(start.emitted.some(r=>r[2]?.payload?.reason==='database-request'&&r[2].payload.operation==='stops.find'));
+const disabled=make({downtimeSnapshot:{at:now,devices:[device]}},{DOWNTIME_ALERT_ENABLED:'false'});assert.equal(disabled.result,null);assert(disabled.emitted.some(r=>r[2]?.payload?.reason==='alerts-disabled'));
+const dt={id:'test',stage:'draftLookup',queue:[],device,eventKey:'test-event',episodeKey:'test-episode',episode:{start:device.event,end:null},bucket:'ai-test'};
+const draft=make({dt:structuredClone(dt),payload:null});
+const reason=draft.emitted.find(r=>r[2]?.payload?.reason==='message-draft-unavailable')[2].payload;
+assert.equal(reason.openaiKeyConfigured,false);assert.equal(reason.modelConfigured,false);assert(draft.states.get('aiDowntimeDraftRetryAt')>now);
+const manager=make({dt:{...structuredClone(dt),stage:'manager',target:{_id:'chat-test',ruhanexAccountGeneration:'g1'}},payload:{role:'Manager',enabled:true,mustChangePassword:false,accountGeneration:'g1'}});
+assert.equal(manager.result[0].dtDb,'events.updateOne');assert(manager.emitted.some(r=>r[2]?.payload?.reason==='recipient-not-eligible'));
+const admin=make({dt:{...structuredClone(dt),stage:'manager',target:{_id:'chat-test',ruhanexAccountGeneration:'g1'},delivery:{text:'Test only, no HTTP tool executed'}},payload:{role:'Admin',enabled:true,mustChangePassword:false,accountGeneration:'g1'}});
+assert.equal(admin.result[1].dt.stage,'sent');
+const baseline=make({downtimeSnapshot:{at:now,devices:[device]},_msgid:'test'},{DOWNTIME_ALERT_DEBUG:'false'});assert.equal(baseline.emitted.length,0);
+const expired=make({downtimeSnapshot:{at:now,devices:[device]},_msgid:'new-poll'},{},{id:'old-poll',until:now-1000});
+assert.equal(expired.result[0].dtDb,'stops.find');assert.equal(expired.states.get('telegramDowntimeAlertLock').id,'new-poll');
+assert(expired.emitted.some(r=>r[2]?.payload?.reason==='expired-poll-lock-replaced'));
+const busy=make({downtimeSnapshot:{at:now,devices:[device]},_msgid:'new-poll'},{},{id:'active-poll',until:now+1000});assert.equal(busy.result,null);assert.equal(busy.states.get('telegramDowntimeAlertLock').id,'active-poll');
+const stale=make({dt:structuredClone(dt),payload:null},{},null);assert.equal(stale.result,null);assert(stale.emitted.some(r=>r[2]?.payload?.reason==='stale-poll-callback-ignored'));
+const superseded=make({dt:structuredClone(dt),payload:null},{},{id:'newer-owner',until:now-1000});assert.equal(superseded.result,null);assert.equal(superseded.states.get('telegramDowntimeAlertLock').id,'newer-owner');
+console.log('Sender diagnostics verified: original routing, disabled flag, missing OpenAI drafting configuration, Admin-only recipient policy and Function syntax. No network requests sent.');

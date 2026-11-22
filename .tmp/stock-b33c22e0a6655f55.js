@@ -1,0 +1,1 @@
+const queue=flow.get('rx_gap_floor_queue')||[]; const next=queue.shift(); flow.set('rx_gap_floor_queue',queue); if(!next) flow.set('rx_gap_floor_busy',false); return [msg,next||null];

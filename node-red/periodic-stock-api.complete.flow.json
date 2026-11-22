@@ -1,0 +1,226 @@
+[
+  {
+    "id": "affc7fa1d38f33e1",
+    "type": "http in",
+    "z": "e5489573e203f3d0",
+    "name": "GET /api/production/floor-stock",
+    "url": "/api/production/floor-stock",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 4450,
+    "y": 4800,
+    "wires": [
+      [
+        "ec37e99d7d76a092"
+      ]
+    ]
+  },
+  {
+    "id": "ec37e99d7d76a092",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Query latest floorStocks",
+    "func": "msg.collection='floorStocks';msg.mode='collection';msg.operation='find';msg.payload=[{}, {sort:{shiftEnd:-1,calculatedAt:-1},limit:1}];return msg;",
+    "outputs": 1,
+    "x": 4730,
+    "y": 4800,
+    "wires": [
+      [
+        "2026b53c8337f194"
+      ]
+    ]
+  },
+  {
+    "id": "2026b53c8337f194",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "floorStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "MongoDB: latest floorStocks",
+    "x": 5010,
+    "y": 4800,
+    "wires": [
+      [
+        "9bacf53ce597b788"
+      ]
+    ]
+  },
+  {
+    "id": "9bacf53ce597b788",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Return saved periodic floor stock",
+    "func": "return (function stockSnapshotResponse(msg, kind, now = Date.now()) {\n  if (!Array.isArray(msg.payload)) throw Error('Invalid stock database response.');\n  const doc = msg.payload[0] || null;\n  if (doc && !Array.isArray(doc.stocks)) throw Error('Saved stock document has no stocks array.');\n  const valueField = kind === 'floor' ? 'floorStockM2' : 'carStockM2';\n  const stocks = (doc?.stocks || []).map(row => {\n    const tileSize = String(row.tileSize || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n    const dimensions = tileSize.split('x').map(Number);\n    const closing = Number(row.closingStock);\n    if (dimensions.length !== 2 || !dimensions.every(v => Number.isFinite(v) && v > 0) || row.closingStock == null || !Number.isFinite(closing) || closing < 0) throw Error('Invalid tile size or closing stock in saved stock document.');\n    const area = dimensions[0] * dimensions[1] / 10000;\n    return { ...row, tileSize, [valueField]: Math.round((closing * area + Number.EPSILON) * 100) / 100,\n      [kind === 'floor' ? 'currentFloorStock' : 'currentCarStock']: closing };\n  }).sort((a, b) => a.tileSize.localeCompare(b.tileSize, undefined, { numeric: true }));\n  const asOf = doc ? doc.calculationTo || doc.calculatedAt || doc.shiftEnd : null;\n  if (doc && (!Number.isFinite(Date.parse(asOf)) || Date.parse(asOf) > now + 5000)) throw Error('Saved stock calculation time is invalid or in the future.');\n  msg.statusCode = 200;\n  msg.headers = { ...msg.headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\n  msg.payload = {\n    success: true, source: 'mongodb-periodic-stock', status: doc?.status || 'no-data',\n    shift: doc?.shift || null, shiftDate: doc?.shiftDate || null,\n    currentShiftStart: doc?.shiftStart || null, asOf,\n    snapshot: doc ? { id: String(doc._id), shiftDate: doc.shiftDate, shift: doc.shift, shiftStart: doc.shiftStart, shiftEnd: doc.shiftEnd } : null,\n    stocks, [kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: doc ? Math.round(stocks.reduce((sum, row) => sum + row[valueField], 0) * 100) / 100 : null,\n    stale: doc ? now - Date.parse(asOf) > 15 * 60000 : false, warnings: []\n  };\n  return msg;\n})(msg,'floor');",
+    "outputs": 1,
+    "x": 5280,
+    "y": 4800,
+    "wires": [
+      [
+        "f1cbe436625b79b5"
+      ]
+    ]
+  },
+  {
+    "id": "f1cbe436625b79b5",
+    "type": "http response",
+    "z": "e5489573e203f3d0",
+    "name": "HTTP Response",
+    "statusCode": "",
+    "headers": {},
+    "x": 6200,
+    "y": 4800,
+    "wires": []
+  },
+  {
+    "id": "0d7c06f5c99c1b7d",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Catch DB errors",
+    "scope": [
+      "ec37e99d7d76a092",
+      "2026b53c8337f194",
+      "9bacf53ce597b788"
+    ],
+    "uncaught": false,
+    "x": 5480,
+    "y": 4880,
+    "wires": [
+      [
+        "caa99fb136200966"
+      ]
+    ]
+  },
+  {
+    "id": "caa99fb136200966",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Database error -> 500",
+    "func": "msg.statusCode=500;\nmsg.payload={success:false,error:\"Unable to calculate live floor stock\",detail:String(msg.error?.message||\"Database query failed\")};\nreturn msg;",
+    "outputs": 1,
+    "x": 5720,
+    "y": 4880,
+    "wires": [
+      [
+        "f1cbe436625b79b5"
+      ]
+    ]
+  },
+  {
+    "id": "cl_5fdd45623499",
+    "type": "http in",
+    "z": "e5489573e203f3d0",
+    "name": "GET /api/production/car-stock",
+    "url": "/api/production/car-stock",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 4440,
+    "y": 5060,
+    "wires": [
+      [
+        "cl_4aaefa5b8633"
+      ]
+    ]
+  },
+  {
+    "id": "cl_4aaefa5b8633",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Query latest carStocks",
+    "func": "msg.collection='carStocks';msg.mode='collection';msg.operation='find';msg.payload=[{}, {sort:{shiftEnd:-1,calculatedAt:-1},limit:1}];return msg;",
+    "outputs": 1,
+    "x": 4700,
+    "y": 5060,
+    "wires": [
+      [
+        "cl_94cc7fb788b2"
+      ]
+    ]
+  },
+  {
+    "id": "cl_94cc7fb788b2",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "carStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "MongoDB: latest carStocks",
+    "x": 4960,
+    "y": 5060,
+    "wires": [
+      [
+        "cl_4c56cb0af8eb"
+      ]
+    ]
+  },
+  {
+    "id": "cl_4c56cb0af8eb",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Return saved periodic car stock",
+    "func": "return (function stockSnapshotResponse(msg, kind, now = Date.now()) {\n  if (!Array.isArray(msg.payload)) throw Error('Invalid stock database response.');\n  const doc = msg.payload[0] || null;\n  if (doc && !Array.isArray(doc.stocks)) throw Error('Saved stock document has no stocks array.');\n  const valueField = kind === 'floor' ? 'floorStockM2' : 'carStockM2';\n  const stocks = (doc?.stocks || []).map(row => {\n    const tileSize = String(row.tileSize || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n    const dimensions = tileSize.split('x').map(Number);\n    const closing = Number(row.closingStock);\n    if (dimensions.length !== 2 || !dimensions.every(v => Number.isFinite(v) && v > 0) || row.closingStock == null || !Number.isFinite(closing) || closing < 0) throw Error('Invalid tile size or closing stock in saved stock document.');\n    const area = dimensions[0] * dimensions[1] / 10000;\n    return { ...row, tileSize, [valueField]: Math.round((closing * area + Number.EPSILON) * 100) / 100,\n      [kind === 'floor' ? 'currentFloorStock' : 'currentCarStock']: closing };\n  }).sort((a, b) => a.tileSize.localeCompare(b.tileSize, undefined, { numeric: true }));\n  const asOf = doc ? doc.calculationTo || doc.calculatedAt || doc.shiftEnd : null;\n  if (doc && (!Number.isFinite(Date.parse(asOf)) || Date.parse(asOf) > now + 5000)) throw Error('Saved stock calculation time is invalid or in the future.');\n  msg.statusCode = 200;\n  msg.headers = { ...msg.headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\n  msg.payload = {\n    success: true, source: 'mongodb-periodic-stock', status: doc?.status || 'no-data',\n    shift: doc?.shift || null, shiftDate: doc?.shiftDate || null,\n    currentShiftStart: doc?.shiftStart || null, asOf,\n    snapshot: doc ? { id: String(doc._id), shiftDate: doc.shiftDate, shift: doc.shift, shiftStart: doc.shiftStart, shiftEnd: doc.shiftEnd } : null,\n    stocks, [kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: doc ? Math.round(stocks.reduce((sum, row) => sum + row[valueField], 0) * 100) / 100 : null,\n    stale: doc ? now - Date.parse(asOf) > 15 * 60000 : false, warnings: []\n  };\n  return msg;\n})(msg,'car');",
+    "outputs": 1,
+    "x": 5230,
+    "y": 5060,
+    "wires": [
+      [
+        "cl_af01e397e6fd"
+      ]
+    ]
+  },
+  {
+    "id": "cl_af01e397e6fd",
+    "type": "http response",
+    "z": "e5489573e203f3d0",
+    "name": "HTTP Response",
+    "statusCode": "",
+    "headers": {},
+    "x": 6220,
+    "y": 5060,
+    "wires": []
+  },
+  {
+    "id": "cl_2e5cb986ef87",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Catch DB errors",
+    "scope": [
+      "cl_4aaefa5b8633",
+      "cl_94cc7fb788b2",
+      "cl_4c56cb0af8eb"
+    ],
+    "uncaught": false,
+    "x": 5520,
+    "y": 5160,
+    "wires": [
+      [
+        "cl_6c24b3c5fd91"
+      ]
+    ]
+  },
+  {
+    "id": "cl_6c24b3c5fd91",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Database error -> 500",
+    "func": "msg.statusCode=500;\nmsg.payload={success:false,error:\"Unable to calculate live car stock\",detail:String(msg.error?.message||\"Database query failed\")};\nreturn msg;",
+    "outputs": 1,
+    "x": 5780,
+    "y": 5160,
+    "wires": [
+      [
+        "cl_af01e397e6fd"
+      ]
+    ]
+  }
+]

@@ -1,0 +1,378 @@
+[
+  {
+    "id": "rx_periodic_stock_tab",
+    "type": "tab",
+    "label": "Periodic floor and car stock",
+    "info": "Standalone five-minute stock updates. See periodic-stock.README.md."
+  },
+  {
+    "id": "rx_periodic_floor_tick",
+    "type": "inject",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: update every 5 minutes",
+    "props": [],
+    "repeat": "300",
+    "once": true,
+    "onceDelay": 30,
+    "x": 180,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_start",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: prepare stock update",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nreturn (function startPeriodicStock(msg, global, flow, kind, now = Date.now()) {\n  const key = `periodicStock_${kind}`;\n  if (flow.get(key)?.until > now) throw Error(`Stock update already in progress; lock expires in ${Math.ceil((flow.get(key).until - now) / 1000)} seconds.`);\n  if (global.get('devicesReady') !== true) throw Error('Device registry is not ready: global.devicesReady is not true.');\n  if (global.get('counterRestoreReady') === false) throw Error('Counter restore is not ready: global.counterRestoreReady is false.');\n  const positive = kind === 'floor' ? 'kiln' : 'glaze';\n  const negative = kind === 'floor' ? 'keda' : 'kiln';\n  const roles = {}, overrides = global.get(`${kind}StockDeviceRoles`) || {};\n  for (const [id, cfg] of Object.entries(global.get('counterConfig') || {})) {\n    if (cfg?.enabled !== true) continue;\n    const line = String(cfg.line || '');\n    const role = overrides[id] || (/kiln|firing/i.test(line) ? 'kiln' : /keda|sorting/i.test(line) ? 'keda' : /glaze|glazing/i.test(line) ? 'glaze' : '');\n    if ([positive, negative].includes(role)) roles[id] = role;\n  }\n  if (![positive, negative].every(role => Object.values(roles).includes(role))) throw Error('Enabled source and destination counters are required.');\n  const id = msg._msgid || `${now}-${Math.random()}`;\n  flow.set(key, { id, until: now + 240000 });\n  msg.stock = { kind, key, id, at: now, roles, positive, negative };\n  // Only use a completed, settled shift as the immutable opening balance.\n  msg.payload = [{}, { sort: { shiftEnd: -1 }, limit: 3 }];\n  return msg;\n})(msg,global,flow,'floor');",
+    "outputs": 1,
+    "x": 440,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_read"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_read",
+    "type": "mongodb4",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "floorStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "30000",
+    "handleDocId": false,
+    "x": 700,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_query",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: query production from opening balance",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nreturn (function queryPeriodicStock(msg) {\n  const s = msg.stock;\n  if (!Array.isArray(msg.payload)) throw Error('Invalid opening stock response.');\n  s.previous = msg.payload.find(d => d.status === 'completed' && Date.parse(d.shiftEnd) <= s.at - 600000 && (d.schema !== 2 || d.settled === true)) || null;\n  const provisional = msg.payload.filter(d => d.schema === 2 && Number.isFinite(Date.parse(d.shiftStart)));\n  s.manualOpenings = Object.fromEntries(provisional.filter(d => d.manualOpeningStocks).map(d => [d._id, d.manualOpeningStocks]));\n  s.from = s.previous ? Date.parse(s.previous.shiftEnd) : provisional.length ? Math.min(...provisional.map(d => Date.parse(d.shiftStart))) : stockPeriod(s.at).start;\n  if (!Number.isFinite(s.from) || s.from > s.at || stockPeriod(s.from).start !== s.from) throw Error('Invalid previous stock shift boundary.');\n  // Process a bounded chronological batch after a long outage; later ticks continue it.\n  s.to = Math.min(s.at, s.from + 7 * 86400000);\n  if (s.to <= s.from) return null;\n  msg.query = `from(bucket:\"RCLH\")\n|> range(start:time(v:${JSON.stringify(new Date(s.from).toISOString())}),stop:time(v:${JSON.stringify(new Date(s.to).toISOString())}))\n|> filter(fn:(r)=>r._measurement==\"tile_events\" and r._field==\"count_delta\")\n|> filter(fn:(r)=>contains(value:r.device,set:${JSON.stringify(Object.keys(s.roles))}))\n|> map(fn:(r)=>({r with tileSize:if exists r.tileSize then r.tileSize else \"unknown\"}))\n|> group(columns:[\"device\",\"tileSize\"])\n|> aggregateWindow(every:8h,offset:30m,fn:sum,createEmpty:false)\n|> keep(columns:[\"device\",\"tileSize\",\"_time\",\"_value\"])`;\n  delete msg.payload;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1000,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_influx"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_influx",
+    "type": "influxdb in",
+    "z": "rx_periodic_stock_tab",
+    "influxdb": "eef122fda5340dac",
+    "name": "floor: read count_delta",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 1300,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_calculate"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_calculate",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: calculate and upsert each shift",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nif(flow.get(msg.stock.key)?.id!==msg.stock.id) return null;\nreturn (function calculatePeriodicStock(msg) {\n  const s = msg.stock;\n  if (!Array.isArray(msg.payload)) throw Error('Invalid Influx stock response.');\n  const area = size => { const p = size.split('x').map(Number); return p.length === 2 && p.every(n => Number.isFinite(n) && n > 0) ? p[0] * p[1] / 10000 : 0; };\n  const normal = size => String(size || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n  const balances = new Map(), buckets = new Map();\n  for (const row of s.previous?.stocks || []) {\n    const size = normal(row.tileSize), value = Number(row.closingStock);\n    if (!area(size) || !Number.isFinite(value) || value < 0) throw Error('Invalid opening stock balance.');\n    balances.set(size, value);\n  }\n  for (const row of msg.payload) {\n    const size = normal(row.tileSize), value = Number(row._value);\n    let end = Date.parse(row._time);\n    const role = s.roles[row.device];\n    // Accept both scheduled-end and query-stop labels for the final partial window.\n    const latestEnd = stockPeriod(s.to - 1).end;\n    if (end === s.to && s.to < latestEnd) end = latestEnd;\n    if (!area(size) || !Number.isFinite(value) || value < 0 || !role || !Number.isFinite(end) || end <= s.from || end > latestEnd || (end - s.from) % 28800000 !== 0) throw Error('Invalid stock event size, count or shift bucket; no stock written.');\n    if (!buckets.has(end)) buckets.set(end, new Map());\n    const bucket = buckets.get(end), totals = bucket.get(size) || { incoming: 0, outgoing: 0 };\n    totals[role === s.positive ? 'incoming' : 'outgoing'] += value;\n    bucket.set(size, totals);\n  }\n  const round = value => Math.round((value + Number.EPSILON) * 100) / 100;\n  const documents = [];\n  let previousId = s.previous?._id || null;\n  for (let start = s.from; start < s.to; start += 28800000) {\n    const period = stockPeriod(start), bucket = buckets.get(period.end) || new Map();\n    for (const [size, count] of Object.entries(s.manualOpenings?.[period.id] || {})) {\n      if (!area(size) || !Number.isFinite(count) || count < 0) throw Error('Invalid manual opening stock.');\n      balances.set(size, count);\n    }\n    const sizes = new Set([...balances.keys(), ...bucket.keys()]);\n    const stocks = [...sizes].sort().map(tileSize => {\n      const openingStock = balances.get(tileSize) || 0;\n      const delta = bucket.get(tileSize) || { incoming: 0, outgoing: 0 };\n      const rawClosingStock = openingStock + delta.incoming - delta.outgoing;\n      const closingStock = Math.max(0, rawClosingStock);\n      balances.set(tileSize, closingStock);\n      return { tileSize, openingStock, [s.kind === 'floor' ? 'kilnOutput' : 'glazeOutput']: delta.incoming,\n        [s.kind === 'floor' ? 'kedaOutput' : 'kilnOutput']: delta.outgoing, rawClosingStock, closingStock,\n        zeroClampAdjustment: Math.max(0, -rawClosingStock), clampedToZero: rawClosingStock < 0,\n        closingStockM2: round(closingStock * area(tileSize)) };\n    });\n    documents.push({ _id: period.id, schema: 2, shiftDate: period.shiftDate, shift: period.shift,\n      shiftStart: new Date(start).toISOString(), shiftEnd: new Date(period.end).toISOString(),\n      status: period.end <= s.at ? 'completed' : 'live', settled: period.end <= s.at - 600000,\n      calculationFrom: new Date(start).toISOString(), calculationTo: new Date(Math.min(period.end, s.to)).toISOString(),\n      previousSnapshotId: previousId, openingStockInitializedToZero: !s.previous,\n      expectedDevices: Object.keys(s.roles), deviceRoles: s.roles, stocks,\n      [s.kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: round(stocks.reduce((sum, row) => sum + row.closingStockM2, 0)),\n      source: 'periodic-influx-count-delta', calculatedAt: new Date(s.at).toISOString() });\n    previousId = period.id;\n  }\n  msg.stockDocuments = documents;\n  msg.payload = [documents.map(({ _id, ...fields }) => ({ updateOne: {\n    filter: { _id, $or: [{ calculatedAt: { $lte: new Date(s.at).toISOString() } }, { calculatedAt: { $exists: false } }] },\n    update: { $set: fields }, upsert: true\n  } })), { ordered: true }];\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1600,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_write"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_write",
+    "type": "mongodb4",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: bulkWrite",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "floorStocks",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "x": 1900,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_finish",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: verify save and release lock",
+    "func": "const s=msg.stock;const r=msg.payload;if(r?.acknowledged!==true&&r?.result?.ok!==1&&r?.ok!==1)throw Error('Stock bulk write was not acknowledged.');if(flow.get(s.key)?.id===s.id)flow.set(s.key,null);return {payload:{saved:true,kind:s.kind,documents:msg.stockDocuments.length,shiftIds:msg.stockDocuments.map(d=>d._id)}};",
+    "outputs": 1,
+    "x": 2180,
+    "y": 180,
+    "wires": [
+      [
+        "rx_periodic_floor_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_catch",
+    "type": "catch",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: stock update failed",
+    "scope": [
+      "rx_periodic_floor_start",
+      "rx_periodic_floor_read",
+      "rx_periodic_floor_query",
+      "rx_periodic_floor_influx",
+      "rx_periodic_floor_calculate",
+      "rx_periodic_floor_write",
+      "rx_periodic_floor_finish"
+    ],
+    "uncaught": false,
+    "x": 750,
+    "y": 280,
+    "wires": [
+      [
+        "rx_periodic_floor_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_error",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: release lock after failure",
+    "func": "const s=msg.stock;if(s&&flow.get(s.key)?.id===s.id)flow.set(s.key,null);return {payload:{saved:false,kind:'floor',message:String(msg.error?.message||'Stock update failed'),retry:'Next five-minute tick'}};",
+    "outputs": 1,
+    "x": 1150,
+    "y": 280,
+    "wires": [
+      [
+        "rx_periodic_floor_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_floor_debug",
+    "type": "debug",
+    "z": "rx_periodic_stock_tab",
+    "name": "floor: periodic stock result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 2460,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "rx_periodic_car_tick",
+    "type": "inject",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: update every 5 minutes",
+    "props": [],
+    "repeat": "300",
+    "once": true,
+    "onceDelay": 30,
+    "x": 180,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_start"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_start",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: prepare stock update",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nreturn (function startPeriodicStock(msg, global, flow, kind, now = Date.now()) {\n  const key = `periodicStock_${kind}`;\n  if (flow.get(key)?.until > now) throw Error(`Stock update already in progress; lock expires in ${Math.ceil((flow.get(key).until - now) / 1000)} seconds.`);\n  if (global.get('devicesReady') !== true) throw Error('Device registry is not ready: global.devicesReady is not true.');\n  if (global.get('counterRestoreReady') === false) throw Error('Counter restore is not ready: global.counterRestoreReady is false.');\n  const positive = kind === 'floor' ? 'kiln' : 'glaze';\n  const negative = kind === 'floor' ? 'keda' : 'kiln';\n  const roles = {}, overrides = global.get(`${kind}StockDeviceRoles`) || {};\n  for (const [id, cfg] of Object.entries(global.get('counterConfig') || {})) {\n    if (cfg?.enabled !== true) continue;\n    const line = String(cfg.line || '');\n    const role = overrides[id] || (/kiln|firing/i.test(line) ? 'kiln' : /keda|sorting/i.test(line) ? 'keda' : /glaze|glazing/i.test(line) ? 'glaze' : '');\n    if ([positive, negative].includes(role)) roles[id] = role;\n  }\n  if (![positive, negative].every(role => Object.values(roles).includes(role))) throw Error('Enabled source and destination counters are required.');\n  const id = msg._msgid || `${now}-${Math.random()}`;\n  flow.set(key, { id, until: now + 240000 });\n  msg.stock = { kind, key, id, at: now, roles, positive, negative };\n  // Only use a completed, settled shift as the immutable opening balance.\n  msg.payload = [{}, { sort: { shiftEnd: -1 }, limit: 3 }];\n  return msg;\n})(msg,global,flow,'car');",
+    "outputs": 1,
+    "x": 440,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_read"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_read",
+    "type": "mongodb4",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: find",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "carStocks",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "30000",
+    "handleDocId": false,
+    "x": 700,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_query",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: query production from opening balance",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nreturn (function queryPeriodicStock(msg) {\n  const s = msg.stock;\n  if (!Array.isArray(msg.payload)) throw Error('Invalid opening stock response.');\n  s.previous = msg.payload.find(d => d.status === 'completed' && Date.parse(d.shiftEnd) <= s.at - 600000 && (d.schema !== 2 || d.settled === true)) || null;\n  const provisional = msg.payload.filter(d => d.schema === 2 && Number.isFinite(Date.parse(d.shiftStart)));\n  s.manualOpenings = Object.fromEntries(provisional.filter(d => d.manualOpeningStocks).map(d => [d._id, d.manualOpeningStocks]));\n  s.from = s.previous ? Date.parse(s.previous.shiftEnd) : provisional.length ? Math.min(...provisional.map(d => Date.parse(d.shiftStart))) : stockPeriod(s.at).start;\n  if (!Number.isFinite(s.from) || s.from > s.at || stockPeriod(s.from).start !== s.from) throw Error('Invalid previous stock shift boundary.');\n  // Process a bounded chronological batch after a long outage; later ticks continue it.\n  s.to = Math.min(s.at, s.from + 7 * 86400000);\n  if (s.to <= s.from) return null;\n  msg.query = `from(bucket:\"RCLH\")\n|> range(start:time(v:${JSON.stringify(new Date(s.from).toISOString())}),stop:time(v:${JSON.stringify(new Date(s.to).toISOString())}))\n|> filter(fn:(r)=>r._measurement==\"tile_events\" and r._field==\"count_delta\")\n|> filter(fn:(r)=>contains(value:r.device,set:${JSON.stringify(Object.keys(s.roles))}))\n|> map(fn:(r)=>({r with tileSize:if exists r.tileSize then r.tileSize else \"unknown\"}))\n|> group(columns:[\"device\",\"tileSize\"])\n|> aggregateWindow(every:8h,offset:30m,fn:sum,createEmpty:false)\n|> keep(columns:[\"device\",\"tileSize\",\"_time\",\"_value\"])`;\n  delete msg.payload;\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1000,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_influx"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_influx",
+    "type": "influxdb in",
+    "z": "rx_periodic_stock_tab",
+    "influxdb": "eef122fda5340dac",
+    "name": "car: read count_delta",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 1300,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_calculate"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_calculate",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: calculate and upsert each shift",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nif(flow.get(msg.stock.key)?.id!==msg.stock.id) return null;\nreturn (function calculatePeriodicStock(msg) {\n  const s = msg.stock;\n  if (!Array.isArray(msg.payload)) throw Error('Invalid Influx stock response.');\n  const area = size => { const p = size.split('x').map(Number); return p.length === 2 && p.every(n => Number.isFinite(n) && n > 0) ? p[0] * p[1] / 10000 : 0; };\n  const normal = size => String(size || '').trim().toLowerCase().replace(/\\s+/g, '').replace(/×/g, 'x');\n  const balances = new Map(), buckets = new Map();\n  for (const row of s.previous?.stocks || []) {\n    const size = normal(row.tileSize), value = Number(row.closingStock);\n    if (!area(size) || !Number.isFinite(value) || value < 0) throw Error('Invalid opening stock balance.');\n    balances.set(size, value);\n  }\n  for (const row of msg.payload) {\n    const size = normal(row.tileSize), value = Number(row._value);\n    let end = Date.parse(row._time);\n    const role = s.roles[row.device];\n    // Accept both scheduled-end and query-stop labels for the final partial window.\n    const latestEnd = stockPeriod(s.to - 1).end;\n    if (end === s.to && s.to < latestEnd) end = latestEnd;\n    if (!area(size) || !Number.isFinite(value) || value < 0 || !role || !Number.isFinite(end) || end <= s.from || end > latestEnd || (end - s.from) % 28800000 !== 0) throw Error('Invalid stock event size, count or shift bucket; no stock written.');\n    if (!buckets.has(end)) buckets.set(end, new Map());\n    const bucket = buckets.get(end), totals = bucket.get(size) || { incoming: 0, outgoing: 0 };\n    totals[role === s.positive ? 'incoming' : 'outgoing'] += value;\n    bucket.set(size, totals);\n  }\n  const round = value => Math.round((value + Number.EPSILON) * 100) / 100;\n  const documents = [];\n  let previousId = s.previous?._id || null;\n  for (let start = s.from; start < s.to; start += 28800000) {\n    const period = stockPeriod(start), bucket = buckets.get(period.end) || new Map();\n    for (const [size, count] of Object.entries(s.manualOpenings?.[period.id] || {})) {\n      if (!area(size) || !Number.isFinite(count) || count < 0) throw Error('Invalid manual opening stock.');\n      balances.set(size, count);\n    }\n    const sizes = new Set([...balances.keys(), ...bucket.keys()]);\n    const stocks = [...sizes].sort().map(tileSize => {\n      const openingStock = balances.get(tileSize) || 0;\n      const delta = bucket.get(tileSize) || { incoming: 0, outgoing: 0 };\n      const rawClosingStock = openingStock + delta.incoming - delta.outgoing;\n      const closingStock = Math.max(0, rawClosingStock);\n      balances.set(tileSize, closingStock);\n      return { tileSize, openingStock, [s.kind === 'floor' ? 'kilnOutput' : 'glazeOutput']: delta.incoming,\n        [s.kind === 'floor' ? 'kedaOutput' : 'kilnOutput']: delta.outgoing, rawClosingStock, closingStock,\n        zeroClampAdjustment: Math.max(0, -rawClosingStock), clampedToZero: rawClosingStock < 0,\n        closingStockM2: round(closingStock * area(tileSize)) };\n    });\n    documents.push({ _id: period.id, schema: 2, shiftDate: period.shiftDate, shift: period.shift,\n      shiftStart: new Date(start).toISOString(), shiftEnd: new Date(period.end).toISOString(),\n      status: period.end <= s.at ? 'completed' : 'live', settled: period.end <= s.at - 600000,\n      calculationFrom: new Date(start).toISOString(), calculationTo: new Date(Math.min(period.end, s.to)).toISOString(),\n      previousSnapshotId: previousId, openingStockInitializedToZero: !s.previous,\n      expectedDevices: Object.keys(s.roles), deviceRoles: s.roles, stocks,\n      [s.kind === 'floor' ? 'totalFloorStockM2' : 'totalCarStockM2']: round(stocks.reduce((sum, row) => sum + row.closingStockM2, 0)),\n      source: 'periodic-influx-count-delta', calculatedAt: new Date(s.at).toISOString() });\n    previousId = period.id;\n  }\n  msg.stockDocuments = documents;\n  msg.payload = [documents.map(({ _id, ...fields }) => ({ updateOne: {\n    filter: { _id, $or: [{ calculatedAt: { $lte: new Date(s.at).toISOString() } }, { calculatedAt: { $exists: false } }] },\n    update: { $set: fields }, upsert: true\n  } })), { ordered: true }];\n  return msg;\n})(msg);",
+    "outputs": 1,
+    "x": 1600,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_write"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_write",
+    "type": "mongodb4",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: bulkWrite",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "carStocks",
+    "operation": "bulkWrite",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "x": 1900,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_finish",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: verify save and release lock",
+    "func": "const s=msg.stock;const r=msg.payload;if(r?.acknowledged!==true&&r?.result?.ok!==1&&r?.ok!==1)throw Error('Stock bulk write was not acknowledged.');if(flow.get(s.key)?.id===s.id)flow.set(s.key,null);return {payload:{saved:true,kind:s.kind,documents:msg.stockDocuments.length,shiftIds:msg.stockDocuments.map(d=>d._id)}};",
+    "outputs": 1,
+    "x": 2180,
+    "y": 540,
+    "wires": [
+      [
+        "rx_periodic_car_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_catch",
+    "type": "catch",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: stock update failed",
+    "scope": [
+      "rx_periodic_car_start",
+      "rx_periodic_car_read",
+      "rx_periodic_car_query",
+      "rx_periodic_car_influx",
+      "rx_periodic_car_calculate",
+      "rx_periodic_car_write",
+      "rx_periodic_car_finish"
+    ],
+    "uncaught": false,
+    "x": 750,
+    "y": 640,
+    "wires": [
+      [
+        "rx_periodic_car_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_error",
+    "type": "function",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: release lock after failure",
+    "func": "const s=msg.stock;if(s&&flow.get(s.key)?.id===s.id)flow.set(s.key,null);return {payload:{saved:false,kind:'car',message:String(msg.error?.message||'Stock update failed'),retry:'Next five-minute tick'}};",
+    "outputs": 1,
+    "x": 1150,
+    "y": 640,
+    "wires": [
+      [
+        "rx_periodic_car_debug"
+      ]
+    ]
+  },
+  {
+    "id": "rx_periodic_car_debug",
+    "type": "debug",
+    "z": "rx_periodic_stock_tab",
+    "name": "car: periodic stock result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 2460,
+    "y": 540,
+    "wires": []
+  }
+]

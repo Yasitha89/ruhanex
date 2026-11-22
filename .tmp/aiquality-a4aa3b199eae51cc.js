@@ -1,0 +1,345 @@
+const kit = (function productionToolkit() {
+  function shiftContext(now = Date.now()) {
+    const offset = 330 * 60000;
+    const local = new Date(now + offset);
+    const hour = local.getUTCHours();
+    const calendarDate = local.toISOString().slice(0, 10);
+    const startHour = hour >= 22 ? 22 : hour >= 14 ? 14 : hour >= 6 ? 6 : -2;
+    const midnight = Date.parse(calendarDate + 'T00:00:00+05:30');
+    const start = midnight + startHour * 3600000;
+    const iso = ts => new Date(ts + offset).toISOString().replace('Z', '+05:30');
+    const scope = ts => {
+      const d = new Date(ts + offset);
+      return { shift: ({ 6: '06-14', 14: '14-22', 22: '22-06' })[d.getUTCHours()],
+        shiftDate: d.toISOString().slice(0, 10), fromTime: iso(ts), toTime: iso(ts + 8 * 3600000) };
+    };
+    return { timezone: 'Asia/Colombo', now: iso(now), calendarDate,
+      productionDate: scope(start).shiftDate, currentShift: scope(start), previousShift: scope(start - 8 * 3600000) };
+  }
+  const shifts = ['06-14', '14-22', '22-06'];
+  const metrics = ['current_l1_a', 'current_l2_a', 'current_l3_a', 'current_avg_a', 'voltage_l1_l2_v', 'voltage_l2_l3_v', 'voltage_l3_l1_v', 'voltage_ll_avg_v', 'voltage_l1_n_v', 'voltage_l2_n_v', 'voltage_l3_n_v', 'voltage_ln_avg_v', 'active_power_kw', 'reactive_power_kvar', 'apparent_power_kva', 'power_factor', 'frequency_hz'];
+  const spec = (path, properties, description, query = {}) => ({ path, properties, description, query });
+  const text = (description) => ({ type: 'string', description });
+  const enumeration = (values, description) => ({ type: 'string', enum: values, description });
+  function specs(lines) {
+    const line = enumeration(lines, 'Production line. One line per request; never use a fallback device.');
+    const date = text('Sri Lankan production date YYYY-MM-DD; production day starts at 06:00.');
+    const shift = enumeration(shifts, 'Production shift. 22-06 ends on the next calendar day.');
+    const device = enumeration(['1', '2', '3', '4', '5'], 'ATS1 meter: 1 ATS CEB, 2 ATS Generator, 3 MSB CEB, 4 MSB Generator, 5 ATS KEDA 2 (CEB).');
+    const times = { fromTime: text('Inclusive ISO timestamp with Z or explicit UTC offset. Interpret user dates in Asia/Colombo.'), toTime: text('Exclusive ISO timestamp with Z or explicit UTC offset.') };
+    return {
+      get_latest_temperature: spec('/api/getTemperatureData', { slaveId: enumeration(['3', '4'], 'Spray Dryer 2: 3=inside temperature, 4=output temperature.') }, 'Latest Spray Dryer 2 measured process temperature PV, set point SV and recorded delta in degrees Celsius. API searches last 30 minutes; check timestamps, STALE/controller status and gateway status. PV is measured, SV is configured. Not a command endpoint.', { slaveId: 'slave_id' }),
+      get_temperature_history: spec('/api/getHistoricalTemperatureData', {
+        slaveId: enumeration(['3', '4'], 'Spray Dryer 2: 3=inside, 4=output.'), ...times,
+        interval: enumeration(['5s', '10s', '30s', '1m', '5m', '15m', '1h', '6h', '1d'], 'Mean aggregation window. At most 5000 windows and 366 days. Use a coarser interval for long periods.'),
+        metric: enumeration(['all', 'pv', 'sv', 'delta'], 'pv=measured Celsius; sv=set point; delta=recorded deviation. all returns available fields.'),
+      }, 'Historical Spray Dryer 2 temperature time series in Celsius for one controller. Window means, not instantaneous extrema. Missing samples are unknown, not zero; do not sum temperatures. For shifts use exact Asia/Colombo start/end times.', { slaveId: 'slave_id', fromTime: 'from_time', toTime: 'to_time' }),
+      get_live_temperature_series: spec('/api/getLiveTemperatureData', {
+        slaveIds: text('Comma-separated Spray Dryer 2 controllers: 3=inside and 4=output. Use 3,4 to compare.'),
+        metric: enumeration(['pv', 'sv', 'delta'], 'Measured temperature, set point or recorded deviation in Celsius.'),
+        range: enumeration(['1m', '5m', '15m', '30m', '1h', '3h', '6h', '12h', '24h'], 'Recent rolling window; server returns mean buckets.'),
+      }, 'Recent Spray Dryer 2 temperature trends for inside/output controllers. Returned rows identify controller and timestamp. Use for recent trend charts; no writes.', { slaveIds: 'slave_ids' }),
+      get_temperature_status: spec('/api/getTemperatureGatewayStatus', {}, 'Current temperature gateway and controller communication observations. Communication problems alone do not diagnose heater, sensor, Wi-Fi or machine failure. Not historical availability.'),
+      get_production_breakdown_report: spec('/api/production/breakdown-report', {
+        category: enumeration(['green', 'sorted', 'kiln'], 'Production stage: green=Glaze Line 1/2/3; sorted=Keda 1/2/3; kiln=Kiln 1/2/3.'),
+        lines: text('Comma-separated canonical line names within that category. Empty string selects all three lines.'),
+        ...times,
+        breakdown: enumeration(['size', 'design'], 'Choose size totals or design-code totals including tile size. Never add both breakdowns together.'),
+      }, 'Preferred multi-line production report for exact date/time periods, size comparisons and design-code analysis. At most 366 days. Fully covered completed shifts use MongoDB; partial/active/missing shifts and calendar-month boundaries use Influx. Returns monthly rows for selected lines, precise period boundaries and retrieval diagnostics. Missing sources/telemetry are not confirmed zero; see warnings. Do not add green/kiln/sorted as factory output because they are successive stages.'),
+      get_monthly_production: spec('/api/production/monthly-summary', { line, month: text('YYYY-MM; any available historical month.') }, 'Monthly mÂ² total, daily/shift breakdown, size totals and unique design-code totals. Prefer this for monthly, size or design comparisons. Current shift is included for the current production month. Do not sum totalProduction and its breakdowns again. Missing days mean missing records, not proven zero. The top-level run timeline is NOT returned by this deployed handler.'),
+      get_daily_production: spec('/api/production/daily-line-summary', { line, date }, 'Current production-day overview only. The exported handler mixes current runtime with saved shifts; use get_historical_shifts for past dates. Not authoritative historical live status.'),
+      get_shift_summary: spec('/api/production/shift-summary', { line, date, shift }, 'Detailed saved/current shift KPI, mÂ² production, tiles, target, timing, downtime and code-wise production/timeline when available. lineStats:null means missing data. Quality is assumed 100%, not a measured reject rate.'),
+      get_shift_downtime: spec('/api/production/shift-stoppages', { line, date, shift }, 'Detailed stop events and classified summary: machine, reason, planned/unplanned, standard allowance/excess, additional planned, open stops and maximum duration. Prefer for root-cause evidence. Event duration and KPI allowance are different; do not double count.'),
+      get_floor_stocks: spec('/api/production/floor-stock', {}, 'Current floor stock: opening + kiln output - Keda output, per size in tiles and mÂ². Includes snapshot, live interval, warnings and zero-clamping. No historical stock API.'),
+      get_car_stocks: spec('/api/production/car-stock', {}, 'Current car stock: opening + glaze output - kiln output, per size in tiles and mÂ². Includes snapshot, live interval, warnings and zero-clamping. No historical stock API.'),
+      get_live_production: spec('/api/production/live-summary', { line }, 'Current shift production, target, speed, availability, performance, OLE, downtime classifications and sensor/run status. Backend telemetry lookback is only 60 seconds; old/no telemetry can understate production. Confirm with shift-summary for full-shift evidence.'),
+      get_historical_shifts: spec('/api/getShiftsStats', { line, fromDate: date, toDate: date }, 'Completed saved shift records over an inclusive date range in ONE request, with deterministic deduplicated totals, daily totals, weighted KPI and design/size rollups. Prefer over repeated daily/shift calls. Excludes live shift unless saved. Missing dates are not zero. Detailed rows retained when the response fits.'),
+      get_shift_count_series: spec('/api/production/shift-count-series', { line, date, shift }, 'Timestamped cumulative shift_count samples and tile size. Do NOT sum samples. Not a true per-code run timeline; query shift-summary for runs.'),
+      get_line_settings: spec('/api/line-setting', { line }, 'READ ONLY current configuration: size, design, rated speed, planned allowance and timing settings/run IDs when available. Defaults can be synthesized by the backend; not proof a line was historically configured this way.'),
+      get_design_codes: spec('/api/design-codes', { tileSize: text('Tile size e.g. 60x60; empty string lists all sizes.'), search: text('Case-insensitive design-code PREFIX; empty string lists active codes.') }, 'Active design master catalogue only, up to 50 records; not production quantities. May be limited; narrow the search.'),
+      get_machines: spec('/api/production/machines', { line, search: text('Machine-name/code search; empty string lists active machines.') }, 'Active machine master records for a line, up to 50. A registered machine is not evidence it caused downtime.'),
+      get_device_inventory: spec('/api/devices', {}, 'Sanitized device inventory: line, enabled state, type and energy meter labels. Network addresses and credentials are removed. Configuration, not live status.'),
+      get_energy_time_window: spec('/api/getHistoricalEnergyUsage', { panel: text('Panel identifier, normally ATS1.'), deviceIds: text('Comma-separated meter IDs, e.g. 1,3,5. Select only non-overlapping meters appropriate to the question.'), ...times, dailyStart: text('Daily local start HH:mm, inclusive, e.g. 18:30.'), dailyEnd: text('Daily local end HH:mm, exclusive, e.g. 22:30. Earlier end wraps midnight.'), interval: enumeration(['1h', '6h', '1d', '1mo', '1y'], 'Intervals anchored to selected-window start; final bucket shortened. 1d groups each window, 1mo/1y group by starting calendar month/year.') }, 'Energy kWh for selected meters during a recurring Asia/Colombo time window across a date range. Use for selected hours or the user-confirmed site CEB periods: day 05:30-18:30, peak 18:30-22:30, off-peak 22:30-05:30 next day, all Asia/Colombo. These are configured site timings, not independently verified tariff regulations; no cost rates are available. At most 366 days. Date ranges use first-day local midnight inclusive through day-after-last local midnight exclusive. Overnight windows are assigned to their starting date and capped at the outer range end: never add the following morning after the final selected date. Response includes precise total and per-meter totals; missing meters are null.', {deviceIds:'device_ids',fromTime:'from_time',toTime:'to_time',dailyStart:'daily_start',dailyEnd:'daily_end'}),
+      get_current_energy: spec('/api/getEnergyMeterData', { deviceId: device }, 'Latest ATS1 meter currents, voltages, kW/kvar/kVA, power factor, frequency and cumulative meter kWh. Cumulative kWh is NOT period consumption. Check status, device_status and timestamp; missing telemetry may be synthesized as zeros.', { deviceId: 'device_id' }),
+      get_energy_usage: spec('/api/getHistoricalEnergyUsage', { source: enumeration(['ceb', 'generator', 'all'], 'CEB meters 1,3,5; generator meters 2,4; all five meters. Never add all to its subsets.'), ...times, interval: enumeration(['1h', '6h', '1d', '1mo', '1y'], 'Bucket size; use 1d for a month, 1mo for a year. kWh is summed per meter per bucket.') }, 'Actual period energy consumption in kWh from increment history, including per-meter rows and interval totals. Supports multi-meter device_ids, not meters. Use this instead of integrating kW samples. No tariffs/cost data is provided.'),
+      get_electricity_history: spec('/api/getHistoricalElectricityData', { deviceId: device, ...times, interval: enumeration(['1m', '5m', '15m', '1h', '6h', '1d'], 'Mean sample window; pick coarser windows for longer periods.') }, 'Historical averaged electrical measurements for one ATS1 meter: currents, voltages, active/reactive/apparent power, PF, frequency. Peak of averaged samples is not an instantaneous peak. Maximum 5000 expected sample buckets; choose coarser interval.', { deviceId: 'device_id', fromTime: 'from_time', toTime: 'to_time' }),
+      get_live_energy_series: spec('/api/getLiveEnergyData', { source: enumeration(['ceb', 'generator', 'all'], 'CEB 1,3,5; generators 2,4; all five ATS1 meters.'), metric: enumeration(metrics, 'Electrical measurement to inspect.'), range: enumeration(['1m', '5m', '15m', '30m', '1h', '3h', '6h', '12h', '24h'], 'Recent rolling time window.') }, 'Recent per-meter electrical time-series. Values are window means; units depend on metric, never kWh. Do not combine PF or voltage by summing.'),
+    };
+  }
+  function tools(lines) {
+    return Object.entries(specs(lines)).map(([name, item]) => ({
+      type: 'function', name, description: item.description, strict: true,
+      parameters: { type: 'object', properties: item.properties, required: Object.keys(item.properties), additionalProperties: false },
+    }));
+  }
+  function plan(name, args, lines) {
+    const routes = specs(lines);
+    if (!Object.hasOwn(routes, name) || !args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Unknown tool or invalid arguments.');
+    const route = routes[name];
+    const keys = Object.keys(route.properties);
+    if (Object.keys(args).length !== keys.length || keys.some((key) => typeof args[key] !== 'string')) throw new Error('Unexpected or missing arguments.');
+    for (const key of keys) {
+      const value = args[key];
+      const property = route.properties[key];
+      if (property.enum && !property.enum.includes(value)) throw new Error(`Invalid ${key}.`);
+      if (value.length > 200 || (!value.trim() && !['search', 'tileSize', 'lines'].includes(key))) throw new Error(`Invalid ${key}.`);
+      if (['date', 'fromDate', 'toDate'].includes(key) && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw new Error(`Invalid ${key}.`);
+      if (key === 'month' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new Error('Invalid month.');
+      if (['fromTime', 'toTime'].includes(key) && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value)))) throw new Error(`Invalid ${key}; use an ISO timestamp with timezone.`);
+    }
+    if (args.fromDate && (args.fromDate > args.toDate || Date.parse(args.toDate) - Date.parse(args.fromDate) > 3660 * 86400000)) throw new Error('Invalid date range; request at most ten years per call.');
+    const duration = args.fromTime ? Date.parse(args.toTime) - Date.parse(args.fromTime) : 0;
+    if (args.fromTime && (duration <= 0 || duration > 3660 * 86400000)) throw new Error('Invalid time range; request at most ten years per call.');
+    const windows = { '5s': 5000, '10s': 10000, '30s': 30000, '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '6h': 21600000, '1d': 86400000, '1mo': 28 * 86400000, '1y': 365 * 86400000 };
+    if (args.interval && duration / windows[args.interval] > 5000) throw new Error('Too many sample buckets. Use a coarser interval.');
+    const query = {};
+    if (name === 'get_temperature_history' && duration > 366 * 86400000) throw new Error('Temperature history supports at most 366 days.');
+    for (const key of keys) query[route.query[key] || key] = args[key];
+    if (name === 'get_live_temperature_series') {
+      const controllers = args.slaveIds.split(',').map(value => value.trim());
+      if (!controllers.length || controllers.length > 2 || controllers.some(id => !['3', '4'].includes(id))) throw new Error('Select Spray Dryer 2 temperature controllers 3 and/or 4.');
+      query.slave_ids = [...new Set(controllers)].join(',');
+    }
+    if (name === 'get_production_breakdown_report') {
+      const categories = { green: ['Glaze Line 1', 'Glaze Line 2', 'Glaze Line 3'], sorted: ['Keda 1', 'Keda 2', 'Keda 3'], kiln: ['Kiln 1', 'Kiln 2', 'Kiln 3'] };
+      const selected = args.lines.trim() ? [...new Set(args.lines.split(',').map(line => line.trim()).filter(Boolean))] : categories[args.category];
+      if (!selected.length || selected.some(line => !categories[args.category].includes(line))) throw new Error('Select lines belonging to the production category.');
+      if (duration > 366 * 86400000) throw new Error('Production report supports at most 366 days.');
+      query.lines = selected.join(','); delete query.breakdown;
+    }
+    const ids = args.source === 'ceb' ? [1, 3, 5] : args.source === 'generator' ? [2, 4] : [1, 2, 3, 4, 5];
+    if (name === 'get_energy_time_window') {
+      if (!/^[A-Za-z0-9 _.-]{1,64}$/.test(args.panel)) throw new Error('Invalid panel.');
+      const ids = args.deviceIds.split(',').map(value => value.trim());
+      if (ids.length > 12 || ids.some(value => !/^\d{1,3}$/.test(value) || Number(value) < 1 || Number(value) > 247)) throw new Error('Invalid meter IDs.');
+      const clock = /^([01]\d|2[0-3]):[0-5]\d$/;
+      if (!clock.test(args.dailyStart) || !clock.test(args.dailyEnd) || args.dailyStart === args.dailyEnd || duration > 366 * 86400000) throw new Error('Invalid daily window or range.');
+      query.device_ids = [...new Set(ids.map(Number))].join(','); query.timezone = 'Asia/Colombo';
+    }
+    if (name === 'get_energy_usage') {
+      delete query.source; delete query.fromTime; delete query.toTime;
+      Object.assign(query, { panel: 'ATS1', device_ids: ids.join(','), from_time: args.fromTime, to_time: args.toTime });
+    }
+    if (name === 'get_live_energy_series') {
+      delete query.source; query.meters = ids.map((id) => `ATS1:${id}`).join(',');
+    }
+    if (['get_current_energy', 'get_electricity_history'].includes(name)) query.panel = 'ATS1';
+    // The supplied daily handler combines runtime even for a historical date.
+    // Route past-day questions through saved records instead.
+    if (name === 'get_daily_production') {
+      const today = new Date(Date.now() + 330 * 60000 - 6 * 3600000).toISOString().slice(0, 10);
+      if (args.date !== today) throw new Error('Daily overview is reliable only for the current production day. Use get_historical_shifts with fromDate=toDate for a historical date.');
+    }
+    return { path: route.path, query };
+  }
+  function normalise(name, data, args) {
+    const numeric = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+    const pick = (item, keys) => Object.fromEntries(keys.filter((key) => item?.[key] !== undefined).map((key) => [key, item[key]]));
+    const warnings = Array.isArray(data?.warnings) ? [...data.warnings] : [];
+    const add = (note) => { if (!warnings.includes(note)) warnings.push(note); };
+    if (data?.success === false) return data;
+    if (['get_latest_temperature', 'get_temperature_status'].includes(name)) {
+      if (!Array.isArray(data?.controllers)) return { success: false, error: 'Invalid temperature controller response.' };
+      const controllers = data.controllers.filter(row => ['3', '4'].includes(String(row.slave_id))).map(row => {
+        const result = pick(row, ['slave_id', 'device_label', 'timestamp', 'status', 'last_communication', 'received_at', 'stale']);
+        result.location = String(row.slave_id) === '3' ? 'Spray Dryer 2 inside' : 'Spray Dryer 2 output';
+        if (name === 'get_latest_temperature') for (const field of ['pv', 'sv', 'delta']) result[field] = numeric(row[field]);
+        return result;
+      });
+      const gateway = data.gateway ? pick(data.gateway, ['status', 'seen_at']) : undefined;
+      return { success: true, unit: 'Â°C', gateway_status: data.gateway_status, gateway, controllers, warnings };
+    }
+    if (['get_temperature_history', 'get_live_temperature_series'].includes(name)) {
+      if (!Array.isArray(data?.data)) return { success: false, error: 'Invalid temperature series response.' };
+      const isLive = name === 'get_live_temperature_series';
+      const rows = data.data.filter(row => row?.timestamp && Number.isFinite(Date.parse(row.timestamp)) && (!isLive || ['3', '4'].includes(String(row.slave_id))))
+        .map(row => ({ timestamp: row.timestamp, ...(isLive ? { slave_id: row.slave_id, value: numeric(row.value) } : { pv: numeric(row.pv), sv: numeric(row.sv), delta: numeric(row.delta) }) }));
+      const statistics = [];
+      const ids = isLive ? [...new Set(rows.map(row => String(row.slave_id)))] : [args.slaveId];
+      for (const id of ids) for (const field of isLive ? ['value'] : ['pv', 'sv', 'delta']) {
+        const values = rows.filter(row => !isLive || String(row.slave_id) === id).map(row => row[field]).filter(value => value !== null);
+        if (values.length) statistics.push({ slave_id: id, metric: isLive ? args.metric : field, availableWindows: values.length,
+          minWindowMean: Math.min(...values), maxWindowMean: Math.max(...values), meanOfAvailableWindows: values.reduce((sum, value) => sum + value, 0) / values.length });
+      }
+      return { ...pick(data, ['success', 'slave_id', 'slave_ids', 'fromTime', 'toTime', 'range', 'aggregationWindow', 'metric']), unit: 'Â°C', count: rows.length, data: rows, statistics, warnings };
+    }
+    if (name === 'get_production_breakdown_report') {
+      const rows = args.breakdown === 'design' ? data.rowsByDesign : data.rowsBySize;
+      if (!Array.isArray(rows)) return { success: false, error: 'Production report breakdown missing.' };
+      const byLine = new Map(), byMonth = new Map();
+      let totalProduction = 0, totalTiles = 0;
+      for (const row of rows) {
+        const production = numeric(row.production), tiles = numeric(row.tileCount);
+        if (production === null || production < 0) return { success: false, error: 'Invalid production report values.' };
+        totalProduction += production; totalTiles = totalTiles === null || tiles === null ? null : totalTiles + tiles;
+        byLine.set(row.line, (byLine.get(row.line) || 0) + production);
+        byMonth.set(row.month, (byMonth.get(row.month) || 0) + production);
+      }
+      if (!rows.length) add('No matching source records were returned; this does not prove zero production.');
+      return { ...pick(data, ['success', 'source', 'category', 'lines', 'fromTime', 'toTime', 'requestedToTime', 'fromDate', 'toDate', 'asOf', 'retrieval', 'coverage', 'unavailableLines']),
+        breakdown: args.breakdown, rows, hasRecords: rows.length > 0, totalProduction, totalTiles,
+        byLine: [...byLine].map(([line, production]) => ({ line, production })), byMonth: [...byMonth].map(([month, production]) => ({ month, production })), warnings };
+    }
+    if (name === 'get_device_inventory') {
+      const source = data?.devices;
+      if (!source || typeof source !== 'object') return { success: false, error: 'Invalid device inventory.' };
+      const devices = Object.entries(source).map(([key, device]) => ({
+        key, ...pick(device, ['deviceId', 'deviceType', 'line', 'lineName', 'shortId', 'enabled', 'tileSize', 'deviceLabel']),
+        slaves: (Array.isArray(device?.slaves) ? device.slaves : []).map((slave) => pick(slave, ['slaveId', 'panelId', 'deviceLabel', 'panelLabel', 'enabled'])),
+      }));
+      return { success: true, devices, updatedAt: data.updatedAt, warnings: ['Device configuration is not live status. Network and credential fields were removed.'] };
+    }
+    if (name === 'get_line_settings') {
+      return { success: true, line: data.line, settings: pick(data.settings, ['tileSize', 'designCode', 'lineSpeed', 'plannedDowntime', 'stopDelayMs', 'maxPulseGapMs', 'requiredRunTimeMs', 'productionRunId', 'productionRunStartTime', 'updatedAt']), warnings: ['The backend merges defaults into settings; configuration is current, not historical evidence.'] };
+    }
+    if (name === 'get_historical_shifts') {
+      if (!Array.isArray(data)) return { success: false, error: 'Expected an array of saved shift documents.' };
+      const dedup = new Map();
+      let ignored = 0;
+      for (const doc of data) {
+        const row = doc?.lineStats;
+        if (!row || row.shiftDate < args.fromDate || row.shiftDate > args.toDate || !shifts.includes(row.shift) || String(row.lineName || row.line || '').toLowerCase().replace(/\s/g, '') !== args.line.toLowerCase().replace(/\s/g, '')) { ignored++; continue; }
+        const key = `${row.device || args.line}|${row.shiftDate}|${row.shift}`;
+        const old = dedup.get(key);
+        if (!old || (Date.parse(row.updatedAt) || 0) >= (Date.parse(old.updatedAt) || 0)) dedup.set(key, row);
+      }
+      const rows = [...dedup.values()].sort((a, b) => a.shiftDate.localeCompare(b.shiftDate) || shifts.indexOf(a.shift) - shifts.indexOf(b.shift));
+      const fields = ['production', 'tileCount', 'targetProduction', 'targetTiles', 'totalDowntimeMinutes', 'plannedDowntimeMinutes', 'unplannedDowntimeMinutes', 'plannedProductionMinutes', 'actualOperatingMinutes', 'completedStops'];
+      const sum = (records, field) => {
+        const values = records.map((row) => numeric(row[field])).filter((value) => value !== null);
+        return { value: values.length ? +values.reduce((a, b) => a + b, 0).toFixed(4) : null, availableRecords: values.length };
+      };
+      const totals = Object.fromEntries(fields.map((field) => [field, sum(rows, field)]));
+      const dayKeys = [...new Set(rows.map((row) => row.shiftDate))];
+      const days = dayKeys.map((date) => {
+        const group = rows.filter((row) => row.shiftDate === date);
+        return { date, recordedShifts: group.map((row) => row.shift), production: sum(group, 'production'), tileCount: sum(group, 'tileCount'), totalDowntimeMinutes: sum(group, 'totalDowntimeMinutes') };
+      });
+      const codeMap = new Map();
+      for (const row of rows) for (const code of Array.isArray(row.codeWiseProduction) ? row.codeWiseProduction : []) {
+        const key = JSON.stringify([code.tileSize, code.designCode]);
+        const group = codeMap.get(key) || { tileSize: code.tileSize, designCode: code.designCode, production: 0, tileCount: 0, records: 0 };
+        const production = numeric(code.production); const count = numeric(code.tileCount);
+        if (production === null || count === null) continue;
+        group.production += production; group.tileCount += count; group.records++;
+        codeMap.set(key, group);
+      }
+      const ratio = (a, b) => rows.length && rows.every((row) => numeric(row[a]) !== null && numeric(row[b]) !== null) && totals[b].value > 0 ? +(100 * totals[a].value / totals[b].value).toFixed(2) : null;
+      add('Saved shifts only; the current unsaved shift is not included. Missing records do not prove zero production.');
+      add('Availability can exceed 100% under the backend planned-allowance model. Quality is assumed 100%, not measured.');
+      if (ignored) add(`${ignored} invalid/out-of-scope records were excluded.`);
+      if (data.length > rows.length + ignored) add('Duplicate shift records were deduplicated by device/date/shift, keeping latest updatedAt.');
+      const recordFields = ['device', 'lineName', 'shift', 'shiftDate', 'shiftStart', 'shiftEnd', 'updatedAt', 'status', 'productionUnit', 'ole', 'availability', 'performance', 'quality', 'tileSize', 'designCode', 'ratedLineSpeed', 'configuredPlannedDowntime', 'recordedStandardDowntimeMinutes', 'standardPlannedDowntimeMinutes', 'standardExcessDowntimeMinutes', 'additionalPlannedDowntimeMinutes', 'openStop', 'maximumDowntimeMinutes', 'productionRunId', 'productionRunStartTime', 'codeWiseProduction', 'codeWiseProductionTimeline', ...fields];
+      return { success: true, line: args.line, fromDate: args.fromDate, toDate: args.toDate, returnedDocuments: data.length, uniqueRecordedShifts: rows.length, totals, weightedAvailabilityPercent: ratio('actualOperatingMinutes', 'plannedProductionMinutes'), weightedPerformancePercent: ratio('tileCount', 'targetTiles'), days, codeWiseProduction: [...codeMap.values()], records: rows.map((row) => pick(row, recordFields)), warnings };
+    }
+    if (name === 'get_shift_downtime' && Array.isArray(data.stoppages)) {
+      const groups = new Map();
+      for (const stop of data.stoppages) {
+        const reason = String(stop.reason || 'Unassigned');
+        const machine = String(stop.machine || 'Unassigned');
+        const type = String(stop.downtimeType || 'Unclassified');
+        const key = JSON.stringify([machine, reason, type]);
+        const entry = groups.get(key) || { machine, reason, downtimeType: type, events: 0, durationMinutes: 0, knownDurationEvents: 0 };
+        const duration = numeric(stop.durationMinutes);
+        entry.events++; if (duration !== null) { entry.durationMinutes += duration; entry.knownDurationEvents++; }
+        groups.set(key, entry);
+      }
+      add('Reason-group durations are observed event minutes, not planned-allowance-adjusted KPI loss. Unassigned reasons do not establish a cause.');
+      return { ...data, reasonMachineTotals: [...groups.values()].sort((a, b) => b.durationMinutes - a.durationMinutes), warnings };
+    }
+    if (name === 'get_energy_usage' && Array.isArray(data.data)) {
+      const byMeter = new Map(); const byInterval = new Map();
+      for (const row of data.data) {
+        const value = numeric(row.energyUsageKwh); if (value === null) continue;
+        const key = `${row.panel}:${row.device_id}`;
+        const meter = byMeter.get(key) || { panel: row.panel, device_id: row.device_id, device_label: row.device_label, energyUsageKwh: 0 };
+        meter.energyUsageKwh += value; byMeter.set(key, meter);
+        const interval = byInterval.get(row.intervalStart) || { intervalStart: row.intervalStart, intervalEnd: row.intervalEnd, energyUsageKwh: 0, metersWithData: [] };
+        interval.energyUsageKwh += value; interval.metersWithData.push(row.device_id); byInterval.set(row.intervalStart, interval);
+      }
+      return { ...data, source: args.source, byMeter: [...byMeter.values()], byInterval: [...byInterval.values()], warnings };
+    }
+    if (name === 'get_electricity_history' && Array.isArray(data.data)) {
+      const measurements = {};
+      for (const category of ['current', 'voltage', 'power']) for (const row of data.data) for (const [field, value] of Object.entries(row[category] || {})) {
+        const v = numeric(value); if (v === null) continue;
+        const key = `${category}.${field}`;
+        const s = measurements[key] || { samples: 0, sum: 0, min: v, max: v, peakAt: row.timestamp };
+        s.samples++; s.sum += v; s.min = Math.min(s.min, v); if (v > s.max) { s.max = v; s.peakAt = row.timestamp; }
+        measurements[key] = s;
+      }
+      for (const s of Object.values(measurements)) { s.mean = s.sum / s.samples; delete s.sum; }
+      add('These are unweighted statistics of returned window means, not instantaneous peaks or energy consumption. No tariff or contracted capacity is provided.');
+      return { ...data, measurements, warnings };
+    }
+    if (name === 'get_live_energy_series' && Array.isArray(data.data)) {
+      const groups = new Map();
+      for (const row of data.data) {
+        const value = numeric(row[args.metric]); if (value === null) continue;
+        const key = `${row.panel}:${row.device_id}`;
+        const group = groups.get(key) || { panel: row.panel, device_id: row.device_id, device_label: row.device_label, samples: 0, sum: 0, min: value, max: value, peakAt: row.timestamp };
+        group.samples++; group.sum += value; group.min = Math.min(group.min, value);
+        if (value > group.max) { group.max = value; group.peakAt = row.timestamp; }
+        if (!group.latestAt || Date.parse(row.timestamp) > Date.parse(group.latestAt)) { group.latest = value; group.latestAt = row.timestamp; }
+        groups.set(key, group);
+      }
+      for (const group of groups.values()) { group.mean = group.sum / group.samples; delete group.sum; }
+      add('Statistics describe sampled window means by meter, not instantaneous extrema. Gaps are not confirmed outages.');
+      return { ...data, meterStatistics: [...groups.values()], warnings };
+    }
+    if (name === 'get_shift_count_series' && Array.isArray(data.points)) {
+      const points = data.points.filter((row) => numeric(row.value) !== null && Number.isFinite(Date.parse(row.time))).sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+      const decreases = points.filter((point, index) => index && Number(point.value) < Number(points[index - 1].value)).length;
+      add('Values are cumulative shift counts. Never sum them or treat a flat/missing interval as a confirmed mechanical stop. Decreases can reflect resets/corrections.');
+      return { ...data, seriesSummary: { samples: points.length, first: points[0] || null, last: points.at(-1) || null, observedCountDecreases: decreases }, warnings };
+    }
+    if (name === 'get_monthly_production') {
+      add('A missing day/shift means no saved record was returned, not verified zero production. Total, days, sizes and code totals overlap; do not add them together.');
+      if (!data.codeWiseProductionTimeline) add('This handler does not return a top-level run timeline. Use shift-summary codeWiseProductionTimeline to verify Aâ†’Bâ†’A changeovers.');
+    }
+    if (name === 'get_shift_summary') {
+      if (data.lineStats === null) add('No saved shift summary was found; production is unknown, not zero.');
+      add('Quality is assumed 100%; availability may exceed 100% under configured planned allowance.');
+    }
+    if (name === 'get_live_production') add('Live Influx query uses a 60-second lookback. Check lastSeen and sensor status; no recent telemetry is not proof of zero shift output.');
+    if (name === 'get_current_energy') add('Latest endpoint can default missing measurements to zero and timestamp to now. Check status/device_status; cumulative active_kwh is not period usage.');
+    if (['get_design_codes', 'get_machines'].includes(name)) add('Master search returns at most 50 active records and may be incomplete. It does not report production or downtime.');
+    if (['get_floor_stocks', 'get_car_stocks'].includes(name) && data.stocks?.some((row) => row.clampedToZero)) add('Some raw balances are negative and displayed as zero. Report the raw balance and reconciliation need; zero-clamping does not establish a verified physical balance.');
+    return Array.isArray(data) ? data : { ...data, warnings };
+  }
+  return { tools, specs, plan, normalise, shiftContext };
+})();
+return (function prepareTool(msg, env) {
+  if (Date.now() - msg.aiChat.started > 180000) throw new Error('Chat request time limit reached.');
+  while (msg.aiChat.queue.length) {
+    const call = msg.aiChat.queue.shift();
+    let args, route;
+    try {
+      if (!msg.aiChat.tools.some((tool) => tool.name === call.name)) throw new Error('This tool is not available for this account.');
+      args = JSON.parse(call.arguments);
+      route = kit.plan(call.name, args, msg.aiChat.lines);
+    } catch (error) {
+      msg.aiChat.input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify({ success: false, error: error.message }) });
+      continue;
+    }
+    const cacheKey = JSON.stringify([call.name, Object.entries(args).sort(([a], [b]) => a.localeCompare(b))]);
+    const cached = msg.aiChat.cache[cacheKey];
+    if (cached) {
+      msg.aiChat.input.push({ type: 'function_call_output', call_id: call.call_id, output: cached });
+      continue;
+    }
+    msg.aiChat.current = { call, args, path: route.path, cacheKey };
+    const query = Object.entries(route.query).map(([key, value]) => encodeURIComponent(key) + '=' + encodeURIComponent(value)).join('&');
+    msg.url = msg.aiChat.base + route.path + (query ? `?${query}` : '');
+    msg.method = 'GET';
+    // Never forward the OpenAI credential or incoming chat token to production APIs.
+    msg.headers = { Accept: 'application/json' };
+    const productionToken = env.get('PRODUCTION_API_BEARER_TOKEN');
+    if (productionToken) msg.headers.Authorization = `Bearer ${productionToken}`;
+    delete msg.payload;
+    delete msg.statusCode;
+    msg.requestTimeout = 30000;
+    return [msg, null];
+  }
+  return [null, msg];
+})(msg, env);

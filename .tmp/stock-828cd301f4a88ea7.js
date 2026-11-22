@@ -1,0 +1,1 @@
+const result=Array.isArray(msg.payload)?msg.payload[0]:msg.payload; if(result?.acknowledged!==true) throw Error('Snapshot insert was not acknowledged'); msg.payload={saved:true,id:msg.stockGapDocument._id,calculationFrom:msg.stockGapDocument.calculationFrom,coveredShifts:msg.stockGapDocument.coveredShifts};return msg;

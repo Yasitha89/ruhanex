@@ -1,0 +1,56 @@
+[
+  {
+    "id": "c308aeccc97e3a4b",
+    "type": "catch",
+    "z": "rx_production_api_tab",
+    "name": "Catch Monthly Mongo Error",
+    "scope": [
+      "abce9f01edcc9491"
+    ],
+    "uncaught": false,
+    "x": 1230,
+    "y": 5000,
+    "wires": [
+      [
+        "f0f75dfb0c3ff8bb"
+      ]
+    ]
+  },
+  {
+    "id": "5a340fc6835428fd",
+    "type": "catch",
+    "z": "rx_production_api_tab",
+    "name": "Catch Monthly Influx Error",
+    "scope": [
+      "03258b898cb4babe"
+    ],
+    "uncaught": false,
+    "x": 1230,
+    "y": 5050,
+    "wires": [
+      [
+        "f0f75dfb0c3ff8bb"
+      ]
+    ]
+  },
+  {
+    "id": "f0f75dfb0c3ff8bb",
+    "type": "function",
+    "z": "rx_production_api_tab",
+    "name": "Mark Monthly Database Error",
+    "func": "const sourceId = msg.error?.source?.id;\nif (sourceId === 'abce9f01edcc9491') {\n  msg.topic = 'history_error';\n} else if (sourceId === '03258b898cb4babe') {\n  msg.topic = 'codewise_error';\n} else {\n  node.error('Unexpected monthly error source', msg);\n  return null;\n}\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1490,
+    "y": 5000,
+    "wires": [
+      [
+        "rx_api_bridge_out_11"
+      ]
+    ]
+  }
+]

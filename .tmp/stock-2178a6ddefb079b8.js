@@ -1,0 +1,1 @@
+const message=String(msg.error?.message||'Snapshot failed');node.warn(message);msg.payload={saved:false,error:message,snapshotId:msg.stockGap?.id};delete msg.error;return msg;

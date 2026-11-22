@@ -1,0 +1,206 @@
+[
+  {
+    "id": "e3e63d6b35ac8613",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Direct code-wise quality saved",
+    "func": "const r=msg.payload;if(r?.acknowledged!==true)throw Error('Direct quality update not acknowledged.');if(r.matchedCount!==1)return null;return {payload:{updated:true,shiftId:String(msg.directQualityProduction._id)}};",
+    "outputs": 1,
+    "x": 3010,
+    "y": 2000,
+    "wires": [
+      [
+        "bf8e76bc7cbdc8a2",
+        "rx_qreport_scan"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qreport_tick",
+    "type": "inject",
+    "z": "e5489573e203f3d0",
+    "name": "Retry quality report copies every minute",
+    "props": [],
+    "repeat": "60",
+    "once": true,
+    "onceDelay": 30,
+    "x": 300,
+    "y": 2300,
+    "wires": [
+      [
+        "rx_qreport_scan"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qreport_scan",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Find Keda quality missing its report copy",
+    "func": "msg.payload=[{'lineStats.lineName':{$in:['Keda 1','Keda 2','Keda 3']},'lineStats.qualityUpdatedAt':{$exists:true},'lineStats.qualityStatus':{$ne:'pending'},$expr:{$ne:[{$ifNull:['$lineStats.qualityReportSourceUpdatedAt',null]},'$lineStats.qualityUpdatedAt']}},{sort:{'lineStats.qualityUpdatedAt':1},limit:50}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qreport_read"
+      ]
+    ],
+    "x": 650,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_read",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "name": "Reports: find shifts",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "find",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_qreport_build"
+      ]
+    ],
+    "x": 1000,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_build",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build category / design / grade report documents",
+    "func": "function qualityReportDocument(doc, now = Date.now()) {\n  const s = doc?.lineStats;\n  if (!/^Keda [123]$/.test(s?.lineName || '')) throw Error('Quality reports are only supported for Keda 1, Keda 2 and Keda 3.');\n  if (!s || !s.lineName || !s.shiftDate || !['06-14','14-22','22-06'].includes(s.shift) || !s.qualityUpdatedAt) throw Error('Missing saved shift quality identity/version.');\n  if (!Number.isFinite(Date.parse(s.qualityUpdatedAt))) throw Error('Invalid quality version timestamp.');\n  const totals = s.qualitySummary || null;\n  const segments = totals?.gradeSegments;\n  const catalogue = s.qualityCatalogueSnapshot || [];\n  const definitions = new Map(catalogue.map(g => [String(g.grade || '').trim().toLowerCase(), g]));\n  const products = new Map();\n  if (Array.isArray(segments)) for (const segment of segments) {\n    if (!Array.isArray(segment.gradeBoxes) || segment.gradeBoxes.length !== 16 || !Number.isSafeInteger(segment.tilesPerBox) || segment.tilesPerBox <= 0) throw Error('Invalid saved grade segment.');\n    const key = JSON.stringify([segment.designCode, segment.tileSize]);\n    if (!products.has(key)) products.set(key, { designCode: segment.designCode, tileSize: segment.tileSize, totalBoxes: 0, totalTiles: 0, firstTiles: 0, normalDamageTiles: 0, cutDamageTiles: 0, undetectedTiles: 0, unclassifiedTiles: 0, grades: new Map() });\n    const product = products.get(key);\n    segment.gradeBoxes.forEach((boxes, gradeNumber) => {\n      if (!Number.isSafeInteger(boxes) || boxes < 0) throw Error('Invalid grade box count.');\n      const tiles = boxes * segment.tilesPerBox;\n      if (!Number.isSafeInteger(tiles)) throw Error('Invalid grade tile count.');\n      product.totalBoxes += boxes; product.totalTiles += tiles;\n      const grade = gradeNumber === 0 ? null : segment.designGrades?.[String(gradeNumber)] || null;\n      const definition = definitions.get(String(grade || '').trim().toLowerCase());\n      const category = gradeNumber === 0 ? null : Number(definition?.category);\n      const label = gradeNumber === 0 ? 'undetected' : category === 1 ? 'first' : category === 2 ? 'normalDamage' : category === 3 ? 'cutDamage' : 'unclassified';\n      product[label + 'Tiles'] += tiles;\n      if (!boxes) return;\n      const gradeKey = JSON.stringify([gradeNumber, grade, category]);\n      if (!product.grades.has(gradeKey)) product.grades.set(gradeKey, { gradeNumber, grade, description: definition?.description || '', category: [1,2,3].includes(category) ? category : null, boxes: 0, tiles: 0 });\n      const row = product.grades.get(gradeKey); row.boxes += boxes; row.tiles += tiles;\n    });\n  }\n  const pct = (n,d) => d > 0 ? Math.round(n / d * 10000) / 100 : null;\n  const designs = [...products.values()].map(p => ({ ...p, grades: [...p.grades.values()], firstQuality: pct(p.firstTiles,p.totalTiles), normalDamageQuality: pct(p.normalDamageTiles,p.totalTiles), cutDamageQuality: pct(p.cutDamageTiles,p.totalTiles) }));\n  if (Array.isArray(segments) && (designs.reduce((n,p)=>n+p.totalTiles,0)!==totals.totalTiles || designs.reduce((n,p)=>n+p.totalBoxes,0)!==totals.totalBoxes)) throw Error('Saved quality segment totals disagree.');\n  return { _id: JSON.stringify([s.lineName,s.shiftDate,s.shift]), schema: 1, line: s.lineName, shiftDate: s.shiftDate, shift: s.shift,\n    shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, productionDevice: s.device, qualitySensorDevice: s.qualitySensorDevice || null,\n    sourceShiftId: String(doc._id), sourceQualityUpdatedAt: s.qualityUpdatedAt, source: 'saved-shift-summary',\n    status: s.qualityStatus || 'unavailable', settled: s.directQualitySettled === true, qualityAvailable: s.qualityAvailable === true, qualityAssumed: s.qualityAssumed === true,\n    quality: s.quality ?? null, firstQuality: s.firstQuality ?? null, normalDamageQuality: s.normalDamageQuality ?? null, cutDamageQuality: s.cutDamageQuality ?? null,\n    totalBoxes: totals?.totalBoxes ?? null, totalTiles: totals?.totalTiles ?? null,\n    firstTiles: totals?.firstTiles ?? null, normalDamageTiles: totals?.normalDamageTiles ?? null, cutDamageTiles: totals?.cutDamageTiles ?? null,\n    undetectedTiles: totals?.undetectedTiles ?? null, unclassifiedTiles: totals?.unclassifiedTiles ?? null,\n    designs, gradeBreakdownAvailable: Array.isArray(segments), codeWiseProduction: s.codeWiseProduction || [],\n    gradeSegments: segments || [], gradeCatalogue: catalogue, qualitySummary: totals,\n    availability: s.availability ?? null, performance: s.performance ?? null, oee: s.oee ?? s.ole ?? null,\n    updatedAt: new Date(now).toISOString() };\n}\nif(!Array.isArray(msg.payload))throw Error('Invalid saved shifts response.');\nreturn [msg.payload.map(doc=>{const report=qualityReportDocument(doc);const {_id,...fields}=report;return {qualityReport:report,sourceShift:doc,payload:[{_id,$or:[{sourceQualityUpdatedAt:{$lte:report.sourceQualityUpdatedAt}},{sourceQualityUpdatedAt:{$exists:false}}]},{$set:fields},{upsert:true}]};})];",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qreport_save"
+      ]
+    ],
+    "x": 1380,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_save",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "name": "Reports: updateOne quality_reports",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "quality_reports",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_qreport_mark"
+      ]
+    ],
+    "x": 1780,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_mark",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Confirm report / mark source version",
+    "func": "if(msg.payload?.acknowledged!==true)throw Error('Quality report write not acknowledged.');const d=msg.sourceShift;msg.payload=[{_id:d._id,'lineStats.qualityUpdatedAt':d.lineStats.qualityUpdatedAt},{$set:{'lineStats.qualityReportSourceUpdatedAt':d.lineStats.qualityUpdatedAt,'lineStats.qualityReportCopiedAt':new Date().toISOString()}}];return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qreport_ack"
+      ]
+    ],
+    "x": 2150,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_ack",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "name": "Reports: updateOne shifts",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "updateOne",
+    "output": "toArray",
+    "maxTimeMS": "",
+    "handleDocId": false,
+    "wires": [
+      [
+        "rx_qreport_done"
+      ]
+    ],
+    "x": 2500,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_done",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Quality report copied",
+    "func": "if(msg.payload?.acknowledged!==true)throw Error('Cannot mark quality report copy.');return {payload:{saved:msg.payload.matchedCount===1,collection:'quality_reports',reportId:msg.qualityReport._id}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qreport_debug"
+      ]
+    ],
+    "x": 2800,
+    "y": 2300
+  },
+  {
+    "id": "rx_qreport_catch",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Quality report copy errors",
+    "scope": [
+      "rx_qreport_scan",
+      "rx_qreport_read",
+      "rx_qreport_build",
+      "rx_qreport_save",
+      "rx_qreport_mark",
+      "rx_qreport_ack",
+      "rx_qreport_done"
+    ],
+    "uncaught": false,
+    "x": 600,
+    "y": 2420,
+    "wires": [
+      [
+        "rx_qreport_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_qreport_error",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Report copy retries next minute",
+    "func": "return {payload:{saved:false,collection:'quality_reports',error:String(msg.error?.message||'Quality report copy failed'),retry:'Next minute'}};",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_qreport_debug"
+      ]
+    ],
+    "x": 1050,
+    "y": 2420
+  },
+  {
+    "id": "rx_qreport_debug",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "Quality reporting save result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 3100,
+    "y": 2300,
+    "wires": []
+  }
+]

@@ -1068,3 +1068,37 @@
     min-height: auto;
   }
 }
+
+/* Fill the energy card alongside the taller monthly quality charts. */
+@media (min-width: 1200px) {
+  .overview-bottom-row .overview-energy-summary {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .overview-bottom-row .overview-energy-summary .ant-card-body {
+    flex: 1;
+    height: auto;
+    gap: 18px;
+    padding: 16px;
+  }
+
+  .overview-bottom-row .overview-energy-metrics {
+    flex: 1;
+    gap: 12px;
+  }
+
+  .overview-bottom-row .overview-energy-metric {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px;
+  }
+
+  .overview-bottom-row .overview-energy-metric strong {
+    font-size: 26px;
+    line-height: 1.25;
+  }
+}

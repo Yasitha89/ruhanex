@@ -1,0 +1,2 @@
+if (['ai', 'draft'].includes(msg.dt?.stage)) { msg.statusCode = 0; msg.payload = null; delete msg.headers; delete msg.url; return [null,msg]; }
+const store=env.get('DOWNTIME_ALERT_CONTEXT_STORE')||undefined; if(flow.get('telegramDowntimeAlertLock',store)?.id===msg.dt?.id)flow.set('telegramDowntimeAlertLock',null,store);return {payload:{ok:false,description:'Downtime alert request failed. Check MongoDB, bot token and connectivity. Delivery lease expires in five minutes.'}};

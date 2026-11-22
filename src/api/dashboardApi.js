@@ -1,6 +1,13 @@
 import axios from "axios";
 import { API_BASE_URL } from "./constants";
 
+export const getOverviewMonthlyQuality = async (month, signal) => {
+  const response = await api.get('/api/production/monthly-quality', {
+    params: { month }, signal, timeout: 30000,
+  });
+  return response.data;
+};
+
 export const getFloorStock = async () => {
   const response = await api.get("/api/production/floor-stock");
   return response.data;

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "rx_dt_check_config_in",
+    "type": "inject",
+    "z": "rx_telegram_test_tab",
+    "name": "CHECK downtime alert configuration (safe)",
+    "props": [],
+    "once": false,
+    "repeat": "",
+    "x": 260,
+    "y": 1160,
+    "wires": [
+      [
+        "rx_dt_check_config_flags"
+      ]
+    ]
+  },
+  {
+    "id": "rx_dt_check_config_flags",
+    "type": "function",
+    "z": "rx_telegram_test_tab",
+    "name": "Safe flags — no tokens or chat IDs",
+    "outputs": 1,
+    "x": 680,
+    "y": 1160,
+    "wires": [
+      [
+        "rx_dt_check_config_debug"
+      ]
+    ],
+    "func": "let lock=null,storeValid=true;try{lock=flow.get('telegramDowntimeAlertLock',env.get('DOWNTIME_ALERT_CONTEXT_STORE')||undefined);}catch{storeValid=false;}\n   return {payload:{alertsEnabled:String(env.get('DOWNTIME_ALERT_ENABLED')).toLowerCase()==='true',telegramTokenConfigured:Boolean(env.get('TELEGRAM_BOT_TOKEN')),openaiKeyConfigured:Boolean(env.get('OPENAI_API_KEY')),openaiModelConfigured:Boolean(env.get('OPENAI_MODEL')),debugEnabled:String(env.get('DOWNTIME_ALERT_DEBUG')).toLowerCase()==='true',contextStoreValid:storeValid,lockRemainingSeconds:Math.max(0,Math.ceil(((lock?.until||0)-Date.now())/1000)),lastSnapshotAgeSeconds:flow.get('aiLatestDowntimeSnapshot')?Math.round((Date.now()-flow.get('aiLatestDowntimeSnapshot').at)/1000):null,allowedRecipientRoles:['Admin']}};"
+  },
+  {
+    "id": "rx_dt_check_config_debug",
+    "z": "rx_telegram_test_tab",
+    "type": "debug",
+    "name": "Downtime configuration check result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1100,
+    "y": 1160,
+    "wires": []
+  }
+]
