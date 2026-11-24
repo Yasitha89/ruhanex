@@ -6,6 +6,7 @@ import ReactECharts from "echarts-for-react";
 export default function ZoomableShiftChart({ option, onEvents, ...props }) {
   const chartRef = useRef(null);
   const [zoomRange, setZoomRange] = useState({ start: 0, end: 100 });
+  const [zoomControlsVisible, setZoomControlsVisible] = useState(false);
   const [legendSelection, setLegendSelection] = useState({});
   const rememberLegend = (event, chart) => {
     setLegendSelection(previous => ({ ...previous, ...event.selected }));
@@ -27,12 +28,18 @@ export default function ZoomableShiftChart({ option, onEvents, ...props }) {
   const zoom = (factor) => {
     const chart = chartRef.current?.getEchartsInstance();
     if (!chart) return;
+    setZoomControlsVisible(true);
     const current = chart.getOption().dataZoom?.[0] || {};
     const start = Number(current.start ?? 0);
     const end = Number(current.end ?? 100);
     const span = Math.min(100, Math.max(1, (end - start) * factor));
     const nextStart = Math.max(0, Math.min(100 - span, (start + end - span) / 2));
     chart.dispatchAction({ type: "dataZoom", start: nextStart, end: nextStart + span });
+  };
+  const resetZoom = () => {
+    chartRef.current?.getEchartsInstance().dispatchAction({ type: "dataZoom", start: 0, end: 100 });
+    setZoomRange({ start: 0, end: 100 });
+    setZoomControlsVisible(false);
   };
 
   return <div>
@@ -44,8 +51,7 @@ export default function ZoomableShiftChart({ option, onEvents, ...props }) {
         <Button size="small" icon={<ZoomOutOutlined />} aria-label="Zoom out" onClick={() => zoom(2)} />
       </Tooltip>
       <Tooltip title="Reset zoom">
-        <Button size="small" icon={<ReloadOutlined />} aria-label="Reset zoom" onClick={() => chartRef.current?.getEchartsInstance()
-          .dispatchAction({ type: "dataZoom", start: 0, end: 100 })} />
+        <Button size="small" icon={<ReloadOutlined />} aria-label="Reset zoom" onClick={resetZoom} />
       </Tooltip>
     </Space>
     <ReactECharts {...props} ref={chartRef} onEvents={{ ...onEvents, datazoom: rememberZoom, legendselectchanged: rememberLegend }} option={{
@@ -53,11 +59,13 @@ export default function ZoomableShiftChart({ option, onEvents, ...props }) {
       ...(option.legend ? { legend: Array.isArray(option.legend)
         ? option.legend.map(legend => ({ ...legend, selected: { ...legend.selected, ...legendSelection } }))
         : { ...option.legend, selected: { ...option.legend.selected, ...legendSelection } } } : {}),
-      grid: { ...option.grid, bottom: 80 },
+      grid: { ...option.grid, bottom: zoomControlsVisible ? 80 : (option.grid?.bottom ?? 40) },
       dataZoom: [
-        { id: "shift-slider", type: "slider", xAxisIndex: 0, ...zoomRange, bottom: 8, height: 20,
+        { id: "shift-slider", type: "slider", xAxisIndex: 0, ...zoomRange, show: zoomControlsVisible, bottom: 8, height: 20,
           borderColor: "#dbe7f3", fillerColor: "rgba(22,119,255,0.12)" },
-        { id: "shift-inside", type: "inside", xAxisIndex: 0, ...zoomRange },
+        { id: "shift-inside", type: "inside", xAxisIndex: 0, ...zoomRange,
+          disabled: true, zoomOnMouseWheel: false, moveOnMouseWheel: false,
+          moveOnMouseMove: false, preventDefaultMouseMove: false },
       ],
     }} />
   </div>;

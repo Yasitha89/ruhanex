@@ -13,9 +13,15 @@ assert.equal(row.communicationAffected,true);
 assert.equal(row.communicationEvidence,'telemetry_timeout');
 assert.equal(result[0][1].operation,'updateMany');
 assert.equal(result[0][1].payload[0].device,id);
-assert.equal(stoppageBarColor(row),'#ff4d4f');
+assert.equal(stoppageBarColor(row),'#ff7a45');
 assert.equal(stoppageBarColor({isOpen:true}),'#ff7a45');
-assert.equal(stoppageBarColor({isOpen:false}),'#ff4d4f');
+assert.equal(stoppageBarColor({isOpen:false}),'#ff7a45');
+assert.equal(stoppageBarColor({isOpen:false,stopStop_ts:null}),'#ff7a45');
+assert.equal(stoppageBarColor({isOpen:true,stopStop_ts:now}),'#ff4d4f');
+assert.equal(stoppageBarColor({isOpen:'true',communicationAffected:true}),'#ff7a45');
+assert.equal(stoppageBarColor({stopStop_ts:0}),'#ff7a45');
+assert.equal(stoppageBarColor({stopStop_ts:''}),'#ff7a45');
+assert.equal(stoppageBarColor({stopStop_ts:now}),'#ff4d4f');
 assert.equal(isCommunicationAffected({reason:'WiFi'}),false); // never infer from free text
 assert.equal(annotateCommunication([null,null,null],flow,global,now+1000)[0],null); // throttled
 values.counters[id].lastSeen=now+5000;

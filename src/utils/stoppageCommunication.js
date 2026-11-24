@@ -3,5 +3,8 @@ export function isCommunicationAffected(row) {
 }
 
 export function stoppageBarColor(row) {
-  return isCommunicationAffected(row) ? '#ff4d4f' : row?.isOpen ? '#ff7a45' : '#ff4d4f';
+  // Match the tooltip/table: a missing end timestamp means Ongoing,
+  // even when an API response carries a stale isOpen: false flag.
+  const ongoing = row != null && !row.stopStop_ts;
+  return ongoing ? '#ff7a45' : '#ff4d4f';
 }

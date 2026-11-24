@@ -108,6 +108,7 @@ export default function ShiftDowntimeBarChart({ data = [], onBarClick }) {
     <div>
     <ZoomableShiftChart
       option={option}
+      notMerge
       lazyUpdate
       style={{ width: "100%", height: 277 }}
       onEvents={{
