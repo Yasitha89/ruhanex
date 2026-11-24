@@ -44,7 +44,7 @@ export default function Users() {
       <Form form={form} layout="vertical" initialValues={{ role: "Line Supervisor" }} disabled={saving}>
         <Form.Item name="displayName" label="Name" rules={[{ required: true, whitespace: true }, { max: 100 }]}><Input maxLength={100} /></Form.Item>
         <Form.Item name="username" label="Username" normalize={(value) => value.toLowerCase()} rules={[{ required: true }, { pattern: /^[a-z0-9][a-z0-9._-]{2,49}$/, message: "Use 3–50 letters, numbers, dots, underscores or hyphens." }]}><Input autoComplete="off" maxLength={50} /></Form.Item>
-        <Form.Item name="role" label="Level" rules={[{ required: true }]}><Select options={["Manager", "Admin", "Line Supervisor"].map((value) => ({ value, label: value }))} /></Form.Item>
+        <Form.Item name="role" label="Level" rules={[{ required: true }]}><Select options={["Manager", "Admin", "Engineer", "Line Supervisor"].map((value) => ({ value, label: value }))} /></Form.Item>
         <Form.Item name="password" label="Initial Password" extra="The user must change this password on first login." rules={[{ required: true }, { min: 4, max: 128 }]}><Input.Password autoComplete="new-password" maxLength={128} /></Form.Item>
       </Form>
     </Modal>

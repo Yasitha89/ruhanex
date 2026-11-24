@@ -1,0 +1,79 @@
+[
+  {
+    "id": "8f13d6516455d19b",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: resolve registered sensor",
+    "func": "function applyLiveQuality(response, details) {\n  response.qualityDetails = details;\n  response.qualityAvailable = details.qualityAvailable === true;\n  response.qualityAssumed = details.qualityAssumed === true;\n  response.totalQualityTiles = details.qualityAvailable ? details.totalTiles : null;\n  response.firstQuality = response.qualityAssumed ? 100 : details.qualityAvailable ? details.firstQuality : null;\n  response.normalDamageQuality = details.qualityAvailable ? details.normalDamageQuality : null;\n  response.cutDamageQuality = details.qualityAvailable ? details.cutDamageQuality : null;\n  response.quality = response.firstQuality;\n  response.ole = response.quality === null ? null : Math.round(Number(response.availability) * Number(response.performance) * response.quality / 100) / 100;\n  return response;\n}\nfunction beginLiveQuality(msg, global) {\n  const response = msg.payload;\n  if (response?.success !== true) return [null, msg];\n  msg.liveQualityResponse = response;\n  if (!/^Keda [123]$/.test(response.line || '')) return [null, msg];\n  const devices = global.get('devices');\n  if (!devices || typeof devices !== 'object' || Array.isArray(devices)) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, status: 'device-registry-unavailable' });\n    return [null, msg];\n  }\n  const matches = Object.entries(devices).filter(([id, d]) => id.startsWith('RX-QLT-') && d?.enabled === true && d.line === response.line);\n  if (matches.length === 0) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, qualityAssumed: true, status: 'no-enabled-quality-sensor', assumedQuality: 100 });\n    return [null, msg];\n  }\n  if (matches.length !== 1) {\n    msg.payload = applyLiveQuality(response, { qualityAvailable: false, status: 'multiple-quality-sensors' });\n    return [null, msg];\n  }\n  msg.liveQualityDevice = matches[0][0];\n  msg.payload = [{ _id: 'designGrades' }]; msg.collection = 'ruhanex_config'; msg.operation = 'findOne';\n  return [msg, null];\n}\nreturn beginLiveQuality(msg, global);",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1980,
+    "y": 3490,
+    "wires": [
+      [
+        "318e89cb4b787dcf"
+      ],
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  },
+  {
+    "id": "318e89cb4b787dcf",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: latest current-shift trend snapshot",
+    "func": "function buildQualitySnapshotQuery(msg) {\n  const s=msg.liveQualityResponse;\n  const end=Math.min(Number(s.timestamp)+1,Date.parse(s.shiftToTime));\n  if(!Number.isFinite(end)||!Number.isFinite(Date.parse(s.shiftFromTime)))throw Error('Invalid shift window.');\n  const fields=['total_tiles','total_boxes','first_tiles','normal_damage_tiles','cut_damage_tiles','undetected_tiles','unclassified_tiles','first_quality','normal_damage_quality','cut_damage_quality','output_production_sqm','output_production_complete','calculated_at_ms'];\n  msg.query=`from(bucket:\"RCLH\") |> range(start:time(v:${JSON.stringify(s.shiftFromTime)}),stop:time(v:${JSON.stringify(new Date(end).toISOString())})) |> filter(fn:(r)=>r._measurement==\"quality_shift_trend\" and r.device==${JSON.stringify(msg.liveQualityDevice)} and r.line==${JSON.stringify(s.line)} and r.shift==${JSON.stringify(s.currentShift)} and r.shiftDate==${JSON.stringify(s.shiftDate)} and (${fields.map(f=>`r._field==${JSON.stringify(f)}`).join(' or ')})) |> last() |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.total_tiles) |> sort(columns:[\"_time\"],desc:true) |> limit(n:1)`;\n  delete msg.payload;return msg;\n}\nreturn buildQualitySnapshotQuery(msg);",
+    "outputs": 1,
+    "x": 2780,
+    "y": 3490,
+    "wires": [
+      [
+        "a9b0f4fa1ee8881f"
+      ]
+    ]
+  },
+  {
+    "id": "a9b0f4fa1ee8881f",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Read latest quality_shift_trend snapshot",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 3140,
+    "y": 3490,
+    "wires": [
+      [
+        "ade9f36f8940b434"
+      ]
+    ]
+  },
+  {
+    "id": "ade9f36f8940b434",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: snapshot KPI / cumulative output",
+    "func": "function finishQualitySnapshot(msg) {\n  if(!Array.isArray(msg.payload))throw Error('Invalid quality snapshot result.');\n  const s=msg.liveQualityResponse,r=msg.payload[0];\n  const counts=['totalTiles','totalBoxes','firstTiles','normalDamageTiles','cutDamageTiles','undetectedTiles','unclassifiedTiles'];\n  const fields=['total_tiles','total_boxes','first_tiles','normal_damage_tiles','cut_damage_tiles','undetected_tiles','unclassified_tiles'];\n  const details={device:msg.liveQualityDevice,shift:s.currentShift,shiftDate:s.shiftDate,source:'quality_shift_trend',qualityAvailable:false,status:'quality-trend-not-recorded'};\n  if(r){\n    fields.forEach((f,i)=>{const n=Number(r[f]);if(r[f]==null||!Number.isSafeInteger(n)||n<0)throw Error('Invalid snapshot counts.');details[counts[i]]=n;});\n    if(details.firstTiles+details.normalDamageTiles+details.cutDamageTiles+details.undetectedTiles+details.unclassifiedTiles!==details.totalTiles)throw Error('Snapshot category totals disagree.');\n    const pct=n=>details.totalTiles>0?Math.round(n/details.totalTiles*10000)/100:null;\n    Object.assign(details,{qualityAvailable:details.totalTiles>0,status:details.totalTiles>0?'available':'no-tracked-quality-tiles',firstQuality:pct(details.firstTiles),normalDamageQuality:pct(details.normalDamageTiles),cutDamageQuality:pct(details.cutDamageTiles),snapshotAt:new Date(r._time).toISOString(),calculatedAt:Number(r.calculated_at_ms)||null});\n    if((r.output_production_complete===true||r.output_production_complete==='true')&&r.output_production_sqm!=null&&Number.isFinite(Number(r.output_production_sqm))&&Number(r.output_production_sqm)>=0)details.outputProductionSqm=Number(r.output_production_sqm);\n  }\n  const noOutput=details.totalTiles===0;\n  Object.assign(s,{qualityDetails:details,qualityAvailable:details.qualityAvailable,qualityAssumed:false,totalQualityTiles:details.totalTiles??null,\n    firstQuality:details.qualityAvailable?details.firstQuality:noOutput?0:null,normalDamageQuality:details.qualityAvailable?details.normalDamageQuality:noOutput?0:null,cutDamageQuality:details.qualityAvailable?details.cutDamageQuality:noOutput?0:null,\n    qualityOutputProductionSqm:details.outputProductionSqm??null,qualitySnapshotAt:details.snapshotAt??null,qualitySource:'quality_shift_trend'});\n  s.totalOutputTiles=details.totalTiles??null;\n  s.totalOutputProductionSqm=details.outputProductionSqm??null;\n  s.quality=s.firstQuality;\n  s.ole=s.quality===null||noOutput?null:Math.round(Number(s.availability)*Number(s.performance)*s.quality/100)/100;\n  s.oee=s.ole;\n  msg.payload=s;delete msg.liveQualityResponse;delete msg.liveQualityGrades;return msg;\n}\nreturn finishQualitySnapshot(msg);",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 3470,
+    "y": 3490,
+    "wires": [
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  }
+]

@@ -66,7 +66,7 @@ import {
 } from "../utils/downtimeCodes";
 import useDowntimeCodes from "../hooks/useDowntimeCodes";
 import { useAuth } from "../services/authContext";
-import { canExportProduction } from "../utils/permissions";
+import { canExportProduction, canEditProduction } from "../utils/permissions";
 import "./ProductionLineDashboard.css";
 
 const { Text } = Typography;
@@ -130,6 +130,7 @@ function KpiCard({ icon, label, value, suffix, children, tone = "blue" }) {
 export default function ProductionLineDashboard({ line, title = line }) {
   const { user } = useAuth();
   const canDownloadExcel = canExportProduction(user?.role);
+  const canModifyProduction = canEditProduction(user?.role);
   const quality = /^Keda [123]$/.test(line);
   const [sizeModalOpen, setSizeModalOpen] = useState(false);
   const [gradeReview, setGradeReview] = useState(null);
@@ -633,6 +634,25 @@ export default function ProductionLineDashboard({ line, title = line }) {
   const selectedQualityDetails = isSelectedCurrentShift && live ? live : selectedDetails;
   const selectedQualityTotals = selectedQualityDetails.qualitySummary || selectedQualityDetails.qualityDetails;
   const qualitySensorStatus = live?.qualitySensor?.sensorStatus ?? live?.qualitySensorStatus ?? "Unknown";
+  const liveQualityTotals = live?.qualityDetails || live?.qualitySummary;
+  const outTiles = live?.totalQualityTiles ?? liveQualityTotals?.totalTiles;
+  const outProduction = useMemo(() => {
+    const snapshotSqm = live?.qualityOutputProductionSqm ?? liveQualityTotals?.outputProductionSqm;
+    if (snapshotSqm != null && Number.isFinite(Number(snapshotSqm)) && Number(snapshotSqm) >= 0) return Number(snapshotSqm);
+    if (outTiles == null) return null;
+    if (Number(outTiles) === 0) return 0;
+    const segments = liveQualityTotals?.segments;
+    if (!Array.isArray(segments) || !segments.length) return null;
+    let tiles = 0, sqm = 0;
+    for (const segment of segments) {
+      const dimensions = String(segment.tileSize || '').toLowerCase().replace(/\s+/g, '').replace(/×/g, 'x').split('x').map(Number);
+      const count = Number(segment.totalTiles);
+      if (dimensions.length !== 2 || !dimensions.every(value => Number.isFinite(value) && value > 0) || !Number.isFinite(count) || count < 0) return null;
+      tiles += count;
+      sqm += count * dimensions[0] * dimensions[1] / 10000;
+    }
+    return tiles === Number(outTiles) ? sqm : null;
+  }, [outTiles, liveQualityTotals, live?.qualityOutputProductionSqm]);
 
   const selectedCodeProduction = useMemo(() => {
     const rows = selectedShiftStats?.codeWiseProduction;
@@ -716,6 +736,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
   };
 
   const saveDowntimeReason = async () => {
+    if (!canModifyProduction) return;
     if (!selectedDowntime?._id) return;
 
     try {
@@ -754,6 +775,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
   };
 
   const openSizeModal = () => {
+    if (!canModifyProduction) return;
     setSelectedTileSize(String(live?.tileSize || "").trim());
     setSizeModalOpen(true);
   };
@@ -794,6 +816,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
   };
 
   const saveProductionSize = async (reviewed = false) => {
+    if (!canModifyProduction) return;
     if (!TILE_SIZE_OPTIONS.some((option) => option.value === selectedTileSize)) {
       message.warning("Please select a tile size.");
       return;
@@ -869,6 +892,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
   );
 
   const openDesignModal = useCallback(() => {
+    if (!canModifyProduction) return;
     const tileSize = String(live?.tileSize || "").trim();
 
     if (!tileSize) {
@@ -884,9 +908,10 @@ export default function ProductionLineDashboard({ line, title = line }) {
     setDesignOptions([]);
     setDesignModalOpen(true);
     loadDesignOptions("");
-  }, [live?.tileSize, live?.designCode, loadDesignOptions]);
+  }, [live?.tileSize, live?.designCode, loadDesignOptions, canModifyProduction]);
 
   const saveProductionDesign = useCallback(async function saveDesign(reviewed = false) {
+    if (!canModifyProduction) return;
     const tileSize = String(live?.tileSize || "").trim();
     const designCode = String(selectedDesignCode || "").trim();
 
@@ -937,7 +962,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
     } finally {
       setDesignSaving(false);
     }
-  }, [line, live?.tileSize, selectedDesignCode, requestGradeReview]);
+  }, [line, live?.tileSize, selectedDesignCode, requestGradeReview, canModifyProduction]);
 
   const tableColumns = [
     { title: "#", width: 48, render: (_, __, i) => i + 1 },
@@ -1084,6 +1109,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 type="button"
                 className="production-design-code-button"
                 onClick={openSizeModal}
+                disabled={!canModifyProduction}
                 title="Change production tile size"
               >
                 <span>Size:</span>
@@ -1095,6 +1121,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 type="button"
                 className="production-design-code-button production-design-code-right"
                 onClick={openDesignModal}
+                disabled={!canModifyProduction}
                 title="Change production design"
               >
                 <span>Design:</span>
@@ -1173,8 +1200,13 @@ export default function ProductionLineDashboard({ line, title = line }) {
               suffix={live?.firstQuality == null ? undefined : "%"}
               tone="quality"
             >
-              <span>Normal damages <strong>{qualityPercent(live?.normalDamageQuality)}</strong></span>
-              <span>Cut damages <strong>{qualityPercent(live?.cutDamageQuality)}</strong></span>
+              <div>
+                Output: <strong>{outProduction == null ? '—' : `${Number(outProduction.toFixed(2))} m²`} / {outTiles == null ? '—' : Number(outTiles)} tiles</strong>
+              </div>
+              <div className="production-quality-kpi-row">
+                <span>Normal <strong>{qualityPercent(live?.normalDamageQuality)}</strong></span>
+                <span>Cut <strong>{qualityPercent(live?.cutDamageQuality)}</strong></span>
+              </div>
             </KpiCard>
           </Col>
         )}
@@ -1616,6 +1648,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
         onCancel={() => setDowntimeModalOpen(false)}
         onOk={saveDowntimeReason}
         okText="Save"
+        footer={!canModifyProduction ? <Button onClick={() => setDowntimeModalOpen(false)}>Close</Button> : undefined}
         confirmLoading={savingDowntime}
         destroyOnHidden
       >
@@ -1649,7 +1682,23 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 {fmt(selectedDowntime.durationMinutes, 1)} min
               </Descriptions.Item>
             </Descriptions>
-            <Form form={downtimeForm} layout="vertical">
+            {!canModifyProduction ? (
+              <Descriptions size="small" column={1} bordered>
+                <Descriptions.Item label="Downtime Type">
+                  {DOWNTIME_TYPES.find(item => item.value === (selectedDowntime.downtimeType || 'unplanned'))?.label || selectedDowntime.downtimeType}
+                </Descriptions.Item>
+                {selectedDowntime.downtimeType === 'planned' && <Descriptions.Item label="Planned Category">
+                  {PLANNED_CATEGORIES.find(item => item.value === selectedDowntime.plannedCategory)?.label || selectedDowntime.plannedCategory || 'Not entered'}
+                </Descriptions.Item>}
+                <Descriptions.Item label="Downtime Code">
+                  {downtimeCodes.options.find(item => item.value === selectedDowntime.downtimeCode)?.label || selectedDowntime.downtimeCode || 'Not entered'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Machine">{selectedDowntime.machine || 'Not entered'}</Descriptions.Item>
+                <Descriptions.Item label="Downtime Reason">
+                  <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selectedDowntime.reason || 'Not entered'}</div>
+                </Descriptions.Item>
+              </Descriptions>
+            ) : <Form form={downtimeForm} layout="vertical">
               <Form.Item
                 label="Downtime Type"
                 name="downtimeType"
@@ -1745,7 +1794,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
               >
                 <Input.TextArea rows={4} maxLength={500} showCount />
               </Form.Item>
-            </Form>
+            </Form>}
           </>
         ) : null}
       </Modal>

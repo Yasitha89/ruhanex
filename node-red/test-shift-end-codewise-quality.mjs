@@ -7,6 +7,11 @@ const global={get:k=>({devicesReady:true,devices:{'RX-QLT-4000':{enabled:true,li
 const t=target(s,global),grades=[{grade:'First',category:'1'},{grade:'Normal',category:'2'},{grade:'Cut',category:'3'}];
 const row=(design,size,run,values,factor=2)=>({device:'RX-QLT-4000',design_code:design,tile_size:size,production_run_id:run,tiles_per_box:String(factor),design_grades_json:JSON.stringify({1:'First',2:'Normal',3:'Cut'}),...Object.fromEntries(Array.from({length:16},(_,i)=>[`grade_${i}_delta`,values[i]||0]))});
 const rows=[row('YKM','80x80','run-a',[0,8,2]),row('YKM','80x80','run-b',[0,1,0,1],4),row('ABC','60x60','run-c',[0,2])];
+const output=fields(t,rows,grades,Date.now());
+assert.equal(output.totalOutputTiles,32);
+assert.equal(output.totalOutputProductionSqm,19.36);
+assert.equal(fields(t,null,grades,Date.now()).totalOutputTiles,null);
+assert.equal(fields(t,[row('ABC','unknown','',[0,2])],grades,Date.now()).totalOutputProductionSqm,null);
 const entries=[{designCode:'YKM',tileSize:'80x80',productionRunId:'run-a',tileCount:100,production:64},{designCode:'YKM',tileSize:'80x80',productionRunId:'run-b',tileCount:50,production:32},{designCode:'ABC',tileSize:'60x60',tileCount:20,production:7.2}];
 const enriched=codewise(entries,t,rows,grades);
 assert.equal(enriched[0].firstQuality,80);assert.equal(enriched[0].qualityTotalTiles,20);

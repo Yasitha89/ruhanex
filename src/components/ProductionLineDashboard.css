@@ -936,3 +936,6 @@
     white-space: normal;
   }
 }
+
+.production-kpi-subcontent .production-quality-kpi-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.production-kpi-subcontent .production-quality-kpi-row > span { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 4px; }

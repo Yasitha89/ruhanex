@@ -32,6 +32,13 @@ export function trendCandidate(event, existing, restoredRows, grades) {
     for(let grade=0;grade<16;grade++)bucket[`grade_${grade}_delta`]=Number(bucket[`grade_${grade}_delta`])+event.delta[grade];
   }
   const q=calculateLiveQuality(rows,grades);
+  let outputSqm=0;
+  const outputComplete=q.segments.every(segment=>{
+    if(segment.totalTiles===0)return true;
+    const dims=String(segment.tileSize||'').toLowerCase().replace(/\s+/g,'').replace(/×/g,'x').split('x').map(Number);
+    if(dims.length!==2||!dims.every(n=>Number.isFinite(n)&&n>0))return false;
+    outputSqm+=segment.totalTiles*dims[0]*dims[1]/10000;return true;
+  });
   if(q.totalBoxes<event.boxDelta)throw Error('Restored shift quality does not include the committed event yet.');
   const fields={time:event.time,schema:'1i',total_boxes:`${q.totalBoxes}i`,total_tiles:`${q.totalTiles}i`,first_tiles:`${q.firstTiles}i`,
     normal_damage_tiles:`${q.normalDamageTiles}i`,cut_damage_tiles:`${q.cutDamageTiles}i`,undetected_tiles:`${q.undetectedTiles}i`,unclassified_tiles:`${q.unclassifiedTiles}i`,
@@ -39,6 +46,8 @@ export function trendCandidate(event, existing, restoredRows, grades) {
     quality_available:q.qualityAvailable,classification_complete:q.classificationComplete,box_delta:`${event.boxDelta}i`,
     design_code:event.designCode,tile_size:event.tileSize,tiles_per_box:`${event.factor}i`,production_run_id:event.productionRunId,
     boot_id:event.bootId,sequence:`${event.sequence}i`,calculated_at_ms:`${Date.now()}i`};
+  fields.output_production_complete=outputComplete;
+  if(outputComplete)fields.output_production_sqm=outputSqm;
   // Missing percentages are omitted, never written as null/zero measured quality.
   if(q.qualityAvailable)Object.assign(fields,{quality:q.firstQuality,first_quality:q.firstQuality,normal_damage_quality:q.normalDamageQuality,
     cut_damage_quality:q.cutDamageQuality,undetected_percent:q.undetectedPercent,unclassified_percent:q.unclassifiedPercent});

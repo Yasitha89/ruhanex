@@ -1,6 +1,6 @@
 export function prepareMonthlyQuality(msg, now = Date.now()) {
   const headers = msg.req?.headers || {};
-  if (!headers['x-ruhanex-user'] || !['Admin','Manager','Supervisor','Line Supervisor','JE'].includes(headers['x-ruhanex-role'])) {
+  if (!headers['x-ruhanex-user'] || !['Admin','Manager','Engineer','Supervisor','Line Supervisor','JE'].includes(headers['x-ruhanex-role'])) {
     msg.statusCode=401;msg.payload={success:false,error:'Sign in to view quality.'};return [null,msg];
   }
   const month=msg.req?.query?.month || new Date(now+330*60000).toISOString().slice(0,7);

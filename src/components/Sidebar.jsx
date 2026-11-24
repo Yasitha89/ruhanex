@@ -14,8 +14,9 @@ export default function Sidebar() {
   const location = useLocation();
   const { user } = useAuth();
   const filterMenu = (items) => items.filter((item) => {
+    if (user.role === "Engineer") return ["dashboard", "production", "process", "milling", "energy", "energy_overview", "energy_meter", "energy_live", "keda1", "keda2", "keda3", "kiln1", "kiln2", "gl1", "gl3"].includes(item.key);
     if (["Line Supervisor", "JE"].includes(user.role)) return ["dashboard", "production", "keda1", "keda2", "keda3", "kiln1", "kiln2", "gl1", "gl3"].includes(item.key);
-    return user.role === "Admin" || !["administration", "users", "process"].includes(item.key);
+    return user.role === "Admin" || !["administration", "users"].includes(item.key);
   }).map((item) => ({ ...item, ...(item.children ? { children: filterMenu(item.children) } : {}) }));
 
   const selectedKey = (() => {

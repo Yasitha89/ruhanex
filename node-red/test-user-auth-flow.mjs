@@ -66,7 +66,7 @@ assert.equal((await request('password', { currentPassword: 'Initial-password-123
 assert.equal((await request('me', {}, admin)).statusCode, 401);
 admin = cookieOf(await login('administrator', 'Replacement-password-123'));
 assert.equal((await authorize(admin, '/api/api/devices', 'POST')).statusCode, 204);
-for (const role of ['Manager', 'Line Supervisor']) {
+for (const role of ['Manager', 'Line Supervisor', 'Engineer']) {
   const username = role.toLowerCase().replaceAll(' ', '') + 'user';
   assert.equal((await request('create', { username, displayName: role, role, password: 'Initial-password-123' }, admin)).statusCode, 201);
   let session = cookieOf(await login(username, 'Initial-password-123'));
@@ -77,11 +77,20 @@ for (const role of ['Manager', 'Line Supervisor']) {
   assert.equal((await authorize(session, '/api/production/monthly-summary')).statusCode, 204);
   assert.equal((await authorize(session, '/api/downtime-codes', 'POST')).statusCode, 403);
   assert.equal((await authorize(session, '/api/getEnergyOverview')).statusCode, role === 'Line Supervisor' ? 403 : 204);
-  assert.equal((await authorize(session, '/api/line-setting', 'POST')).statusCode, role === 'Line Supervisor' ? 403 : 204);
+  assert.equal((await authorize(session, '/api/line-setting', 'POST')).statusCode, role === 'Manager' ? 204 : 403);
+  if(role==='Engineer'){
+    for(const path of ['/api/line-tile-size','/api/line-design-code','/api/update-downtime-reason'])assert.equal((await authorize(session,path,'POST')).statusCode,403);
+    for(const path of ['/api/production/shift-stoppages','/api/production/shift-quality','/api/getTemperatureData','/api/getLiveEnergyData'])assert.equal((await authorize(session,path)).statusCode,204);
+    assert.equal((await authorize(session,'/api/auth/users')).statusCode,403);
+  }
   assert.equal((await request('logout', {}, session)).statusCode, 200);
   assert.equal((await request('me', {}, session)).statusCode, 401);
 }
-assert.equal((await request('list', {}, admin)).payload.users.length, 3);
+assert.equal((await request('list', {}, admin)).payload.users.length, 4);
+// The extra role scenarios should not consume the later login tests' rate limit.
+flow.set('ruhanexAuthAttempts', {});
+for(const path of ['/dashboard','/keda2','/process/milling/temperature','/energyoverview','/energydashboard','/energy_live'])assert(canAccessPage('Engineer',path));
+for(const path of ['/settings','/users','/historical_data','/device_administration'])assert(!canAccessPage('Engineer',path));
 assert.equal((await request('create', { username: 'shortpass', displayName: 'Short Password', role: 'Line Supervisor', password: 'abc' }, admin)).statusCode, 400);
 assert.equal((await request('create', { username: 'shortpass', displayName: 'Short Password', role: 'Line Supervisor', password: 'abcd' }, admin)).statusCode, 201);
 const shortSession = cookieOf(await login('shortpass', 'abcd'));
@@ -132,7 +141,7 @@ assert.equal(guard({ ...settings, stopDelayMs: 1 })[1].statusCode, 403);
 for (const role of ['Admin', 'Manager', 'Line Supervisor']) {
   assert.equal(canAccessPage(role, '/dashboard'), true);
   assert.equal(canAccessPage(role, '/users'), role === 'Admin');
-  assert.equal(canAccessPage(role, '/process/milling/temperature'), role === 'Admin');
+  assert.equal(canAccessPage(role, '/process/milling/temperature'), ['Admin','Manager'].includes(role));
   assert.equal(canAccessPage(role, '/settings'), role !== 'Line Supervisor');
 }
 for (const node of nodes.filter(node => node.type === 'function')) new Function('msg', 'env', 'global', 'flow', 'Buffer', 'node', node.func);

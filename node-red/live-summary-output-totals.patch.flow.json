@@ -1,0 +1,22 @@
+[
+  {
+    "id": "ade9f36f8940b434",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality: snapshot KPI / cumulative output",
+    "func": "function finishQualitySnapshot(msg) {\n  if(!Array.isArray(msg.payload))throw Error('Invalid quality snapshot result.');\n  const s=msg.liveQualityResponse,r=msg.payload[0];\n  const counts=['totalTiles','totalBoxes','firstTiles','normalDamageTiles','cutDamageTiles','undetectedTiles','unclassifiedTiles'];\n  const fields=['total_tiles','total_boxes','first_tiles','normal_damage_tiles','cut_damage_tiles','undetected_tiles','unclassified_tiles'];\n  const details={device:msg.liveQualityDevice,shift:s.currentShift,shiftDate:s.shiftDate,source:'quality_shift_trend',qualityAvailable:false,status:'quality-trend-not-recorded'};\n  if(r){\n    fields.forEach((f,i)=>{const n=Number(r[f]);if(r[f]==null||!Number.isSafeInteger(n)||n<0)throw Error('Invalid snapshot counts.');details[counts[i]]=n;});\n    if(details.firstTiles+details.normalDamageTiles+details.cutDamageTiles+details.undetectedTiles+details.unclassifiedTiles!==details.totalTiles)throw Error('Snapshot category totals disagree.');\n    const pct=n=>details.totalTiles>0?Math.round(n/details.totalTiles*10000)/100:null;\n    Object.assign(details,{qualityAvailable:details.totalTiles>0,status:details.totalTiles>0?'available':'no-tracked-quality-tiles',firstQuality:pct(details.firstTiles),normalDamageQuality:pct(details.normalDamageTiles),cutDamageQuality:pct(details.cutDamageTiles),snapshotAt:new Date(r._time).toISOString(),calculatedAt:Number(r.calculated_at_ms)||null});\n    if((r.output_production_complete===true||r.output_production_complete==='true')&&r.output_production_sqm!=null&&Number.isFinite(Number(r.output_production_sqm))&&Number(r.output_production_sqm)>=0)details.outputProductionSqm=Number(r.output_production_sqm);\n  }\n  const noOutput=details.totalTiles===0;\n  Object.assign(s,{qualityDetails:details,qualityAvailable:details.qualityAvailable,qualityAssumed:false,totalQualityTiles:details.totalTiles??null,\n    firstQuality:details.qualityAvailable?details.firstQuality:noOutput?0:null,normalDamageQuality:details.qualityAvailable?details.normalDamageQuality:noOutput?0:null,cutDamageQuality:details.qualityAvailable?details.cutDamageQuality:noOutput?0:null,\n    qualityOutputProductionSqm:details.outputProductionSqm??null,qualitySnapshotAt:details.snapshotAt??null,qualitySource:'quality_shift_trend'});\n  s.totalOutputTiles=details.totalTiles??null;\n  s.totalOutputProductionSqm=details.outputProductionSqm??null;\n  s.quality=s.firstQuality;\n  s.ole=s.quality===null||noOutput?null:Math.round(Number(s.availability)*Number(s.performance)*s.quality/100)/100;\n  s.oee=s.ole;\n  msg.payload=s;delete msg.liveQualityResponse;delete msg.liveQualityGrades;return msg;\n}\nreturn finishQualitySnapshot(msg);",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 3470,
+    "y": 3490,
+    "wires": [
+      [
+        "8df03ed03548ae40"
+      ]
+    ]
+  }
+]

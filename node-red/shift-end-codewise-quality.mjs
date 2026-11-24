@@ -22,10 +22,18 @@ export function directQualityFields(target,rows,grades,now) {
     tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),
     gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));
   const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;
+  let outputProductionSqm=q?0:null;
+  if(q)for(const segment of q.segments){
+    if(!segment.totalTiles)continue;
+    const dimensions=String(segment.tileSize||'').toLowerCase().replace(/\s+/g,'').replace(/×/g,'x').split('x').map(Number);
+    if(dimensions.length!==2||!dimensions.every(n=>Number.isFinite(n)&&n>0)){outputProductionSqm=null;break;}
+    outputProductionSqm+=segment.totalTiles*dimensions[0]*dimensions[1]/10000;
+  }
+  if(outputProductionSqm!==null)outputProductionSqm=Math.round((outputProductionSqm+Number.EPSILON)*100)/100;
   const quality=assumed?100:measured?q.firstQuality:null;
   const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;
   return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,
-    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,
+    totalQualityTiles:q?.totalTiles??null,totalOutputTiles:q?.totalTiles??null,totalOutputProductionSqm:outputProductionSqm,qualityOutputProductionSqm:outputProductionSqm,qualityAvailable:measured,qualityAssumed:assumed,
     qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',
     qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',
     qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};

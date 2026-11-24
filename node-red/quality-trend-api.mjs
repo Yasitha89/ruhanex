@@ -1,7 +1,7 @@
 export function prepareQualityTrendApi(msg,now=Date.now()) {
   const fail=(code,error)=>{msg.statusCode=code;msg.payload={success:false,error};return [null,msg];};
   const headers=msg.req?.headers||{};
-  if(!headers['x-ruhanex-user']||!['Admin','Manager','Supervisor','Line Supervisor','JE'].includes(headers['x-ruhanex-role']))return fail(401,'Sign in to view quality.');
+  if(!headers['x-ruhanex-user']||!['Admin','Manager','Engineer','Supervisor','Line Supervisor','JE'].includes(headers['x-ruhanex-role']))return fail(401,'Sign in to view quality.');
   const q=msg.req?.query||{},line=q.line,date=q.date,shift=q.shift;
   if(!/^Keda [123]$/.test(line||'')||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')||!['06-14','14-22','22-06'].includes(shift))return fail(400,'Valid Keda line, date and shift are required.');
   if(!Number.isFinite(Date.parse(date+'T00:00:00Z'))||new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date)return fail(400,'Invalid shift date.');

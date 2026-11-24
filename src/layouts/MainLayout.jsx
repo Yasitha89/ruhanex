@@ -51,7 +51,7 @@ export default function MainLayout() {
 
         <div className="app-header-spacer" />
         <div className="app-header-actions">
-          {!user.mustChangePassword && !["Line Supervisor", "JE"].includes(user.role) && <AskAiDrawer />}
+          {!user.mustChangePassword && !["Line Supervisor", "JE", "Engineer"].includes(user.role) && <AskAiDrawer />}
           <HeaderBar />
         </div>
       </Header>

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {trendCandidate} from './quality-shift-trend.mjs';
+import {buildQualitySnapshotQuery,finishQualitySnapshot} from './live-quality-snapshot.mjs';
+const row=(size,factor,boxes)=>({device:'RX-QLT-4000',design_code:size,tile_size:size,tiles_per_box:factor,design_grades_json:'{"1":"A","2":"B"}',...Object.fromEntries(Array.from({length:16},(_,i)=>[`grade_${i}_delta`,i===1?boxes:0]))});
+const event={time:Date.parse('2026-11-24T08:00:00+05:30'),device:'RX-QLT-4000',line:'Keda 2',boxDelta:1,sequence:1};
+const candidate=trendCandidate(event,null,[row('80x80',3,10),row('60x30',2,5)],[{grade:'A',category:1},{grade:'B',category:2}]);
+assert(Math.abs(candidate.payload[0].output_production_sqm-21)<1e-9);
+assert.equal(candidate.payload[0].output_production_complete,true);
+const invalid=trendCandidate(event,null,[row('unknown',2,5)],[{grade:'A',category:1}]);
+assert.equal(invalid.payload[0].output_production_complete,false);assert.equal(invalid.payload[0].output_production_sqm,undefined);
+const response=()=>({success:true,line:'Keda 2',currentShift:'06-14',shiftDate:'2026-11-24',shiftFromTime:'2026-11-24T06:00:00+05:30',shiftToTime:'2026-11-24T14:00:00+05:30',timestamp:event.time,availability:80,performance:90,productionSqm:123,totalDowntimeMinutes:20});
+const msg={liveQualityResponse:response(),liveQualityDevice:event.device,req:{},res:{}};
+buildQualitySnapshotQuery(msg);assert(msg.query.includes('quality_shift_trend'));assert(msg.query.includes('r.shiftDate=="2026-11-24"'));assert(msg.query.includes('|> last()'));assert(!msg.query.includes('quality_events'));
+msg.payload=[{_time:new Date(event.time).toISOString(),total_tiles:'100',total_boxes:'50',first_tiles:'80',normal_damage_tiles:'15',cut_damage_tiles:'5',undetected_tiles:'0',unclassified_tiles:'0',output_production_sqm:'64',output_production_complete:'true'}];
+finishQualitySnapshot(msg);
+assert.equal(msg.payload.firstQuality,80);assert.equal(msg.payload.normalDamageQuality,15);assert.equal(msg.payload.ole,57.6);assert.equal(msg.payload.qualityOutputProductionSqm,64);assert.equal(msg.payload.productionSqm,123);assert.equal(msg.payload.totalDowntimeMinutes,20);assert(msg.req&&msg.res);
+const empty={liveQualityResponse:response(),payload:[]};finishQualitySnapshot(empty);assert.equal(empty.payload.firstQuality,null);assert.equal(empty.payload.qualityDetails.status,'quality-trend-not-recorded');
+console.log('PASS: mixed-size output, invalid-size handling, latest snapshot query, weighted quality/OEE, production preservation, missing snapshot.');

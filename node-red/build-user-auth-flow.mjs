@@ -2,7 +2,7 @@ import fs from 'node:fs';
 
 // Self-contained runtime embedded in the exported Function nodes.
 export async function authStep(msg, env, crypto, Buffer, flow) {
-  const roles = ['Admin', 'Manager', 'Line Supervisor'];
+  const roles = ['Admin', 'Manager', 'Engineer', 'Line Supervisor'];
   const normaliseRole = role => role === 'JE' ? 'Line Supervisor' : role;
   const allowedOrigins = String(env.get('AUTH_APP_ORIGINS') || env.get('AUTH_APP_ORIGIN') || '').split(',').map(value => value.trim()).filter(Boolean);
   const secure = env.get('AUTH_COOKIE_SECURE') !== 'false';
@@ -121,6 +121,7 @@ export async function authStep(msg, env, crypto, Buffer, flow) {
       const operatingWrite = method === 'POST' && ['/api/update-downtime-reason', '/api/line-design-code', '/api/line-tile-size'].includes(path);
       let allowed = account.role === 'Admin';
       if (account.role === 'Manager') allowed = read || (!adminWrite && (operatingWrite || path === '/api/line-setting' || path === '/api/ai/chat'));
+      if (account.role === 'Engineer') allowed = read && (production || ['/api/devices', '/api/getEnergyOverview', '/api/getEnergyMeterData', '/api/getLiveEnergyData', '/api/getHistoricalElectricityData', '/api/getHistoricalEnergyUsage', '/api/getHistoricalEnergyData', '/api/getTemperatureData', '/api/getTemperatureGatewayStatus', '/api/getHistoricalTemperatureData'].includes(path));
       if (account.role === 'Line Supervisor') allowed = (read && (production || path === '/api/getHistoricalEnergyUsage')) || operatingWrite || (method === 'POST' && path === '/api/ai/chat');
       if (!allowed) return fail(403, 'Your account level does not permit this operation.');
       return finish(204, '', { 'X-Ruhanex-Role': account.role, 'X-Ruhanex-User': account._id });

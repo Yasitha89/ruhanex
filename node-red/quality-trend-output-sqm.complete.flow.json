@@ -1,0 +1,246 @@
+[
+  {
+    "id": "27d5e94576115af2",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Committed quality point → shift trend",
+    "func": "if(!Array.isArray(msg.payload))throw Error('Completed quality write has no original payload.');return {qualityTrendAction:'event',payload:msg.payload};",
+    "outputs": 1,
+    "x": 750,
+    "y": 2120,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "0484659f8144898e",
+    "type": "inject",
+    "z": "e5489573e203f3d0",
+    "name": "Quality trend startup / retry every 5s",
+    "props": [
+      {
+        "p": "qualityTrendAction",
+        "v": "tick",
+        "vt": "str"
+      }
+    ],
+    "repeat": "5",
+    "once": true,
+    "onceDelay": 1,
+    "x": 750,
+    "y": 2220,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "d83b73010139a186",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Cumulative shift quality trend — independent queue",
+    "func": "function stockPeriod(time) {\n  const offset = 330 * 60000;\n  const d = new Date(time + offset), h = d.getUTCHours();\n  const hour = h >= 22 ? 22 : h >= 14 ? 14 : h >= 6 ? 6 : -2;\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour) - offset;\n  const local = new Date(start + offset);\n  const shiftDate = local.toISOString().slice(0, 10);\n  const shift = ['22-06', '06-14', '14-22'][Math.floor((local.getUTCHours() + 2) / 8) % 3];\n  return { start, end: start + 28800000, shiftDate, shift, id: `${shiftDate}|${shift}` };\n}\nfunction qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction trendEvent(payload) {\n  if(!Array.isArray(payload)||payload.length!==2)throw Error('Trend requires the successfully saved [fields,tags] quality point.');\n  const [f,t]=payload;\n  const integer=value=>{const n=Number(typeof value==='string'?value.replace(/i$/,''):value);if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid quality trend integer.');return n;};\n  const delta=Array.from({length:16},(_,i)=>integer(f[`grade_${i}_delta`]));\n  const time=integer(f.time);\n  if(!time||!/^RX-QLT-/.test(t.device||'')||!/^Keda [123]$/.test(t.line||''))throw Error('Invalid trend source device, line or timestamp.');\n  const factor=integer(f.tiles_per_box);\n  if(!factor)throw Error('Invalid trend tiles per box.');\n  const assignments=JSON.parse(f.design_grades_json);\n  if(!assignments||typeof assignments!=='object'||Array.isArray(assignments))throw Error('Invalid trend grade assignments.');\n  return {device:t.device,line:t.line,tenant:t.tenant||'',site:t.site||'',time,delta,factor,assignments,\n    designCode:String(f.design_code||''),tileSize:String(f.tile_size||''),productionRunId:String(f.production_run_id||''),\n    bootId:String(f.boot_id||''),sequence:integer(f.sequence),boxDelta:delta.reduce((a,b)=>a+b,0)};\n}\nfunction trendBucketKey(row) {\n  return JSON.stringify([row.device,row.design_code,row.tile_size,Number(row.tiles_per_box),JSON.parse(row.design_grades_json)]);\n}\nfunction trendCandidate(event, existing, restoredRows, grades) {\n  const period=stockPeriod(event.time);\n  const key=period.id;\n  const rows=restoredRows===null?JSON.parse(JSON.stringify(existing.rows)):JSON.parse(JSON.stringify(restoredRows));\n  if(restoredRows===null){\n    const row={device:event.device,design_code:event.designCode,tile_size:event.tileSize,tiles_per_box:event.factor,design_grades_json:JSON.stringify(event.assignments)};\n    let bucket=rows.find(r=>trendBucketKey(r)===trendBucketKey(row));\n    if(!bucket){bucket={...row,...Object.fromEntries(Array.from({length:16},(_,i)=>[`grade_${i}_delta`,0]))};rows.push(bucket);}\n    for(let grade=0;grade<16;grade++)bucket[`grade_${grade}_delta`]=Number(bucket[`grade_${grade}_delta`])+event.delta[grade];\n  }\n  const q=calculateLiveQuality(rows,grades);\n  let outputSqm=0;\n  const outputComplete=q.segments.every(segment=>{\n    if(segment.totalTiles===0)return true;\n    const dims=String(segment.tileSize||'').toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x').split('x').map(Number);\n    if(dims.length!==2||!dims.every(n=>Number.isFinite(n)&&n>0))return false;\n    outputSqm+=segment.totalTiles*dims[0]*dims[1]/10000;return true;\n  });\n  if(q.totalBoxes<event.boxDelta)throw Error('Restored shift quality does not include the committed event yet.');\n  const fields={time:event.time,schema:'1i',total_boxes:`${q.totalBoxes}i`,total_tiles:`${q.totalTiles}i`,first_tiles:`${q.firstTiles}i`,\n    normal_damage_tiles:`${q.normalDamageTiles}i`,cut_damage_tiles:`${q.cutDamageTiles}i`,undetected_tiles:`${q.undetectedTiles}i`,unclassified_tiles:`${q.unclassifiedTiles}i`,\n    first_boxes:`${q.firstBoxes}i`,normal_damage_boxes:`${q.normalDamageBoxes}i`,cut_damage_boxes:`${q.cutDamageBoxes}i`,\n    quality_available:q.qualityAvailable,classification_complete:q.classificationComplete,box_delta:`${event.boxDelta}i`,\n    design_code:event.designCode,tile_size:event.tileSize,tiles_per_box:`${event.factor}i`,production_run_id:event.productionRunId,\n    boot_id:event.bootId,sequence:`${event.sequence}i`,calculated_at_ms:`${Date.now()}i`};\n  fields.output_production_complete=outputComplete;\n  if(outputComplete)fields.output_production_sqm=outputSqm;\n  // Missing percentages are omitted, never written as null/zero measured quality.\n  if(q.qualityAvailable)Object.assign(fields,{quality:q.firstQuality,first_quality:q.firstQuality,normal_damage_quality:q.normalDamageQuality,\n    cut_damage_quality:q.cutDamageQuality,undetected_percent:q.undetectedPercent,unclassified_percent:q.unclassifiedPercent});\n  return {state:{period:key,time:event.time,line:event.line,rows},payload:[fields,{device:event.device,line:event.line,shift:period.shift,shiftDate:period.shiftDate,tenant:event.tenant,site:event.site}]};\n}\nreturn (function qualityTrendStep(msg, context, node, now=Date.now()) {\n  const queue=context.get('queue')||[],states=context.get('states')||{};\n  let job=context.get('job');\n  const action=msg.qualityTrendAction||'tick';\n  if(action==='event'){\n    const event=trendEvent(msg.payload);\n    if(!event.boxDelta)return null;\n    if(states[event.device]?.time>=event.time||job?.event.device===event.device&&job.event.time===event.time||queue.some(e=>e.device===event.device&&e.time===event.time))return null;\n    if(queue.length>=5000)throw Error('Quality trend queue full; source quality_events remain saved. Replay missing events after recovery.');\n    queue.push(event);context.set('queue',queue);\n  }\n  if(['catalogue','restored','saved','failed'].includes(action)){\n    if(!job||job.attempt!==msg.qualityTrendAttempt)return null;\n    if(action==='failed'){\n      job.busy=false;job.retryAt=now+15000;context.set('job',job);\n      node.status({fill:'yellow',shape:'ring',text:'trend retry in 15s'});\n      return [null,null,null,{payload:{saved:false,message:'Quality trend failed; queued for retry.',phase:msg.error?.source?.name||null}}];\n    }\n    if(action==='saved'){\n      states[job.event.device]=job.candidate.state;context.set('states',states);context.set('job',null);job=null;\n    }else{\n      if(action==='catalogue'){\n        const catalogue=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\n        if(!Array.isArray(catalogue?.grades))throw Error('Missing designGrades catalogue for trend.');\n        job.grades=catalogue.grades;\n        const state=states[job.event.device],period=stockPeriod(job.event.time);\n        if(!state||state.period!==period.id||state.line!==job.event.line){\n          context.set('job',job);\n          return [null,{qualityTrendAttempt:job.attempt,query:qualityShiftQuery(job.event.device,new Date(period.start).toISOString(),new Date(job.event.time+1).toISOString(),'RCLH',job.event.line)},null,null];\n        }\n        job.candidate=trendCandidate(job.event,state,null,job.grades);\n      }else{\n        if(!Array.isArray(msg.payload))throw Error('Invalid quality trend restore result.');\n        job.candidate=trendCandidate(job.event,null,msg.payload,job.grades);\n      }\n      context.set('job',job);\n      return [null,null,{payload:job.candidate.payload,qualityTrendAttempt:job.attempt},null];\n    }\n  }\n  if(job?.busy&&now-job.started<120000)return null;\n  if(job&&job.retryAt>now)return null;\n  if(!job){\n    while(queue.length&&states[queue[0].device]?.time>=queue[0].time)queue.shift();\n    if(!queue.length){context.set('queue',queue);return null;}\n    job={event:queue.shift()};context.set('queue',queue);\n  }\n  job.attempt=String(now)+':'+Math.random();job.started=now;job.busy=true;\n  context.set('job',job);\n  node.status({fill:'blue',shape:'dot',text:'trend '+job.event.device});\n  // Retry the identical calculated point if the write outcome was uncertain.\n  if(job.candidate)return [null,null,{payload:job.candidate.payload,qualityTrendAttempt:job.attempt},null];\n  return [{payload:[{_id:'designGrades'}],qualityTrendAttempt:job.attempt},null,null,null];\n})(msg,context,node);",
+    "outputs": 4,
+    "initialize": "const queue=context.get('queue')||[];const job=context.get('job');if(job?.event)queue.unshift(job.event);context.set('queue',queue);context.set('states',{});context.set('job',null);",
+    "x": 1190,
+    "y": 2120,
+    "wires": [
+      [
+        "abcea59bd67295ec"
+      ],
+      [
+        "0991dee2d572c19a"
+      ],
+      [
+        "a774737c66eba9fc"
+      ],
+      [
+        "dbe4119dc2fbc2c4"
+      ]
+    ],
+    "outputLabels": [
+      "Read category catalogue",
+      "Rebuild shift baseline from quality_events",
+      "Save quality_shift_trend",
+      "Trend diagnostics"
+    ]
+  },
+  {
+    "id": "abcea59bd67295ec",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "name": "Trend: read current designGrades categories",
+    "x": 1620,
+    "y": 2020,
+    "wires": [
+      [
+        "fb1309ca9d439a04"
+      ]
+    ]
+  },
+  {
+    "id": "fb1309ca9d439a04",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Trend catalogue result",
+    "func": "msg.qualityTrendAction='catalogue';return msg;",
+    "outputs": 1,
+    "x": 2000,
+    "y": 2020,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "0991dee2d572c19a",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Trend baseline: saved shift grade deltas",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 1620,
+    "y": 2100,
+    "wires": [
+      [
+        "0ebac07aa468d866"
+      ]
+    ]
+  },
+  {
+    "id": "0ebac07aa468d866",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Trend baseline result",
+    "func": "msg.qualityTrendAction='restored';return msg;",
+    "outputs": 1,
+    "x": 2000,
+    "y": 2120,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "a774737c66eba9fc",
+    "type": "influxdb out",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Save quality_shift_trend",
+    "measurement": "quality_shift_trend",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "Ruhanex",
+    "bucket": "RCLH",
+    "x": 1670,
+    "y": 2200,
+    "wires": []
+  },
+  {
+    "id": "7a7b1ec4b38a796b",
+    "type": "complete",
+    "z": "e5489573e203f3d0",
+    "name": "Trend saved successfully",
+    "scope": [
+      "a774737c66eba9fc"
+    ],
+    "uncaught": false,
+    "x": 1990,
+    "y": 2220,
+    "wires": [
+      [
+        "50955ad2970d8b6e"
+      ]
+    ]
+  },
+  {
+    "id": "50955ad2970d8b6e",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Commit trend totals after write",
+    "func": "return {qualityTrendAction:'saved',qualityTrendAttempt:msg.qualityTrendAttempt};",
+    "outputs": 1,
+    "x": 2350,
+    "y": 2220,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "5246f2491bcfe42c",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Trend failure — retry without affecting source",
+    "scope": [
+      "d83b73010139a186",
+      "abcea59bd67295ec",
+      "0991dee2d572c19a",
+      "a774737c66eba9fc"
+    ],
+    "uncaught": false,
+    "x": 1610,
+    "y": 2340,
+    "wires": [
+      [
+        "b6327a61af08bd71"
+      ]
+    ]
+  },
+  {
+    "id": "b6327a61af08bd71",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Retain pending trend point",
+    "func": "msg.qualityTrendAction='failed';return msg;",
+    "outputs": 1,
+    "x": 2000,
+    "y": 2340,
+    "wires": [
+      [
+        "d83b73010139a186"
+      ]
+    ]
+  },
+  {
+    "id": "dbe4119dc2fbc2c4",
+    "type": "debug",
+    "z": "e5489573e203f3d0",
+    "name": "Quality trend result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1570,
+    "y": 2460,
+    "wires": []
+  },
+  {
+    "id": "c57ca8b253fa60b2",
+    "type": "comment",
+    "z": "e5489573e203f3d0",
+    "name": "This part saves the cululative quality trend to different influx db",
+    "info": "Click Request Wi-Fi RSSI (get), then inspect RSSI RESPONSE in debug sidebar. Check Sensor status and grade telemetry independently. MQTT broker config must exist under mqtt_broker_aws.",
+    "x": 900,
+    "y": 2020,
+    "wires": []
+  }
+]

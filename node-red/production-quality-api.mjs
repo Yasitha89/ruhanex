@@ -3,7 +3,7 @@ import {calculateLiveQuality,qualityShiftQuery} from './live-quality.mjs';
 export function prepareQualityApi(msg,global,now) {
   const fail=(status,error)=>{msg.statusCode=status;msg.payload={success:false,error};return [null,msg];};
   const headers=msg.req?.headers||{};
-  if(!headers['x-ruhanex-user']||!['Admin','Manager','Line Supervisor','JE'].includes(headers['x-ruhanex-role']))return fail(401,'Sign in to view production quality.');
+  if(!headers['x-ruhanex-user']||!['Admin','Manager','Engineer','Line Supervisor','JE'].includes(headers['x-ruhanex-role']))return fail(401,'Sign in to view production quality.');
   const q=msg.req?.query||{},line=q.line;
   if(typeof line!=='string'||!/^Keda [123]$/.test(line))return fail(400,'Choose Keda 1, Keda 2 or Keda 3.');
   const local=new Date(now+330*60000),hour=local.getUTCHours();
