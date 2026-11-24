@@ -38,6 +38,7 @@ import ShiftDowntimeBarChart from "./ShiftDowntimeBarChart";
 import CommunicationDot from "./CommunicationDot";
 import ShiftTileCountChart from "./ShiftTileCountChart";
 import ShiftGradeChart from "./ShiftGradeChart";
+import ShiftQualityTrendChart from "./ShiftQualityTrendChart";
 import {
   getProductionLiveSummary,
   getProductionMonthlySummary,
@@ -1277,6 +1278,19 @@ export default function ProductionLineDashboard({ line, title = line }) {
           )}
           <Col xs={24} xl={quality ? 11 : 12}>
             <div className="production-analysis-panel">
+              {line === 'Keda 2' ? <>
+                <div className="production-panel-heading">
+                  <strong>Shift Quality Trend ({selectedShift}, {selectedDate.format('DD MMM YYYY')})</strong>
+                </div>
+                <ShiftQualityTrendChart
+                  key={`quality-trend:${line}:${selectedDateString}:${selectedShift}`}
+                  line={line}
+                  date={selectedDateString}
+                  shift={selectedShift}
+                  current={isSelectedCurrentShift}
+                  refreshKey={qualityRefreshKey}
+                />
+              </> : <>
               <div className="production-panel-heading">
                 <strong>Current Shift Downtime ({selectedShift})</strong>
                 <span>
@@ -1293,6 +1307,7 @@ export default function ProductionLineDashboard({ line, title = line }) {
                 data={selectedStops}
                 onBarClick={openDowntimeModal}
               />
+              </>}
             </div>
           </Col>
           <Col xs={24} xl={quality ? 7 : 12}>
@@ -1312,6 +1327,23 @@ export default function ProductionLineDashboard({ line, title = line }) {
             </div>
           </Col>
         </Row>
+
+        {line === 'Keda 2' && (
+          <div className="production-analysis-panel" style={{ marginTop: 12 }}>
+            <div className="production-panel-heading">
+              <strong>Current Shift Downtime ({selectedShift})</strong>
+              <span>
+                Total: <strong>{fmt(selectedStopSummary?.totalDowntimeMinutes, 0)} min</strong>
+                {' '}&nbsp; {Number(selectedStopSummary?.completedStops || 0)} stoppages
+              </span>
+            </div>
+            <ShiftDowntimeBarChart
+              key={`stops-${line}-${selectedDateString}-${selectedShift}`}
+              data={selectedStops}
+              onBarClick={openDowntimeModal}
+            />
+          </div>
+        )}
 
         <Row
           gutter={[12, 12]}

@@ -1,0 +1,359 @@
+[
+  {
+    "id": "c2f78480b21ca3f6",
+    "type": "http in",
+    "z": "e5489573e203f3d0",
+    "name": "GET Shift Summary",
+    "url": "/api/production/shift-summary",
+    "method": "get",
+    "upload": false,
+    "skipBodyParsing": false,
+    "swaggerDoc": "",
+    "x": 320,
+    "y": 4360,
+    "wires": [
+      [
+        "76c0984bd2ed828a"
+      ]
+    ]
+  },
+  {
+    "id": "f4eba7a43a9cc668",
+    "type": "http response",
+    "z": "e5489573e203f3d0",
+    "name": "Return Shift Summary",
+    "statusCode": "",
+    "headers": {},
+    "x": 1900,
+    "y": 4380,
+    "wires": []
+  },
+  {
+    "id": "76c0984bd2ed828a",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Route Shift Summary Source",
+    "func": "function norm(v){return String(v||\"\").toLowerCase().replace(/[^a-z0-9]/g,\"\");}\nfunction escapeFlux(v){return String(v||\"\").replace(/\\\\/g,\"\\\\\\\\\").replace(/\"/g,'\\\\\"');}\nfunction escRegex(v){return String(v||\"\").replace(/[.*+?^${}()|[\\]\\\\]/g,\"\\\\$&\");}\n\nfunction resolveDevice(q){\n    const cfg=global.get(\"counterConfig\")||{};\n    const requested=String(q.device||\"\").trim();\n\n    if(requested && cfg[requested]) return requested;\n\n    const line=String(q.line||q.lineName||\"\").trim();\n    if(!line) return \"\";\n\n    const n=norm(line);\n\n    return Object.keys(cfg).find(id =>\n        cfg[id]?.enabled!==false &&\n        (\n            norm(cfg[id]?.line)===n ||\n            norm(cfg[id]?.shortId)===n ||\n            norm(id)===n\n        )\n    ) || \"\";\n}\n\nfunction addDays(ds,days){\n    const [y,m,d]=ds.split(\"-\").map(Number);\n    const x=new Date(Date.UTC(y,m-1,d));\n    x.setUTCDate(x.getUTCDate()+days);\n    return x.toISOString().slice(0,10);\n}\n\nfunction shiftRange(shift,date){\n    if(shift===\"06-14\") return {\n        from:`${date}T06:00:00+05:30`,\n        to:`${date}T14:00:00+05:30`\n    };\n\n    if(shift===\"14-22\") return {\n        from:`${date}T14:00:00+05:30`,\n        to:`${date}T22:00:00+05:30`\n    };\n\n    if(shift===\"22-06\") return {\n        from:`${date}T22:00:00+05:30`,\n        to:`${addDays(date,1)}T06:00:00+05:30`\n    };\n\n    return null;\n}\n\nfunction currentShiftInfo(ts=Date.now()){\n    const p={};\n\n    for(const part of new Intl.DateTimeFormat(\"en-CA\",{\n        timeZone:\"Asia/Colombo\",\n        year:\"numeric\",\n        month:\"2-digit\",\n        day:\"2-digit\",\n        hour:\"2-digit\",\n        hourCycle:\"h23\"\n    }).formatToParts(new Date(ts))){\n        if(part.type!==\"literal\") p[part.type]=part.value;\n    }\n\n    const date=`${p.year}-${p.month}-${p.day}`;\n    const h=Number(p.hour||0);\n\n    if(h>=6 && h<14) return {\n        shift:\"06-14\",\n        date,\n        ...shiftRange(\"06-14\",date)\n    };\n\n    if(h>=14 && h<22) return {\n        shift:\"14-22\",\n        date,\n        ...shiftRange(\"14-22\",date)\n    };\n\n    if(h>=22) return {\n        shift:\"22-06\",\n        date,\n        ...shiftRange(\"22-06\",date)\n    };\n\n    const prev=addDays(date,-1);\n\n    return {\n        shift:\"22-06\",\n        date:prev,\n        ...shiftRange(\"22-06\",prev)\n    };\n}\n\nconst q=msg.req?.query||{};\nconst cfgAll=global.get(\"counterConfig\")||{};\nconst device=resolveDevice(q);\nconst date=String(q.date||\"\").trim();\nconst shift=String(q.shift||\"\").trim();\nconst range=shiftRange(shift,date);\n\nif(\n    !device ||\n    !cfgAll[device] ||\n    !/^\\d{4}-\\d{2}-\\d{2}$/.test(date) ||\n    !range\n){\n    msg.statusCode=400;\n    msg.payload={\n        success:false,\n        error:\"line, date and valid shift are required\"\n    };\n\n    return [null,null,null,msg];\n}\n\nconst cfg=cfgAll[device];\nconst line=String(cfg.line||device);\nconst current=currentShiftInfo();\nconst isCurrent=\n    date===current.date &&\n    shift===current.shift;\n\nconst allSettings=global.get(\"lineSettings\")||{};\nconst ls=\n    allSettings[line] ||\n    allSettings[line.toLowerCase()] ||\n    {};\n\nconst meta={\n    requestId:`${msg._msgid||\"shift\"}-${Date.now()}-${Math.random().toString(16).slice(2)}`,\n    device,\n    line,\n    date,\n    shift,\n    from:range.from,\n    to:range.to,\n    isCurrent,\n    configuredTileSize:String(ls.tileSize ?? cfg.tileSize ?? \"\"),\n    configuredLineSpeed:Number(ls.lineSpeed ?? cfg.lineSpeed ?? 0),\n    plannedDowntime:Number(ls.plannedDowntime ?? cfg.plannedDowntime ?? 0),\n    stopDelayMs:Number(ls.stopDelayMs ?? cfg.stopDelayMs ?? 60000)\n};\n\nmsg.summaryMeta=meta;\n\n// ========================================================\n// HISTORICAL / COMPLETED SHIFT\n// Read the saved summary, including codeWiseProduction, from MongoDB.\n// InfluxDB is intentionally not queried for completed shifts.\n// ========================================================\nif(!isCurrent){\n    msg.collection=\"shifts\";\n    msg.operation=\"find\";\n\n    msg.payload=[\n        {\n            \"lineStats.shiftDate\":date,\n            \"lineStats.shift\":shift,\n            $or:[\n                {\"lineStats.device\":device},\n                {\n                    \"lineStats.lineName\":{\n                        $regex:`^${escRegex(line)}$`,\n                        $options:\"i\"\n                    }\n                }\n            ]\n        },\n        {\n            sort:{\n                \"lineStats.updatedAt\":-1\n            }\n        }\n    ];\n\n    return [msg,null,null,null];\n}\n\n// ========================================================\n// CURRENT ACTIVE SHIFT\n// InfluxDB supplies every cumulative shift_count record from\n// shift start until now. The response function calculates both\n// current speed and code-wise production from these rows.\n// MongoDB supplies the current shift's stoppages.\n// ========================================================\nconst influxMsg=RED.util.cloneMessage(msg);\nconst stopMsg=RED.util.cloneMessage(msg);\n\nconst d=escapeFlux(device);\nconst sh=escapeFlux(shift);\nconst dt=escapeFlux(date);\nconst from=escapeFlux(range.from);\nconst stop=escapeFlux(new Date().toISOString());\n\ninfluxMsg.query=`\nfrom(bucket:\"RCLH\")\n    |> range(\n        start: time(v:\"${from}\"),\n        stop: time(v:\"${stop}\")\n    )\n    |> filter(fn:(r)=>\n        r._measurement==\"tile_events\" and\n        r.device==\"${d}\" and\n        r.shift==\"${sh}\" and\n        r.shiftDate==\"${dt}\" and\n        r._field==\"shift_count\"\n    )\n    |> group(columns:[\"device\",\"shift\",\"shiftDate\"])\n    |> sort(columns:[\"_time\"])\n    |> keep(columns:[\n        \"_time\",\n        \"_value\",\n        \"designCode\",\n        \"tileSize\"\n    ])\n`;\n\nstopMsg.collection=\"stoppages\";\nstopMsg.operation=\"find\";\nstopMsg.payload=[\n    {\n        device,\n        date,\n        shift\n    },\n    {\n        sort:{\n            stopStart_ts:1\n        }\n    }\n];\n\nreturn [null,influxMsg,stopMsg,null];",
+    "outputs": 4,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 4360,
+    "wires": [
+      [
+        "009d6e55e90a5249"
+      ],
+      [
+        "e759ed65936ed8e4"
+      ],
+      [
+        "2ee6333f0e92c02d"
+      ],
+      [
+        "f4eba7a43a9cc668"
+      ]
+    ]
+  },
+  {
+    "id": "009d6e55e90a5249",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "shifts",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Historical Shift Summary MongoDB",
+    "x": 940,
+    "y": 4200,
+    "wires": [
+      [
+        "74446b5b6456f8bb"
+      ]
+    ]
+  },
+  {
+    "id": "74446b5b6456f8bb",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Format Historical Shift Summary",
+    "func": "// const rows=Array.isArray(msg.payload)?msg.payload:[];\n// const doc=rows[0]||null;\n// const meta=msg.summaryMeta||{};\n// const saved=doc?.lineStats||null;\n\n// // Preserve the existing response shape. For completed shifts the\n// // code-wise arrays come only from the saved MongoDB shift document.\n// const lineStats=saved\n//     ? {\n//         ...saved,\n//         codeWiseProduction:Array.isArray(saved.codeWiseProduction)\n//             ? saved.codeWiseProduction\n//             : [],\n//         codeWiseProductionTimeline:Array.isArray(saved.codeWiseProductionTimeline)\n//             ? saved.codeWiseProductionTimeline\n//             : []\n//       }\n//     : null;\n\n// msg.headers={\n//     \"Content-Type\":\"application/json\",\n//     \"Cache-Control\":\"no-store\"\n// };\n\n// msg.payload={\n//     success:true,\n//     source:\"mongo\",\n//     device:meta.device,\n//     line:meta.line,\n//     date:meta.date,\n//     shift:meta.shift,\n//     lineStats\n// };\n\n// return msg;\n\nfunction sizeBreakdown(items, expectedCount){\n const sizes=new Map();let unknownSizeTileCount=0,recordedTileCount=0;\n for(const row of items){\n  const count=Number(row.tileCount);\n  if(!Number.isFinite(count)||count<0)continue;\n  const tileSize=String(row.tileSize||\"\").trim().toLowerCase().replace(/\\s+/g,\"\").replace(/×/g,\"x\");\n  const dims=tileSize.split('x').map(Number);\n  const area=dims.length===2&&dims.every(x=>Number.isFinite(x)&&x>0)?dims[0]*dims[1]/10000:0;\n  recordedTileCount+=count;\n  if(!area)unknownSizeTileCount+=count;\n  const item=sizes.get(tileSize)||{tileSize:tileSize||'Unknown',tileCount:0,production:0};\n  item.tileCount+=count;item.production+=count*area;sizes.set(tileSize,item);\n }\n const production=[...sizes.values()].reduce((sum,x)=>sum+x.production,0);\n const round2=x=>Math.round((x+Number.EPSILON)*100)/100;\n const countDifference=Number(expectedCount)-recordedTileCount;\n return {production:round2(production),productionUnit:'m²',\n  sizeWiseProduction:[...sizes.values()].map(x=>({...x,production:round2(x.production)})),\n  tileSizes:[...sizes.values()].filter(x=>x.tileCount>0).map(x=>x.tileSize),\n  multipleTileSizes:[...sizes.values()].filter(x=>x.tileCount>0).length>1,\n  recordedTileCount,countDifference,unknownSizeTileCount,\n  productionComplete:Number.isFinite(countDifference)&&countDifference===0&&unknownSizeTileCount===0};\n}\nconst rows=Array.isArray(msg.payload)?msg.payload:[];\nconst doc=rows[0]||null;\nconst meta=msg.summaryMeta||{};\nconst saved=doc?.lineStats||null;\n\n// Preserve the existing response shape. For completed shifts the\n// code-wise arrays come only from the saved MongoDB shift document.\nconst lineStats=saved\n    ? {\n        ...saved,\n        codeWiseProduction:Array.isArray(saved.codeWiseProduction)\n            ? saved.codeWiseProduction\n            : [],\n        codeWiseProductionTimeline:Array.isArray(saved.codeWiseProductionTimeline)\n            ? saved.codeWiseProductionTimeline\n            : []\n      }\n    : null;\n\n// Recalculate response only; the saved MongoDB document is not modified.\nif(lineStats){\n const source=Array.isArray(saved.codeWiseProduction)&&saved.codeWiseProduction.length\n  ?saved.codeWiseProduction\n  :Array.isArray(saved.sizeWiseProduction)&&saved.sizeWiseProduction.length\n   ?saved.sizeWiseProduction\n   :Array.isArray(saved.codeWiseProductionTimeline)&&saved.codeWiseProductionTimeline.length\n    ?saved.codeWiseProductionTimeline:null;\n if(source){\n  const info=sizeBreakdown(source,saved.tileCount);\n  lineStats.savedProduction=saved.production;\n  Object.assign(lineStats,info,{productionSource:'saved-size-counts'});\n }else{\n  // Legacy summaries contain no reliable evidence of within-shift sizes.\n  lineStats.productionSource='saved-summary';\n  lineStats.productionComplete=false;\n  lineStats.productionWarning='No saved size breakdown; original production could not be verified.';\n }\n}\n\nmsg.headers={\n    \"Content-Type\":\"application/json\",\n    \"Cache-Control\":\"no-store\"\n};\n\nmsg.payload={\n    success:true,\n    source:\"mongo\",\n    device:meta.device,\n    line:meta.line,\n    date:meta.date,\n    shift:meta.shift,\n    lineStats\n};\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1470,
+    "y": 4200,
+    "wires": [
+      [
+        "f4eba7a43a9cc668"
+      ]
+    ]
+  },
+  {
+    "id": "e759ed65936ed8e4",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "influxdb": "eef122fda5340dac",
+    "name": "Current Shift Full History Influx",
+    "query": "",
+    "rawOutput": false,
+    "precision": "",
+    "retentionPolicy": "",
+    "org": "Ruhanex",
+    "x": 930,
+    "y": 4260,
+    "wires": [
+      [
+        "13a0c1c94e423296"
+      ]
+    ]
+  },
+  {
+    "id": "13a0c1c94e423296",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Mark Current Shift Influx History",
+    "func": "msg.summaryPart=\"influx\";\nmsg.summaryPartPayload=Array.isArray(msg.payload)?msg.payload:[];\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1210,
+    "y": 4260,
+    "wires": [
+      [
+        "b82b48c5e8ca2a1d"
+      ]
+    ]
+  },
+  {
+    "id": "2ee6333f0e92c02d",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "stoppages",
+    "operation": "",
+    "output": "toArray",
+    "maxTimeMS": "0",
+    "handleDocId": false,
+    "name": "Current Shift Summary Stoppages",
+    "x": 940,
+    "y": 4320,
+    "wires": [
+      [
+        "774da914185e8451"
+      ]
+    ]
+  },
+  {
+    "id": "774da914185e8451",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Mark Current Shift Stoppages",
+    "func": "msg.summaryPart=\"stops\";\nmsg.summaryPartPayload=Array.isArray(msg.payload)?msg.payload:[];\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1230,
+    "y": 4320,
+    "wires": [
+      [
+        "b82b48c5e8ca2a1d"
+      ]
+    ]
+  },
+  {
+    "id": "b82b48c5e8ca2a1d",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Build Live Shift Summary",
+    "func": "// const meta=msg.summaryMeta||{};\n// const requestId=String(meta.requestId||\"\");\n\n// if(!requestId) {\n//     msg.statusCode=500;\n//     msg.payload={\n//         success:false,\n//         error:\"Current shift summary request ID is missing\"\n//     };\n//     return msg;\n// }\n\n// let pending=context.get(\"currentShiftSummaryPending\")||{};\n// const now=Date.now();\n\n// // Clear stale partial requests.\n// for(const id of Object.keys(pending)){\n//     const createdAt=Number(pending[id]?.createdAt||0);\n\n//     if(createdAt>0 && now-createdAt>30000){\n//         delete pending[id];\n//     }\n// }\n\n// if(!pending[requestId]){\n//     pending[requestId]={\n//         createdAt:now,\n//         meta,\n//         influx:null,\n//         stops:null\n//     };\n// }\n\n// const entry=pending[requestId];\n// entry.meta=meta;\n\n// if(msg.summaryPart===\"influx\"){\n//     entry.influx=msg.summaryPartPayload||[];\n// }\n// else if(msg.summaryPart===\"stops\"){\n//     entry.stops=msg.summaryPartPayload||[];\n// }\n// else {\n//     return null;\n// }\n\n// pending[requestId]=entry;\n// context.set(\"currentShiftSummaryPending\",pending);\n\n// if(entry.influx===null || entry.stops===null){\n//     return null;\n// }\n\n// delete pending[requestId];\n// context.set(\"currentShiftSummaryPending\",pending);\n\n// const rows=(entry.influx||[])\n//     .filter(row=>Number.isFinite(Number(row?._value)))\n//     .sort((a,b)=>new Date(a?._time||0).getTime()-new Date(b?._time||0).getTime());\n// const stops=entry.stops||[];\n// const c=entry.meta||{};\n\n// // ============================================================\n// // AUTHORITATIVE CURRENT-SHIFT RUNTIME STATE\n// // ============================================================\n// const counters=flow.get(\"counters\")||{};\n// const downtimeStates=flow.get(\"downtimeStates\")||{};\n// const runtime=counters[c.device]||{};\n// const runtimeDown=downtimeStates[c.device]||{};\n\n// const shiftCount=Math.max(0,Number(runtime.shiftCount||0));\n// const lastSignal=Number(runtime.lastSignal||0)||null;\n// const lastSeen=Number(runtime.lastSeen||0)||null;\n// const sensorStatus=String(runtime.sensorStatus||\"Unknown\");\n// const shiftStatus=String(runtimeDown.status||\"Unknown\");\n\n// let speed=0;\n// const tileSize=String(c.configuredTileSize||\"\");\n\n// // Use only the most recent 60 seconds for current speed, while the\n// // full row set remains available for current-shift code-wise totals.\n// const speedCutoff=now-60000;\n// const speedSamples=rows.filter(row=>{\n//     const time=new Date(row?._time||0).getTime();\n//     return Number.isFinite(time) && time>=speedCutoff;\n// });\n\n// if(speedSamples.length>=2){\n//     const first=speedSamples[0];\n//     const last=speedSamples[speedSamples.length-1];\n//     const firstCount=Number(first._value);\n//     const lastCount=Number(last._value);\n//     const firstTime=new Date(first._time).getTime();\n//     const lastTime=new Date(last._time).getTime();\n//     const elapsedSeconds=(lastTime-firstTime)/1000;\n\n//     if(Number.isFinite(firstCount) && Number.isFinite(lastCount) && elapsedSeconds>0){\n//         speed=Math.max(0,((lastCount-firstCount)/elapsedSeconds)*60);\n//     }\n// }\n\n// function tileAreaM2(size){\n//     const d=String(size||\"\")\n//         .toLowerCase()\n//         .replace(/\\s+/g,\"\")\n//         .split(\"x\")\n//         .map(Number);\n\n//     if(\n//         d.length!==2 ||\n//         !d.every(v=>Number.isFinite(v) && v>0)\n//     ){\n//         return 0;\n//     }\n\n//     return (d[0]*d[1])/10000;\n// }\n\n// function cleanText(value,fallback){\n//     const text=String(value??\"\").trim();\n//     return text||fallback;\n// }\n\n// function isoTime(value){\n//     if(value===undefined || value===null || value===\"\") return null;\n//     const ms=new Date(value).getTime();\n//     return Number.isFinite(ms)?new Date(ms).toISOString():null;\n// }\n\n// function minutesBetween(a,b){\n//     const x=new Date(a).getTime();\n//     const y=new Date(b).getTime();\n\n//     if(!Number.isFinite(x) || !Number.isFinite(y)){\n//         return 0;\n//     }\n\n//     return Math.max(0,(y-x)/60000);\n// }\n\n// function classify(stops, from, to, configuredAllowance, nowMs){\n//  const startMs=new Date(from).getTime(), endMs=new Date(to).getTime(), calcEnd=Math.min(nowMs,endMs);\n//  const full=Math.max(0,(endMs-startMs)/60000), elapsed=Math.max(0,(calcEnd-startMs)/60000);\n//  let standardActual=0, additional=0, explicitUnplanned=0, total=0, completed=0, open=false, maximum=0;\n//  const rows=[];\n//  for(const row of stops){ const st=Math.max(startMs,Number(row.stopStart_ts)); if(!Number.isFinite(st)) continue; const isOpen=row.stopStop_ts==null; const en=Math.min(calcEnd,isOpen?calcEnd:Number(row.stopStop_ts)); if(!Number.isFinite(en)||en<=st) continue; const d=(en-st)/60000; total+=d; maximum=Math.max(maximum,d); const type=String(row.downtimeType||\"unplanned\").toLowerCase(); const cat=String(row.plannedCategory||\"\").toLowerCase(); if(type===\"planned\"&&cat===\"standard\") standardActual+=d; else if(type===\"planned\"&&cat===\"additional\") additional+=d; else explicitUnplanned+=d; if(isOpen)open=true; else completed++; rows.push({...row,downtimeType:(type===\"planned\"?\"planned\":\"unplanned\"),plannedCategory:(type===\"planned\"?cat:null),isOpen,durationMinutes:Math.round(d*100)/100}); }\n//  const allowance=Math.max(0,Number(configuredAllowance||0));\n//  const standardUsed=allowance>0?Math.min(standardActual,allowance):standardActual, remaining=allowance>0?Math.max(0,allowance-standardUsed):0, excess=allowance>0?Math.max(0,standardActual-allowance):0;\n//  const standardApplied=standardUsed;\n//  const planned=standardApplied+additional, unplanned=explicitUnplanned+excess;\n//  return {rows,total,standardActual,standardUsed,remaining,excess,standardApplied,additional,planned,unplanned,completed,open,maximum,full,elapsed};\n// }\n\n// function round(v,d=2){\n//     const p=Math.pow(10,d);\n//     return Math.round((Number(v||0)+Number.EPSILON)*p)/p;\n// }\n\n// // ============================================================\n// // CURRENT SHIFT CODE-WISE PRODUCTION FROM INFLUX SHIFT_COUNT\n// // ============================================================\n// const codeMap=new Map();\n// const codeTimeline=[];\n// let previousShiftCount=0;\n// let activeRun=null;\n// let ignoredRollbacks=0;\n\n// for(const row of rows){\n//     const currentShiftCount=Number(row._value);\n//     const delta=currentShiftCount-previousShiftCount;\n\n//     // Keep the last valid baseline when a lower/stale value occurs.\n//     // This is the same rollback protection used by the shift-end flow.\n//     if(!Number.isFinite(delta) || delta<0){\n//         ignoredRollbacks+=1;\n//         continue;\n//     }\n\n//     previousShiftCount=currentShiftCount;\n//     if(delta===0) continue;\n\n//     const designCode=cleanText(row.designCode,\"Unknown\");\n//     const rowTileSize=cleanText(row.tileSize,tileSize||\"Unknown\");\n//     const producedAt=isoTime(row._time);\n//     const key=designCode+\"|||\"+rowTileSize;\n//     const rowProduction=delta*tileAreaM2(rowTileSize);\n\n//     const item=codeMap.get(key)||{\n//         sequence:codeMap.size+1,\n//         designCode,\n//         tileSize:rowTileSize,\n//         firstProducedAt:producedAt,\n//         lastProducedAt:producedAt,\n//         tileCount:0,\n//         production:0\n//     };\n\n//     if(!item.firstProducedAt && producedAt) item.firstProducedAt=producedAt;\n//     if(producedAt) item.lastProducedAt=producedAt;\n//     item.tileCount+=delta;\n//     item.production+=rowProduction;\n//     codeMap.set(key,item);\n\n//     // Preserve A -> B -> A as three chronological production runs.\n//     if(!activeRun || activeRun.key!==key){\n//         activeRun={\n//             key,\n//             sequence:codeTimeline.length+1,\n//             designCode,\n//             tileSize:rowTileSize,\n//             startTime:producedAt,\n//             endTime:producedAt,\n//             tileCount:0,\n//             production:0\n//         };\n//         codeTimeline.push(activeRun);\n//     }\n\n//     if(!activeRun.startTime && producedAt) activeRun.startTime=producedAt;\n//     if(producedAt) activeRun.endTime=producedAt;\n//     activeRun.tileCount+=delta;\n//     activeRun.production+=rowProduction;\n// }\n\n// const codeWiseProduction=[...codeMap.values()]\n//     .map(item=>({\n//         sequence:item.sequence,\n//         designCode:item.designCode,\n//         tileSize:item.tileSize,\n//         firstProducedAt:item.firstProducedAt,\n//         lastProducedAt:item.lastProducedAt,\n//         tileCount:Math.round(item.tileCount),\n//         production:round(item.production,2)\n//     }))\n//     .sort((a,b)=>a.sequence-b.sequence);\n\n// const codeWiseProductionTimeline=codeTimeline\n//     .map(({key,...item})=>({\n//         ...item,\n//         tileCount:Math.round(item.tileCount),\n//         production:round(item.production,2)\n//     }))\n//     .sort((a,b)=>a.sequence-b.sequence);\n\n// if(ignoredRollbacks>0){\n//     node.warn(\n//         `Current shift ${c.device} ${c.date} ${c.shift}: `+\n//         `${ignoredRollbacks} lower shift_count row(s) ignored`\n//     );\n// }\n\n// const downtime=classify(stops,c.from,c.to,c.plannedDowntime,now);\n// const downtimeMinutes=downtime.total;\n// const plannedDowntimeMinutes=downtime.planned;\n// const unplannedDowntimeMinutes=downtime.unplanned;\n// const completedStops=downtime.completed;\n// const openStop=downtime.open;\n// const elapsedMinutes=downtime.elapsed;\n// const configuredPlannedDowntime=Math.max(0,Number(c.plannedDowntime||0));\n// const appliedPlannedDowntime=plannedDowntimeMinutes;\n// const plannedProductionMinutes=Math.max(0,elapsedMinutes-plannedDowntimeMinutes);\n// const actualOperatingMinutes=Math.max(0,elapsedMinutes-downtimeMinutes);\n// const availability=plannedProductionMinutes>0?(actualOperatingMinutes/plannedProductionMinutes)*100:0;\n// const configuredLineSpeed=Math.max(0,Number(c.configuredLineSpeed||0));\n// const targetTiles=configuredLineSpeed*actualOperatingMinutes;\n// const performance=targetTiles>0?(shiftCount/targetTiles)*100:0;\n// const quality=100;\n// const ole=(availability*performance*quality)/10000;\n// const areaPerTile=tileAreaM2(tileSize);\n// const production=shiftCount*areaPerTile;\n// const targetProduction=targetTiles*areaPerTile;\n\n// msg.headers={\n//     \"Content-Type\":\"application/json\",\n//     \"Cache-Control\":\"no-store\"\n// };\n\n// msg.payload={\n//     success:true,\n//     source:\"live\",\n//     device:c.device,\n//     line:c.line,\n//     date:c.date,\n//     shift:c.shift,\n\n//     lineStats:{\n//         device:c.device,\n//         lineName:c.line,\n//         shiftDate:c.date,\n//         shift:c.shift,\n\n//         tileSize,\n//         tileCount:Math.round(shiftCount),\n//         production:round(production,2),\n\n//         // Unique design totals, ordered by first production time.\n//         codeWiseProduction,\n//         // Complete chronological runs; preserves A -> B -> A.\n//         codeWiseProductionTimeline,\n//         codeWiseUpdatedAt:new Date(now).toISOString(),\n\n//         targetTiles:round(targetTiles,0),\n//         targetProduction:round(targetProduction,2),\n\n//         elapsedMinutes:round(elapsedMinutes,2),\n//         configuredPlannedDowntime:round(configuredPlannedDowntime,2),\n//         recordedStandardDowntimeMinutes:round(downtime.standardActual,2),\n//         standardPlannedDowntimeMinutes:round(downtime.standardApplied,2),\n//         remainingStandardAllowanceMinutes:round(downtime.remaining,2),\n//         standardExcessDowntimeMinutes:round(downtime.excess,2),\n//         additionalPlannedDowntimeMinutes:round(downtime.additional,2),\n//         appliedPlannedDowntime:round(appliedPlannedDowntime,2),\n//         plannedProductionMinutes:round(plannedProductionMinutes,2),\n\n//         totalDowntimeMinutes:round(downtimeMinutes,2),\n//         plannedDowntimeMinutes:round(plannedDowntimeMinutes,2),\n//         unplannedDowntimeMinutes:round(unplannedDowntimeMinutes,2),\n//         unplannedDowntime:round(unplannedDowntimeMinutes,2),\n//         actualOperatingMinutes:round(actualOperatingMinutes,2),\n\n//         completedStops,\n//         totalStops:stops.length,\n//         maximumDowntimeMinutes:round(downtime.maximum,2),\n//         openStop,\n\n//         availability:round(availability,2),\n//         performance:round(performance,2),\n//         quality:round(quality,2),\n//         ole:round(ole,2),\n\n//         currentSpeed:round(speed,2),\n//         configuredLineSpeed,\n//         ratedLineSpeed:configuredLineSpeed,\n\n//         shiftStatus,\n//         sensorStatus,\n//         lastSignal,\n//         lastSeen,\n\n//         source:\"live\",\n//         updatedAt:now\n//     }\n// };\n\n// return msg;\n\nfunction sizeBreakdown(items, expectedCount){\n const sizes=new Map();let unknownSizeTileCount=0,recordedTileCount=0;\n for(const row of items){\n  const count=Number(row.tileCount);\n  if(!Number.isFinite(count)||count<0)continue;\n  const tileSize=String(row.tileSize||\"\").trim().toLowerCase().replace(/\\s+/g,\"\").replace(/×/g,\"x\");\n  const dims=tileSize.split('x').map(Number);\n  const area=dims.length===2&&dims.every(x=>Number.isFinite(x)&&x>0)?dims[0]*dims[1]/10000:0;\n  recordedTileCount+=count;\n  if(!area)unknownSizeTileCount+=count;\n  const item=sizes.get(tileSize)||{tileSize:tileSize||'Unknown',tileCount:0,production:0};\n  item.tileCount+=count;item.production+=count*area;sizes.set(tileSize,item);\n }\n const production=[...sizes.values()].reduce((sum,x)=>sum+x.production,0);\n const round2=x=>Math.round((x+Number.EPSILON)*100)/100;\n const countDifference=Number(expectedCount)-recordedTileCount;\n return {production:round2(production),productionUnit:'m²',\n  sizeWiseProduction:[...sizes.values()].map(x=>({...x,production:round2(x.production)})),\n  tileSizes:[...sizes.values()].filter(x=>x.tileCount>0).map(x=>x.tileSize),\n  multipleTileSizes:[...sizes.values()].filter(x=>x.tileCount>0).length>1,\n  recordedTileCount,countDifference,unknownSizeTileCount,\n  productionComplete:Number.isFinite(countDifference)&&countDifference===0&&unknownSizeTileCount===0};\n}\nconst meta=msg.summaryMeta||{};\nconst requestId=String(meta.requestId||\"\");\n\nif(!requestId) {\n    msg.statusCode=500;\n    msg.payload={\n        success:false,\n        error:\"Current shift summary request ID is missing\"\n    };\n    return msg;\n}\n\nlet pending=context.get(\"currentShiftSummaryPending\")||{};\nconst now=Date.now();\n\n// Clear stale partial requests.\nfor(const id of Object.keys(pending)){\n    const createdAt=Number(pending[id]?.createdAt||0);\n\n    if(createdAt>0 && now-createdAt>30000){\n        delete pending[id];\n    }\n}\n\nif(!pending[requestId]){\n    pending[requestId]={\n        createdAt:now,\n        meta,\n        influx:null,\n        stops:null\n    };\n}\n\nconst entry=pending[requestId];\nentry.meta=meta;\n\nif(msg.summaryPart===\"influx\"){\n    entry.influx=msg.summaryPartPayload||[];\n}\nelse if(msg.summaryPart===\"stops\"){\n    entry.stops=msg.summaryPartPayload||[];\n}\nelse {\n    return null;\n}\n\npending[requestId]=entry;\ncontext.set(\"currentShiftSummaryPending\",pending);\n\nif(entry.influx===null || entry.stops===null){\n    return null;\n}\n\ndelete pending[requestId];\ncontext.set(\"currentShiftSummaryPending\",pending);\n\nconst rows=(entry.influx||[])\n    .filter(row=>row?._value!=null && Number.isFinite(Number(row._value)) && Number.isFinite(Date.parse(row._time)))\n    .sort((a,b)=>Date.parse(a._time)-Date.parse(b._time)||Number(a._value)-Number(b._value));\nconst stops=entry.stops||[];\nconst c=entry.meta||{};\n\n// ============================================================\n// AUTHORITATIVE CURRENT-SHIFT RUNTIME STATE\n// ============================================================\nconst counters=flow.get(\"counters\")||{};\nconst downtimeStates=flow.get(\"downtimeStates\")||{};\nconst runtime=counters[c.device]||{};\nconst runtimeDown=downtimeStates[c.device]||{};\n\nconst shiftCount=Math.max(0,Number(runtime.shiftCount||0));\nconst lastSignal=Number(runtime.lastSignal||0)||null;\nconst lastSeen=Number(runtime.lastSeen||0)||null;\nconst sensorStatus=String(runtime.sensorStatus||\"Unknown\");\nconst shiftStatus=String(runtimeDown.status||\"Unknown\");\n\nlet speed=0;\nconst tileSize=String(c.configuredTileSize||\"\");\n\n// Use only the most recent 60 seconds for current speed, while the\n// full row set remains available for current-shift code-wise totals.\nconst speedCutoff=now-60000;\nconst speedSamples=rows.filter(row=>{\n    const time=new Date(row?._time||0).getTime();\n    return Number.isFinite(time) && time>=speedCutoff;\n});\n\nif(speedSamples.length>=2){\n    const first=speedSamples[0];\n    const last=speedSamples[speedSamples.length-1];\n    const firstCount=Number(first._value);\n    const lastCount=Number(last._value);\n    const firstTime=new Date(first._time).getTime();\n    const lastTime=new Date(last._time).getTime();\n    const elapsedSeconds=(lastTime-firstTime)/1000;\n\n    if(Number.isFinite(firstCount) && Number.isFinite(lastCount) && elapsedSeconds>0){\n        speed=Math.max(0,((lastCount-firstCount)/elapsedSeconds)*60);\n    }\n}\n\nfunction tileAreaM2(size){\n    const d=String(size||\"\")\n        .toLowerCase()\n        .replace(/\\s+/g,\"\")\n        .split(\"x\")\n        .map(Number);\n\n    if(\n        d.length!==2 ||\n        !d.every(v=>Number.isFinite(v) && v>0)\n    ){\n        return 0;\n    }\n\n    return (d[0]*d[1])/10000;\n}\n\nfunction cleanText(value,fallback){\n    const text=String(value??\"\").trim();\n    return text||fallback;\n}\n\nfunction isoTime(value){\n    if(value===undefined || value===null || value===\"\") return null;\n    const ms=new Date(value).getTime();\n    return Number.isFinite(ms)?new Date(ms).toISOString():null;\n}\n\nfunction minutesBetween(a,b){\n    const x=new Date(a).getTime();\n    const y=new Date(b).getTime();\n\n    if(!Number.isFinite(x) || !Number.isFinite(y)){\n        return 0;\n    }\n\n    return Math.max(0,(y-x)/60000);\n}\n\nfunction classify(stops, from, to, configuredAllowance, nowMs){\n const startMs=new Date(from).getTime(), endMs=new Date(to).getTime(), calcEnd=Math.min(nowMs,endMs);\n const full=Math.max(0,(endMs-startMs)/60000), elapsed=Math.max(0,(calcEnd-startMs)/60000);\n let standardActual=0, additional=0, explicitUnplanned=0, total=0, completed=0, open=false, maximum=0;\n const rows=[];\n for(const row of stops){ const st=Math.max(startMs,Number(row.stopStart_ts)); if(!Number.isFinite(st)) continue; const isOpen=row.stopStop_ts==null; const en=Math.min(calcEnd,isOpen?calcEnd:Number(row.stopStop_ts)); if(!Number.isFinite(en)||en<=st) continue; const d=(en-st)/60000; total+=d; maximum=Math.max(maximum,d); const type=String(row.downtimeType||\"unplanned\").toLowerCase(); const cat=String(row.plannedCategory||\"\").toLowerCase(); if(type===\"planned\"&&cat===\"standard\") standardActual+=d; else if(type===\"planned\"&&cat===\"additional\") additional+=d; else explicitUnplanned+=d; if(isOpen)open=true; else completed++; rows.push({...row,downtimeType:(type===\"planned\"?\"planned\":\"unplanned\"),plannedCategory:(type===\"planned\"?cat:null),isOpen,durationMinutes:Math.round(d*100)/100}); }\n const allowance=Math.max(0,Number(configuredAllowance||0));\n const standardUsed=allowance>0?Math.min(standardActual,allowance):standardActual, remaining=allowance>0?Math.max(0,allowance-standardUsed):0, excess=allowance>0?Math.max(0,standardActual-allowance):0;\n const standardApplied=standardUsed;\n const planned=standardApplied+additional, unplanned=explicitUnplanned+excess;\n return {rows,total,standardActual,standardUsed,remaining,excess,standardApplied,additional,planned,unplanned,completed,open,maximum,full,elapsed};\n}\n\nfunction round(v,d=2){\n    const p=Math.pow(10,d);\n    return Math.round((Number(v||0)+Number.EPSILON)*p)/p;\n}\n\n// ============================================================\n// CURRENT SHIFT CODE-WISE PRODUCTION FROM INFLUX SHIFT_COUNT\n// ============================================================\nconst codeMap=new Map();\nconst codeTimeline=[];\nlet previousShiftCount=0;\nlet activeRun=null;\nlet ignoredRollbacks=0;\n\nfor(const row of rows){\n    const currentShiftCount=Number(row._value);\n    const delta=currentShiftCount-previousShiftCount;\n\n    // Keep the last valid baseline when a lower/stale value occurs.\n    // This is the same rollback protection used by the shift-end flow.\n    if(!Number.isFinite(delta) || delta<0){\n        ignoredRollbacks+=1;\n        continue;\n    }\n\n    previousShiftCount=currentShiftCount;\n    if(delta===0) continue;\n\n    const designCode=cleanText(row.designCode,\"Unknown\");\n    const rowTileSize=cleanText(row.tileSize,\"Unknown\").toLowerCase().replace(/\\s+/g,\"\").replace(/×/g,\"x\");\n    const producedAt=isoTime(row._time);\n    const key=designCode+\"|||\"+rowTileSize;\n    const rowProduction=delta*tileAreaM2(rowTileSize);\n\n    const item=codeMap.get(key)||{\n        sequence:codeMap.size+1,\n        designCode,\n        tileSize:rowTileSize,\n        firstProducedAt:producedAt,\n        lastProducedAt:producedAt,\n        tileCount:0,\n        production:0\n    };\n\n    if(!item.firstProducedAt && producedAt) item.firstProducedAt=producedAt;\n    if(producedAt) item.lastProducedAt=producedAt;\n    item.tileCount+=delta;\n    item.production+=rowProduction;\n    codeMap.set(key,item);\n\n    // Preserve A -> B -> A as three chronological production runs.\n    if(!activeRun || activeRun.key!==key){\n        activeRun={\n            key,\n            sequence:codeTimeline.length+1,\n            designCode,\n            tileSize:rowTileSize,\n            startTime:producedAt,\n            endTime:producedAt,\n            tileCount:0,\n            production:0\n        };\n        codeTimeline.push(activeRun);\n    }\n\n    if(!activeRun.startTime && producedAt) activeRun.startTime=producedAt;\n    if(producedAt) activeRun.endTime=producedAt;\n    activeRun.tileCount+=delta;\n    activeRun.production+=rowProduction;\n}\n\nconst codeWiseProduction=[...codeMap.values()]\n    .map(item=>({\n        sequence:item.sequence,\n        designCode:item.designCode,\n        tileSize:item.tileSize,\n        firstProducedAt:item.firstProducedAt,\n        lastProducedAt:item.lastProducedAt,\n        tileCount:Math.round(item.tileCount),\n        production:round(item.production,2)\n    }))\n    .sort((a,b)=>a.sequence-b.sequence);\n\nconst codeWiseProductionTimeline=codeTimeline\n    .map(({key,...item})=>({\n        ...item,\n        tileCount:Math.round(item.tileCount),\n        production:round(item.production,2)\n    }))\n    .sort((a,b)=>a.sequence-b.sequence);\n\nif(ignoredRollbacks>0){\n    node.warn(\n        `Current shift ${c.device} ${c.date} ${c.shift}: `+\n        `${ignoredRollbacks} lower shift_count row(s) ignored`\n    );\n}\n\nconst downtime=classify(stops,c.from,c.to,c.plannedDowntime,now);\nconst downtimeMinutes=downtime.total;\nconst plannedDowntimeMinutes=downtime.planned;\nconst unplannedDowntimeMinutes=downtime.unplanned;\nconst completedStops=downtime.completed;\nconst openStop=downtime.open;\nconst elapsedMinutes=downtime.elapsed;\nconst configuredPlannedDowntime=Math.max(0,Number(c.plannedDowntime||0));\nconst appliedPlannedDowntime=plannedDowntimeMinutes;\nconst plannedProductionMinutes=Math.max(0,elapsedMinutes-plannedDowntimeMinutes);\nconst actualOperatingMinutes=Math.max(0,elapsedMinutes-downtimeMinutes);\nconst availability=plannedProductionMinutes>0?(actualOperatingMinutes/plannedProductionMinutes)*100:0;\nconst configuredLineSpeed=Math.max(0,Number(c.configuredLineSpeed||0));\nconst targetTiles=configuredLineSpeed*actualOperatingMinutes;\nconst performance=targetTiles>0?(shiftCount/targetTiles)*100:0;\nconst quality=100;\nconst ole=(availability*performance*quality)/10000;\nconst areaPerTile=tileAreaM2(tileSize);\nconst productionInfo=sizeBreakdown([...codeMap.values()],shiftCount);\nproductionInfo.ignoredRollbacks=ignoredRollbacks;\nproductionInfo.productionComplete=productionInfo.productionComplete && ignoredRollbacks===0;\nconst targetProduction=targetTiles*areaPerTile;\n\nmsg.headers={\n    \"Content-Type\":\"application/json\",\n    \"Cache-Control\":\"no-store\"\n};\n\nmsg.payload={\n    success:true,\n    source:\"live\",\n    device:c.device,\n    line:c.line,\n    date:c.date,\n    shift:c.shift,\n\n    lineStats:{\n        device:c.device,\n        lineName:c.line,\n        shiftDate:c.date,\n        shift:c.shift,\n\n        tileSize,\n        tileCount:Math.round(shiftCount),\n        ...productionInfo,\n        productionSource:\"influx-event-sizes\",\n\n        // Unique design totals, ordered by first production time.\n        codeWiseProduction,\n        // Complete chronological runs; preserves A -> B -> A.\n        codeWiseProductionTimeline,\n        codeWiseUpdatedAt:new Date(now).toISOString(),\n\n        targetTiles:round(targetTiles,0),\n        targetProduction:round(targetProduction,2),\n\n        elapsedMinutes:round(elapsedMinutes,2),\n        configuredPlannedDowntime:round(configuredPlannedDowntime,2),\n        recordedStandardDowntimeMinutes:round(downtime.standardActual,2),\n        standardPlannedDowntimeMinutes:round(downtime.standardApplied,2),\n        remainingStandardAllowanceMinutes:round(downtime.remaining,2),\n        standardExcessDowntimeMinutes:round(downtime.excess,2),\n        additionalPlannedDowntimeMinutes:round(downtime.additional,2),\n        appliedPlannedDowntime:round(appliedPlannedDowntime,2),\n        plannedProductionMinutes:round(plannedProductionMinutes,2),\n\n        totalDowntimeMinutes:round(downtimeMinutes,2),\n        plannedDowntimeMinutes:round(plannedDowntimeMinutes,2),\n        unplannedDowntimeMinutes:round(unplannedDowntimeMinutes,2),\n        unplannedDowntime:round(unplannedDowntimeMinutes,2),\n        actualOperatingMinutes:round(actualOperatingMinutes,2),\n\n        completedStops,\n        totalStops:stops.length,\n        maximumDowntimeMinutes:round(downtime.maximum,2),\n        openStop,\n\n        availability:round(availability,2),\n        performance:round(performance,2),\n        quality:round(quality,2),\n        ole:round(ole,2),\n\n        currentSpeed:round(speed,2),\n        configuredLineSpeed,\n        ratedLineSpeed:configuredLineSpeed,\n\n        shiftStatus,\n        sensorStatus,\n        lastSignal,\n        lastSeen,\n\n        source:\"live\",\n        updatedAt:now\n    }\n};\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1510,
+    "y": 4260,
+    "wires": [
+      [
+        "rx_ssq_begin"
+      ]
+    ]
+  },
+  {
+    "id": "5d065807952b639e",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Catch Hybrid Shift Summary Error",
+    "scope": [
+      "009d6e55e90a5249",
+      "e759ed65936ed8e4",
+      "2ee6333f0e92c02d"
+    ],
+    "uncaught": false,
+    "x": 1200,
+    "y": 4140,
+    "wires": [
+      [
+        "746c322bb4939b34"
+      ]
+    ]
+  },
+  {
+    "id": "746c322bb4939b34",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Hybrid Shift Summary Error",
+    "func": "msg.statusCode=500;\nmsg.headers={\n    \"Content-Type\":\"application/json\",\n    \"Cache-Control\":\"no-store\"\n};\nmsg.payload={\n    success:false,\n    error:msg.error?.message||\"Shift summary query failed\"\n};\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1480,
+    "y": 4140,
+    "wires": [
+      [
+        "f4eba7a43a9cc668"
+      ]
+    ]
+  },
+  {
+    "id": "rx_ssq_begin",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live shift: resolve code-wise quality sensor",
+    "func": "function directQualityTarget(stats,global) {\n  const t={line:stats.lineName,device:stats.device,shift:stats.shift,shiftDate:stats.shiftDate,from:stats.shiftStart,to:stats.shiftEnd,availability:stats.availability,performance:stats.performance};\n  const devices=global.get('devices');\n  if(!devices||global.get('devicesReady')!==true)return {...t,status:'pending',reason:'device-registry-unavailable'};\n  const sensors=Object.entries(devices).filter(([id,d])=>id.startsWith('RX-QLT-')&&d?.enabled===true&&d.line===t.line);\n  return sensors.length===0?{...t,status:'assumed'}:sensors.length===1?{...t,status:'pending',sensor:sensors[0][0]}:{...t,status:'configuration-error'};\n}\nif(msg.payload?.success!==true||!/^Keda [123]$/.test(msg.payload.line||''))return [null,msg];\nconst s=msg.payload.lineStats,m=msg.summaryMeta;\nmsg.shiftQualityResponse=msg.payload;\nmsg.shiftQualityTarget=directQualityTarget({...s,shiftStart:m.from,shiftEnd:new Date(Math.min(Date.now(),Date.parse(m.to))).toISOString()},global);\nif(!msg.shiftQualityTarget.sensor)return [null,msg];\nmsg.payload=[{_id:'designGrades'}];return [msg,null];",
+    "outputs": 2,
+    "wires": [
+      [
+        "rx_ssq_catalogue"
+      ],
+      [
+        "rx_ssq_finish"
+      ]
+    ],
+    "x": 600,
+    "y": 4700
+  },
+  {
+    "id": "rx_ssq_catalogue",
+    "type": "mongodb4",
+    "z": "e5489573e203f3d0",
+    "name": "Live code quality: read grade catalogue",
+    "clientNode": "8120871193b8f276",
+    "mode": "collection",
+    "collection": "ruhanex_config",
+    "operation": "findOne",
+    "output": "toArray",
+    "maxTimeMS": "15000",
+    "handleDocId": false,
+    "x": 960,
+    "y": 4700,
+    "wires": [
+      [
+        "rx_ssq_query"
+      ]
+    ]
+  },
+  {
+    "id": "rx_ssq_query",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Live code quality: query saved grade deltas",
+    "func": "function qualityShiftQuery(device,from,to,bucket='RCLH',line) {\n  const names=Array.from({length:16},(_,i)=>`grade_${i}_delta`);\n  const fields=[...names,'tiles_per_box','design_grades_json','design_code','tile_size'];\n  const selected=fields.map(x=>`r._field==${JSON.stringify(x)}`).join(' or ');\n  const identity=['points:0',...names.map(n=>`${n}:0.0`)].join(',');\n  const accum=['points:accumulator.points+1',...names.map(n=>`${n}:accumulator.${n}+float(v:r.${n})`)].join(',');\n  return `from(bucket:${JSON.stringify(bucket)}) |> range(start:time(v:${JSON.stringify(from)}),stop:time(v:${JSON.stringify(to)})) |> filter(fn:(r)=>r._measurement==\"quality_events\" and r.device==${JSON.stringify(device)}${line?' and r.line=='+JSON.stringify(line):''} and (${selected})) |> toString() |> group(columns:[\"device\"]) |> pivot(rowKey:[\"_time\"],columnKey:[\"_field\"],valueColumn:\"_value\") |> filter(fn:(r)=>exists r.grade_0_delta) |> group(columns:[\"device\",\"design_grades_json\",\"tiles_per_box\",\"design_code\",\"tile_size\"]) |> reduce(identity:{${identity}},fn:(r,accumulator)=>({${accum}}))`;\n}\nfunction directQualityQuery(target) {\n  if(!Number.isFinite(Date.parse(target.from))||!Number.isFinite(Date.parse(target.to)))throw Error('Missing shift interval for direct quality calculation.');\n  // Run identity is needed because the supplied code-wise array separates production runs.\n  return qualityShiftQuery(target.sensor,target.from,target.to,'RCLH',target.line)\n    .replace(' and (',' and (r._field==\"production_run_id\" or ')\n    .replace('\"design_code\",\"tile_size\"]','\"design_code\",\"tile_size\",\"production_run_id\"]');\n}\nconst catalogue=Array.isArray(msg.payload)?msg.payload[0]:msg.payload;\nif(!Array.isArray(catalogue?.grades))throw Error('Missing design grade catalogue.');\nmsg.shiftQualityGrades=catalogue.grades;\nmsg.query=directQualityQuery(msg.shiftQualityTarget);delete msg.payload;return msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "rx_ssq_influx"
+      ]
+    ],
+    "x": 1340,
+    "y": 4700
+  },
+  {
+    "id": "rx_ssq_influx",
+    "type": "influxdb in",
+    "z": "e5489573e203f3d0",
+    "name": "Live code quality: read quality_events",
+    "influxdb": "eef122fda5340dac",
+    "query": "",
+    "rawOutput": false,
+    "org": "Ruhanex",
+    "x": 1700,
+    "y": 4700,
+    "wires": [
+      [
+        "rx_ssq_finish"
+      ]
+    ]
+  },
+  {
+    "id": "rx_ssq_finish",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Attach live shift / code-wise quality",
+    "func": "function calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nconst response=msg.shiftQualityResponse;\nconst s=response.lineStats,t=msg.shiftQualityTarget;\nconst rows=t.sensor&&!msg.shiftQualityFailed?msg.payload:null;\nconst grades=msg.shiftQualityGrades||[];\nObject.assign(s,directQualityFields(t,rows,grades,Date.now()));\ns.codeWiseProduction=directCodeWiseQuality(s.codeWiseProduction||[],t,rows,grades);\ns.codeWiseProductionTimeline=directCodeWiseQuality(s.codeWiseProductionTimeline||[],t,rows,grades);\nmsg.payload=response;\ndelete msg.shiftQualityResponse;delete msg.shiftQualityTarget;delete msg.shiftQualityGrades;\nreturn msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "f4eba7a43a9cc668"
+      ]
+    ],
+    "x": 2060,
+    "y": 4700
+  },
+  {
+    "id": "rx_ssq_catch",
+    "type": "catch",
+    "z": "e5489573e203f3d0",
+    "name": "Live quality failure: retain production summary",
+    "scope": [
+      "rx_ssq_begin",
+      "rx_ssq_catalogue",
+      "rx_ssq_query",
+      "rx_ssq_influx",
+      "rx_ssq_finish"
+    ],
+    "uncaught": false,
+    "x": 950,
+    "y": 4800,
+    "wires": [
+      [
+        "rx_ssq_error"
+      ]
+    ]
+  },
+  {
+    "id": "rx_ssq_error",
+    "type": "function",
+    "z": "e5489573e203f3d0",
+    "name": "Return production with quality pending on failure",
+    "func": "function calculateLiveQuality(rows,grades) {\n  if(!Array.isArray(rows)||!Array.isArray(grades))throw Error('Invalid quality events or grade catalogue.');\n  const key=v=>String(v||'').trim().toLowerCase();\n  const categories=new Map();\n  for(const g of grades){const k=key(g.grade);if(!k)continue;if(categories.has(k))throw Error('Duplicate grade name in catalogue.');categories.set(k,String(g.category??'').trim());}\n  const totals={totalBoxes:0,totalTiles:0,firstBoxes:0,firstTiles:0,normalDamageBoxes:0,normalDamageTiles:0,cutDamageBoxes:0,cutDamageTiles:0,undetectedBoxes:0,undetectedTiles:0,unclassifiedBoxes:0,unclassifiedTiles:0};\n  const segments=[];\n  for(const row of rows) {\n    const factor=Number(row.tiles_per_box),map=JSON.parse(row.design_grades_json);\n    if(!Number.isSafeInteger(factor)||factor<=0||!map||typeof map!=='object'||Array.isArray(map))throw Error('Invalid saved quality tiles-per-box or grade assignments.');\n    const segment={device:row.device,designCode:row.design_code,tileSize:row.tile_size,tilesPerBox:factor,totalBoxes:0,totalTiles:0};\n    for(let grade=0;grade<16;grade++) {\n      const boxes=Number(row[`grade_${grade}_delta`]);\n      if(!Number.isSafeInteger(boxes)||boxes<0)throw Error('Invalid saved quality box delta.');\n      const tiles=boxes*factor;if(!Number.isSafeInteger(tiles))throw Error('Quality tile count exceeds safe integer range.');\n      const category=grade===0?'undetected':categories.get(key(map[String(grade)]));\n      const label=category==='1'?'first':category==='2'?'normalDamage':category==='3'?'cutDamage':grade===0?'undetected':'unclassified';\n      totals.totalBoxes+=boxes;totals.totalTiles+=tiles;\n      totals[label+'Boxes']+=boxes;totals[label+'Tiles']+=tiles;\n      segment.totalBoxes+=boxes;segment.totalTiles+=tiles;\n    }\n    segments.push(segment);\n  }\n  if(!Number.isSafeInteger(totals.totalTiles)||!Number.isSafeInteger(totals.totalBoxes))throw Error('Quality total exceeds safe integer range.');\n  const pct=tiles=>totals.totalTiles>0?Math.round(tiles/totals.totalTiles*10000)/100:null;\n  return {...totals,firstQuality:pct(totals.firstTiles),normalDamageQuality:pct(totals.normalDamageTiles),cutDamageQuality:pct(totals.cutDamageTiles),undetectedPercent:pct(totals.undetectedTiles),unclassifiedPercent:pct(totals.unclassifiedTiles),segments,\n    qualityAvailable:totals.totalTiles>0,classificationComplete:totals.unclassifiedTiles===0,\n    categorySource:'current-designGrades-catalogue',countSource:'quality_events-grade-deltas'};\n}\nfunction directQualityFields(target,rows,grades,now) {\n  const q=rows===null?null:calculateLiveQuality(rows,grades);\n  if(q)q.gradeSegments=rows.map(r=>({designCode:r.design_code,tileSize:r.tile_size,productionRunId:r.production_run_id||'',\n    tilesPerBox:Number(r.tiles_per_box),designGrades:JSON.parse(r.design_grades_json),\n    gradeBoxes:Array.from({length:16},(_,i)=>Number(r[`grade_${i}_delta`]))}));\n  const assumed=target.status==='assumed',measured=q?.qualityAvailable===true;\n  const quality=assumed?100:measured?q.firstQuality:null;\n  const metric=quality===null?null:Math.round(Number(target.availability)*Number(target.performance)*quality/100)/100;\n  return {quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n    totalQualityTiles:q?.totalTiles??null,qualityAvailable:measured,qualityAssumed:assumed,\n    qualityStatus:assumed?'assumed':measured?'measured':rows!==null?'unavailable':target.status==='configuration-error'?'configuration-error':'pending',\n    qualitySensorDevice:target.sensor||null,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n    qualitySummary:q,qualityCatalogueSnapshot:rows===null?null:grades.map(g=>({grade:g.grade,category:g.category??'',description:g.description||''})),qualityUpdatedAt:new Date(now).toISOString(),ole:metric,oee:metric};\n}\nfunction directCodeWiseQuality(entries,target,rows,grades) {\n  const code=v=>String(v??'').trim();\n  const size=v=>code(v).toLowerCase().replace(/\\s+/g,'').replace(/×/g,'x');\n  const product=e=>JSON.stringify([code(e.designCode),size(e.tileSize)]);\n  const run=e=>code(e.productionRunId);\n  const counts=new Map(),runs=new Map();\n  for(const e of entries){const p=product(e),r=p+'|'+run(e);counts.set(p,(counts.get(p)||0)+1);runs.set(r,(runs.get(r)||0)+1);}\n  return entries.map(entry=>{\n    const p=product(entry),id=run(entry);\n    const productRows=(rows||[]).filter(r=>product({designCode:r.design_code,tileSize:r.tile_size})===p);\n    let selected=[],scope='production-run';\n    if(rows!==null) {\n      if(id&&runs.get(p+'|'+id)===1)selected=productRows.filter(r=>code(r.production_run_id)===id);\n      if(!selected.length&&counts.get(p)===1){selected=productRows;scope='design-size';}\n    }\n    const q=rows===null?null:calculateLiveQuality(selected,grades);\n    const measured=q?.qualityAvailable===true,assumed=target.status==='assumed';\n    const quality=assumed?100:measured?q.firstQuality:null;\n    return {...entry,quality,firstQuality:quality,normalDamageQuality:measured?q.normalDamageQuality:null,cutDamageQuality:measured?q.cutDamageQuality:null,\n      qualityTotalBoxes:q?.totalBoxes??null,qualityTotalTiles:q?.totalTiles??null,\n      firstQualityTiles:q?.firstTiles??null,normalDamageTiles:q?.normalDamageTiles??null,cutDamageTiles:q?.cutDamageTiles??null,\n      undetectedTiles:q?.undetectedTiles??null,unclassifiedTiles:q?.unclassifiedTiles??null,\n      qualityAvailable:measured,qualityAssumed:assumed,\n      qualityStatus:assumed?'assumed':measured?'measured':rows===null?'pending':productRows.length?'run-match-unavailable':'no-matching-quality-data',\n      qualityScope:scope,qualitySource:assumed?'assumed-no-enabled-sensor':'quality_events-direct',\n      qualityDetails:q};\n  });\n}\nif(!msg.shiftQualityResponse)throw Error('Missing production summary.');\nmsg.shiftQualityFailed=true;\nmsg.shiftQualityTarget={...msg.shiftQualityTarget,status:'pending'};\nnode.warn('Live code-wise quality lookup failed; production summary retained.');\nconst response=msg.shiftQualityResponse;\nconst s=response.lineStats,t=msg.shiftQualityTarget;\nconst rows=t.sensor&&!msg.shiftQualityFailed?msg.payload:null;\nconst grades=msg.shiftQualityGrades||[];\nObject.assign(s,directQualityFields(t,rows,grades,Date.now()));\ns.codeWiseProduction=directCodeWiseQuality(s.codeWiseProduction||[],t,rows,grades);\ns.codeWiseProductionTimeline=directCodeWiseQuality(s.codeWiseProductionTimeline||[],t,rows,grades);\nmsg.payload=response;\ndelete msg.shiftQualityResponse;delete msg.shiftQualityTarget;delete msg.shiftQualityGrades;\nreturn msg;",
+    "outputs": 1,
+    "wires": [
+      [
+        "f4eba7a43a9cc668"
+      ]
+    ],
+    "x": 1430,
+    "y": 4800
+  }
+]

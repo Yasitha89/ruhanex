@@ -21,6 +21,13 @@ export const getProductionShiftQuality = async ({ line, date, shift, signal }) =
   return response.data;
 };
 
+export const getProductionQualityTrend = async ({ line, date, shift, signal }) => {
+  const response = await api.get('/api/production/quality-trend', {
+    params: { line, date, shift, interval: '15s' }, signal, timeout: 30000,
+  });
+  return response.data;
+};
+
 export const getProductionMonthlySummary = async (line, month) => {
   const response = await api.get("/api/production/monthly-summary", {
     params: { line, month },

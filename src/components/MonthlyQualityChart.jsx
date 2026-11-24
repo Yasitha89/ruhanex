@@ -6,10 +6,23 @@ import { getOverviewMonthlyQuality } from '../api/dashboardApi';
 
 const COLORS = { first: '#16a34a', normalDamage: '#faad14', cutDamage: '#ef4444', other: '#94a3b8' };
 
+function QualityLegend({ items, selected, onChange }) {
+  return <div aria-label="Quality chart legend" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px 12px', padding: '0 8px 8px' }}>
+    {items.map(item => <button key={item.name} type="button" aria-pressed={selected[item.name] !== false}
+      onClick={() => onChange(previous => ({ ...previous, [item.name]: previous[item.name] === false }))}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer', font: 'inherit', fontSize: 12, color: 'inherit', opacity: selected[item.name] === false ? 0.4 : 1 }}>
+      <span style={{ width: 12, height: 12, flexShrink: 0, borderRadius: 2, background: item.color }} />
+      <span>{item.name}</span>
+    </button>)}
+  </div>;
+}
+
 export default function MonthlyQualityChart({ month }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [pieSelection, setPieSelection] = useState({});
+  const [sizeSelection, setSizeSelection] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -37,7 +50,7 @@ export default function MonthlyQualityChart({ month }) {
   const data = (result?.pie?.data || []).map(item => ({ ...item, itemStyle: { color: COLORS[item.key] } }));
   const option = {
     tooltip: { trigger: 'item', formatter: '{b}: {c} tiles ({d}%)' },
-    legend: { bottom: 0, type: 'scroll' },
+    legend: { show: false, selected: pieSelection },
     series: [{ type: 'pie', radius: '67%', center: ['50%', '45%'],
       label: { formatter: '{b}\n{d}%', fontSize: 12 },
       emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.15)' } }, data }],
@@ -51,7 +64,7 @@ export default function MonthlyQualityChart({ month }) {
   ];
   const sizeOption = {
     tooltip: { trigger: 'item', valueFormatter: value => `${value}%` },
-    legend: { bottom: 0, type: 'scroll' },
+    legend: { show: false, selected: sizeSelection },
     grid: { left: 12, right: 18, top: 22, bottom: 58, containLabel: true },
     xAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%' } },
     yAxis: { type: 'category', data: sizes.map(size => size.tileSize), inverse: true },
@@ -69,10 +82,16 @@ export default function MonthlyQualityChart({ month }) {
       loading={loading}>
       {error ? <Alert type="warning" showIcon title={result ? 'Quality update unavailable. Showing the last loaded data.' : 'Monthly quality data is temporarily unavailable.'} /> : null}
       {data.length ? <Row gutter={[16, 16]}>
-        <Col xs={24} md={12}><ReactECharts option={option} notMerge style={{ height: 280 }} /></Col>
+        <Col xs={24} md={12}>
+          <ReactECharts option={option} notMerge style={{ height: 280 }} />
+          <QualityLegend items={data.map(item => ({ name: item.name, color: COLORS[item.key] }))} selected={pieSelection} onChange={setPieSelection} />
+        </Col>
         <Col xs={24} md={12}>
           <Typography.Text strong>Quality by Size</Typography.Text>
-          {sizes.length ? <ReactECharts option={sizeOption} notMerge style={{ height: Math.max(260, sizes.length * 40 + 90) }} /> : (
+          {sizes.length ? <>
+            <ReactECharts option={sizeOption} notMerge style={{ height: Math.max(260, sizes.length * 40 + 90) }} />
+            <QualityLegend items={series.map(([name, , , color]) => ({ name, color }))} selected={sizeSelection} onChange={setSizeSelection} />
+          </> : (
             <div className="overview-empty">No size-wise quality data</div>
           )}
         </Col>

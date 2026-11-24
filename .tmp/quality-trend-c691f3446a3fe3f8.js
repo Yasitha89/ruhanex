@@ -1,0 +1,1 @@
+return {qualityAction:'write_failed',qualityWriteId:msg.qualityWriteId};

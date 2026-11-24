@@ -6,6 +6,7 @@ import { getProductionShiftQuality } from "../api/productionDashboardApi";
 
 const number = (value) => Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const percentage = (value) => value == null ? "—" : `${number(value)}%`;
+const qualityColors = ["#16a34a", "#faad14", "#ef4444", "#94a3b8"];
 const designColumns = [
   { title: "Design", dataIndex: "designCode", key: "designCode" },
   { title: "Size", dataIndex: "tileSize", key: "tileSize" },
@@ -36,6 +37,7 @@ export default function ShiftGradeChart({ line, date, shift, refreshKey = 0 }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState(null);
+  const [legendSelection, setLegendSelection] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -103,12 +105,12 @@ export default function ShiftGradeChart({ line, date, shift, refreshKey = 0 }) {
     }],
   };
   const option = {
-    color: ["#16a34a", "#faad14", "#ef4444", "#94a3b8"],
+    color: qualityColors,
     tooltip: {
       trigger: "item", confine: true,
       formatter: ({ data: item }) => `${echartsFormat.encodeHTML(item.name)}: ${percentage(item.percentage)}<br/>${number(item.value)} tiles · ${number(item.boxes)} boxes`,
     },
-    legend: { bottom: 0, left: "center", itemWidth: 12, itemHeight: 12, type: "scroll" },
+    legend: { show: false, selected: legendSelection },
     series: [{
       type: "pie", radius: ["36%", "62%"], center: ["50%", "42%"],
       itemStyle: { borderColor: "#fff", borderWidth: 2, borderRadius: 4 },
@@ -118,12 +120,20 @@ export default function ShiftGradeChart({ line, date, shift, refreshKey = 0 }) {
   };
 
   return <>
-    {error && <Alert type="warning" showIcon title={error} style={{ marginBottom: 8 }} />}
     {loading && !result ? <div style={{ height: 260, display: "grid", placeItems: "center" }}><Spin /></div>
       : result?.qualityAvailable && data.length ? <>
         <ReactECharts option={option} style={{ height: 300, width: "100%" }} onEvents={{
           click: ({ data: item }) => { if ([1, 2, 3].includes(item?.category) && item.value > 0) setSelectedCategory(item.category); },
         }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "8px 12px", padding: "0 8px 8px" }} aria-label="Quality chart legend">
+          {data.map((item, index) => <button key={item.name} type="button"
+            aria-pressed={legendSelection[item.name] !== false}
+            onClick={() => setLegendSelection(previous => ({ ...previous, [item.name]: previous[item.name] === false }))}
+            style={{ display: "flex", alignItems: "center", gap: 6, border: 0, background: "transparent", padding: 0, textAlign: "left", cursor: "pointer", font: "inherit", fontSize: 12, color: "inherit", opacity: legendSelection[item.name] === false ? 0.4 : 1 }}>
+            <span style={{ width: 12, height: 12, flexShrink: 0, borderRadius: 2, background: qualityColors[index % qualityColors.length] }} />
+            <span>{item.name}</span>
+          </button>)}
+        </div>
       </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={error ? "Quality data could not be loaded." : emptyMessage(result?.status)} />}
     <Modal open={Boolean(selected)} title={`${selected?.name || "Quality"} — ${line}`} width={920}
       styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }} onCancel={() => setSelectedCategory(null)}
